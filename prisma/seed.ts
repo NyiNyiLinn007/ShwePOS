@@ -33,14 +33,14 @@ async function main() {
   });
 
   // Create Users
-  const adminPassword = await hash('admin123', 12);
-  const managerPassword = await hash('manager123', 12);
-  const cashierPassword = await hash('cashier123', 12);
+  const adminPassword = await hash('Nyi!1234', 12);
+  const managerPassword = await hash('Nyi!1234', 12);
+  const cashierPassword = await hash('Nyi!1234', 12);
 
   const admin = await prisma.user.create({
     data: {
       name: 'Admin User',
-      email: 'admin@shwepos.com',
+      email: 'nyinyilinn@shwepos.com',
       password: adminPassword,
       role: 'ADMIN',
       phone: '09-111111111',
