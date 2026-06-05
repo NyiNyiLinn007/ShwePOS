@@ -9,6 +9,9 @@ export const metadata: Metadata = {
     'ShwePOS is a modern enterprise Point of Sale system built for Myanmar businesses. Manage sales, inventory, customers, and analytics with bilingual support.',
   keywords: ['POS', 'Point of Sale', 'Myanmar', 'ShwePOS', 'Retail', 'Inventory'],
   authors: [{ name: 'ShwePOS Team' }],
+  icons: {
+    icon: '/logo.png',
+  },
 };
 
 export default function RootLayout({
