@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { auth } from '@/lib/auth';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
+import { inventoryMovementSchema } from '@/lib/validations';
 
 export async function GET(request: NextRequest) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { searchParams } = new URL(request.url);
     const type = searchParams.get('type');
     const startDate = searchParams.get('startDate');
@@ -62,58 +65,17 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Failed to fetch stock movements:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch stock movements' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch stock movements');
   }
-}
-
-interface CreateMovementBody {
-  productId: string;
-  quantity: number;
-  type: 'IN' | 'OUT' | 'ADJUSTMENT' | 'RETURN';
-  reason?: string;
-  userId: string;
 }
 
 export async function POST(request: NextRequest) {
   try {
-    // Get authenticated user from session
-    const session = await auth();
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
-    }
+    const user = await requireRole('MANAGER', 'ADMIN');
 
-    const body: CreateMovementBody = await request.json();
-    const { productId, quantity, type, reason } = body;
-
-    if (!productId) {
-      return NextResponse.json(
-        { error: 'Product ID is required' },
-        { status: 400 }
-      );
-    }
-
-    if (!quantity || quantity <= 0) {
-      return NextResponse.json(
-        { error: 'Quantity must be a positive number' },
-        { status: 400 }
-      );
-    }
-
-    if (!type || !['IN', 'OUT', 'ADJUSTMENT', 'RETURN'].includes(type)) {
-      return NextResponse.json(
-        { error: 'Invalid movement type' },
-        { status: 400 }
-      );
-    }
-
-    const effectiveUserId = session.user.id;
+    const body = await request.json();
+    const parsed = inventoryMovementSchema.parse(body);
+    const { productId, quantity, type, reason } = parsed;
 
     const movement = await prisma.$transaction(async (tx) => {
       const product = await tx.product.findUnique({
@@ -155,7 +117,7 @@ export async function POST(request: NextRequest) {
       const created = await tx.stockMovement.create({
         data: {
           productId,
-          userId: effectiveUserId,
+          userId: user.id,
           quantity,
           type,
           reason: reason || null,
@@ -177,9 +139,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(movement, { status: 201 });
   } catch (error) {
-    console.error('Failed to create stock movement:', error);
-    const message =
-      error instanceof Error ? error.message : 'Failed to create stock movement';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(error, 'Failed to create stock movement');
   }
 }

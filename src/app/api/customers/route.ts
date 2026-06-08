@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireAuth, requireRole, handleApiError } from '@/lib/apiAuth';
 
 export async function GET(request: NextRequest) {
   try {
+    await requireAuth();
+
     const { searchParams } = new URL(request.url);
     const search = searchParams.get('search') || '';
 
@@ -48,16 +51,14 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(result);
   } catch (error) {
-    console.error('Failed to fetch customers:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch customers' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch customers');
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const body = await request.json();
     const { name, phone, email, address } = body as {
       name: string;
@@ -96,10 +97,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(customer, { status: 201 });
   } catch (error) {
-    console.error('Failed to create customer:', error);
-    return NextResponse.json(
-      { error: 'Failed to create customer' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to create customer');
   }
 }

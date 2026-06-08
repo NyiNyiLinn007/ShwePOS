@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireAuth, requireRole, handleApiError } from '@/lib/apiAuth';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireAuth();
+
     const { id } = await params;
 
     const customer = await prisma.customer.findUnique({
@@ -36,11 +39,7 @@ export async function GET(
 
     return NextResponse.json(customer);
   } catch (error) {
-    console.error('Failed to fetch customer:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch customer' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch customer');
   }
 }
 
@@ -49,6 +48,8 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
     const body = await request.json();
     const { name, phone, email, address } = body as {
@@ -90,11 +91,7 @@ export async function PUT(
 
     return NextResponse.json(customer);
   } catch (error) {
-    console.error('Failed to update customer:', error);
-    return NextResponse.json(
-      { error: 'Failed to update customer' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to update customer');
   }
 }
 
@@ -103,6 +100,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
 
     const existing = await prisma.customer.findUnique({
@@ -128,10 +127,6 @@ export async function DELETE(
 
     return NextResponse.json({ message: 'Customer deleted successfully' });
   } catch (error) {
-    console.error('Failed to delete customer:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete customer' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to delete customer');
   }
 }

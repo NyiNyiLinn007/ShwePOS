@@ -1,7 +1,10 @@
 import prisma from '@/lib/prisma';
 import { ExpensesClient } from '@/components/expenses/ExpensesClient';
+import { requirePageRole } from '@/lib/pageAuth';
 
 export default async function ExpensesPage() {
+  await requirePageRole('MANAGER', 'ADMIN');
+
   const [expenses, users] = await Promise.all([
     prisma.expense.findMany({
       include: {

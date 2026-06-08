@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { createProductSchema } from '@/lib/validations';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
 
 export async function GET(request: NextRequest) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search') || '';
     const categoryId = searchParams.get('categoryId') || '';
@@ -44,16 +47,14 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(products);
   } catch (error) {
-    console.error('Failed to fetch products:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch products' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch products');
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const body = await request.json();
     const parsed = createProductSchema.safeParse(body);
 
@@ -130,10 +131,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(product, { status: 201 });
   } catch (error) {
-    console.error('Failed to create product:', error);
-    return NextResponse.json(
-      { error: 'Failed to create product' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to create product');
   }
 }

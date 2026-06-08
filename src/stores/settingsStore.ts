@@ -1,24 +1,28 @@
-import { create } from 'zustand';
+/**
+ * @deprecated Use `useAppStore` from '@/lib/store' instead.
+ * This re-exports a compatible interface from the main app store
+ * to avoid breaking existing imports.
+ */
+'use client';
 
-type Language = 'en' | 'mm';
+import { useAppStore } from '@/lib/store';
 
-interface SettingsState {
-  language: Language;
+interface SettingsStoreState {
+  language: string;
   sidebarCollapsed: boolean;
-  setLanguage: (lang: Language) => void;
+  setLanguage: (lang: 'en' | 'mm') => void;
   toggleSidebar: () => void;
   t: (en: string, mm: string) => string;
 }
 
-export const useSettingsStore = create<SettingsState>((set, get) => ({
-  language: 'en',
-  sidebarCollapsed: false,
-
-  setLanguage: (lang: Language) => set({ language: lang }),
-
-  toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-
-  t: (en: string, mm: string) => {
-    return get().language === 'mm' ? mm : en;
-  },
-}));
+/** @deprecated Use useAppStore from '@/lib/store' directly */
+export function useSettingsStore(): SettingsStoreState {
+  const store = useAppStore();
+  return {
+    language: store.language,
+    sidebarCollapsed: store.sidebarCollapsed,
+    setLanguage: store.setLanguage,
+    toggleSidebar: store.toggleSidebar,
+    t: (en: string, mm: string) => (store.language === 'mm' ? mm : en),
+  };
+}

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { updateProductSchema } from '@/lib/validations';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -8,6 +9,8 @@ interface RouteParams {
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
     const product = await prisma.product.findUnique({
       where: { id },
@@ -31,16 +34,14 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(product);
   } catch (error) {
-    console.error('Failed to fetch product:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch product' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch product');
   }
 }
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
     const body = await request.json();
     const parsed = updateProductSchema.safeParse(body);
@@ -116,16 +117,14 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(product);
   } catch (error) {
-    console.error('Failed to update product:', error);
-    return NextResponse.json(
-      { error: 'Failed to update product' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to update product');
   }
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
 
     // Soft delete by setting isActive to false
@@ -148,10 +147,6 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
       product,
     });
   } catch (error) {
-    console.error('Failed to delete product:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete product' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to delete product');
   }
 }

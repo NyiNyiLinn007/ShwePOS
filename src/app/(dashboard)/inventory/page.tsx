@@ -1,7 +1,10 @@
 import prisma from '@/lib/prisma';
 import { InventoryClient } from '@/components/inventory/InventoryClient';
+import { requirePageRole } from '@/lib/pageAuth';
 
 export default async function InventoryPage() {
+  await requirePageRole('MANAGER', 'ADMIN');
+
   const [products, recentMovements] = await Promise.all([
     prisma.product.findMany({
       where: { isActive: true },

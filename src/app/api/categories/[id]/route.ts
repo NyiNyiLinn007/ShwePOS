@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { updateCategorySchema } from '@/lib/validations';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -8,6 +9,8 @@ interface RouteParams {
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
     const category = await prisma.category.findUnique({
       where: { id },
@@ -27,16 +30,14 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(category);
   } catch (error) {
-    console.error('Failed to fetch category:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch category' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch category');
   }
 }
 
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
     const body = await request.json();
     const parsed = updateCategorySchema.safeParse(body);
@@ -77,16 +78,14 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(category);
   } catch (error) {
-    console.error('Failed to update category:', error);
-    return NextResponse.json(
-      { error: 'Failed to update category' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to update category');
   }
 }
 
 export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
 
     // Check if there are products using this category
@@ -107,10 +106,6 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ message: 'Category deleted successfully' });
   } catch (error) {
-    console.error('Failed to delete category:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete category' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to delete category');
   }
 }

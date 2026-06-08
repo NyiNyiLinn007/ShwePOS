@@ -1,20 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
+import { updateUserSchema } from '@/lib/validations';
 
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireRole('ADMIN');
+
     const { id } = await params;
     const body = await request.json();
-    const { name, email, password, role, phone, isActive } = body;
+    const parsed = updateUserSchema.parse(body);
 
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
+
+    // Normalize email if provided
+    const email = parsed.email ? parsed.email.toLowerCase().trim() : undefined;
 
     // If email changed, check for duplicates
     if (email && email !== existing.email) {
@@ -27,34 +34,17 @@ export async function PUT(
       }
     }
 
-    // Validate role
-    if (role) {
-      const validRoles = ['ADMIN', 'MANAGER', 'CASHIER'];
-      if (!validRoles.includes(role)) {
-        return NextResponse.json(
-          { error: 'Invalid role. Must be ADMIN, MANAGER, or CASHIER' },
-          { status: 400 }
-        );
-      }
-    }
-
     // Build update data
     const updateData: Record<string, unknown> = {};
-    if (name !== undefined) updateData.name = name;
+    if (parsed.name !== undefined) updateData.name = parsed.name;
     if (email !== undefined) updateData.email = email;
-    if (role !== undefined) updateData.role = role;
-    if (phone !== undefined) updateData.phone = phone || null;
-    if (isActive !== undefined) updateData.isActive = isActive;
+    if (parsed.role !== undefined) updateData.role = parsed.role;
+    if (parsed.phone !== undefined) updateData.phone = parsed.phone || null;
+    if (parsed.isActive !== undefined) updateData.isActive = parsed.isActive;
 
     // Hash new password if provided
-    if (password && password.trim().length > 0) {
-      if (password.length < 6) {
-        return NextResponse.json(
-          { error: 'Password must be at least 6 characters' },
-          { status: 400 }
-        );
-      }
-      updateData.password = await bcrypt.hash(password, 10);
+    if (parsed.password && parsed.password.trim().length > 0) {
+      updateData.password = await bcrypt.hash(parsed.password, 10);
     }
 
     const user = await prisma.user.update({
@@ -74,11 +64,7 @@ export async function PUT(
 
     return NextResponse.json(user);
   } catch (error) {
-    console.error('Failed to update user:', error);
-    return NextResponse.json(
-      { error: 'Failed to update user' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to update user');
   }
 }
 
@@ -87,6 +73,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireRole('ADMIN');
+
     const { id } = await params;
 
     const existing = await prisma.user.findUnique({ where: { id } });
@@ -105,10 +93,6 @@ export async function DELETE(
       message: 'User deactivated successfully',
     });
   } catch (error) {
-    console.error('Failed to deactivate user:', error);
-    return NextResponse.json(
-      { error: 'Failed to deactivate user' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to deactivate user');
   }
 }

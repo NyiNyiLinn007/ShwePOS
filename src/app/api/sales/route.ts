@@ -1,18 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { auth } from '@/lib/auth';
+import { requireAuth, requireRole, handleApiError, ApiError } from '@/lib/apiAuth';
+import { createSaleSchema } from '@/lib/validations';
 
 export async function GET(request: NextRequest) {
   try {
+    const user = await requireAuth();
+
     const { searchParams } = new URL(request.url);
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
     const status = searchParams.get('status');
     const paymentMethod = searchParams.get('paymentMethod');
-    const page = parseInt(searchParams.get('page') || '1', 10);
-    const limit = parseInt(searchParams.get('limit') || '50', 10);
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10));
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '50', 10)));
 
     const where: Record<string, unknown> = {};
+
+    // CASHIER can only see their own sales
+    if (user.role === 'CASHIER') {
+      where.userId = user.id;
+    }
 
     if (startDate || endDate) {
       where.createdAt = {};
@@ -69,185 +77,260 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Failed to fetch sales:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch sales' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch sales');
   }
 }
 
-interface SaleItemInput {
-  productId: string;
-  quantity: number;
-  unitPrice: number;
-  discount?: number;
-}
-
-interface CreateSaleBody {
-  items: SaleItemInput[];
-  customerId?: string | null;
-  userId: string;
-  subtotal: number;
-  discountAmount: number;
-  taxAmount: number;
-  totalAmount: number;
-  paidAmount: number;
-  changeAmount: number;
-  paymentMethod: string;
-  notes?: string;
-}
+const MAX_INVOICE_RETRIES = 3;
 
 export async function POST(request: NextRequest) {
   try {
-    // Get authenticated user from session
-    const session = await auth();
-    if (!session?.user?.id) {
+    // Auth: all authenticated users can create sales
+    const user = await requireAuth();
+
+    const body = await request.json();
+
+    // Zod validation — only accept minimal trusted fields
+    const parsed = createSaleSchema.safeParse(body);
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Authentication required' },
-        { status: 401 }
-      );
-    }
-    const userId = session.user.id;
-
-    const body: CreateSaleBody = await request.json();
-
-    const {
-      items,
-      customerId,
-      subtotal,
-      discountAmount,
-      taxAmount,
-      totalAmount,
-      paidAmount,
-      changeAmount,
-      paymentMethod,
-      notes,
-    } = body;
-
-    if (!items || items.length === 0) {
-      return NextResponse.json(
-        { error: 'Sale must have at least one item' },
+        { error: 'Validation failed', details: parsed.error.flatten().fieldErrors },
         { status: 400 }
       );
     }
+    const { items, customerId, paymentMethod, paidAmount, notes } = parsed.data;
 
-    // Generate invoice number: INV-YYYYMMDD-XXXX
-    const today = new Date();
-    const dateStr =
-      today.getFullYear().toString() +
-      (today.getMonth() + 1).toString().padStart(2, '0') +
-      today.getDate().toString().padStart(2, '0');
+    // Server-side recalculation with retries for invoice uniqueness
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < MAX_INVOICE_RETRIES; attempt++) {
+      try {
+        const sale = await prisma.$transaction(async (tx) => {
+          // 1. Generate atomic invoice number
+          const today = new Date();
+          const dateStr =
+            today.getFullYear().toString() +
+            (today.getMonth() + 1).toString().padStart(2, '0') +
+            today.getDate().toString().padStart(2, '0');
 
-    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const todayEnd = new Date(todayStart);
-    todayEnd.setDate(todayEnd.getDate() + 1);
+          const counter = await tx.invoiceCounter.upsert({
+            where: { date: dateStr },
+            create: { date: dateStr, counter: 1 },
+            update: { counter: { increment: 1 } },
+          });
+          const invoiceNumber = `INV-${dateStr}-${counter.counter.toString().padStart(4, '0')}`;
 
-    const todaySaleCount = await prisma.sale.count({
-      where: {
-        createdAt: {
-          gte: todayStart,
-          lt: todayEnd,
-        },
-      },
-    });
+          // 2. Fetch all products from DB (server-authoritative prices)
+          const productIds = items.map((i) => i.productId);
+          const products = await tx.product.findMany({
+            where: { id: { in: productIds } },
+            select: {
+              id: true, name: true, nameMm: true, sku: true,
+              sellingPrice: true, costPrice: true,
+              stockQuantity: true, isActive: true,
+            },
+          });
 
-    const invoiceNumber = `INV-${dateStr}-${(todaySaleCount + 1).toString().padStart(4, '0')}`;
+          const productMap = new Map(products.map((p) => [p.id, p]));
 
-    // Create sale with items and update stock in a transaction
-    const sale = await prisma.$transaction(async (tx) => {
-      // Verify stock availability for all items
-      for (const item of items) {
-        const product = await tx.product.findUnique({
-          where: { id: item.productId },
-          select: { stockQuantity: true, name: true },
-        });
+          // 3. Fetch settings for tax rate
+          const settings = await tx.settings.findUnique({
+            where: { id: 'default' },
+            select: { taxRate: true },
+          });
+          const taxRate = settings?.taxRate ?? 0;
 
-        if (!product) {
-          throw new Error(`Product not found: ${item.productId}`);
-        }
+          // 4. Validate items and compute server-side totals
+          let subtotal = 0;
+          let totalDiscount = 0;
+          const saleItemsData: Array<{
+            productId: string;
+            quantity: number;
+            unitPrice: number;
+            costPrice: number;
+            discount: number;
+            total: number;
+          }> = [];
 
-        if (product.stockQuantity < item.quantity) {
-          throw new Error(
-            `Insufficient stock for ${product.name}. Available: ${product.stockQuantity}, Requested: ${item.quantity}`
-          );
-        }
-      }
+          for (const item of items) {
+            const product = productMap.get(item.productId);
+            if (!product) {
+              throw new ApiError(`Product not found: ${item.productId}`, 400);
+            }
+            if (!product.isActive) {
+              throw new ApiError(`Product is inactive: ${product.name}`, 400);
+            }
 
-      // Create the sale
-      const newSale = await tx.sale.create({
-        data: {
-          invoiceNumber,
-          customerId: customerId || null,
-          userId,
-          subtotal,
-          discountAmount,
-          taxAmount,
-          totalAmount,
-          paidAmount,
-          changeAmount,
-          paymentMethod,
-          notes: notes || null,
-          status: 'COMPLETED',
-          items: {
-            create: items.map((item) => ({
+            const itemSubtotal = product.sellingPrice * item.quantity;
+            const itemDiscount = Math.min(item.discount || 0, itemSubtotal); // Cap discount at item total
+            if (itemDiscount < 0) {
+              throw new ApiError('Discount cannot be negative', 400);
+            }
+            const itemTotal = itemSubtotal - itemDiscount;
+
+            subtotal += itemSubtotal;
+            totalDiscount += itemDiscount;
+
+            saleItemsData.push({
               productId: item.productId,
               quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              discount: item.discount || 0,
-              total: item.unitPrice * item.quantity - (item.discount || 0),
-            })),
-          },
-        },
-        include: {
-          items: {
-            include: {
-              product: {
-                select: { name: true, nameMm: true, sku: true },
+              unitPrice: product.sellingPrice,
+              costPrice: product.costPrice,
+              discount: itemDiscount,
+              total: itemTotal,
+            });
+          }
+
+          // 5. Compute tax and grand total
+          const discountedSubtotal = subtotal - totalDiscount;
+          const taxAmount = Math.round(discountedSubtotal * taxRate) / 100;
+          const totalAmount = discountedSubtotal + taxAmount;
+
+          // 6. Validate payment
+          let finalPaid = paidAmount;
+          let changeAmount = 0;
+
+          if (paymentMethod === 'CASH') {
+            if (paidAmount < totalAmount) {
+              throw new ApiError(
+                `Insufficient payment. Total: ${totalAmount}, Paid: ${paidAmount}`,
+                400
+              );
+            }
+            changeAmount = paidAmount - totalAmount;
+          } else {
+            // Non-cash: paid = total, no change
+            finalPaid = totalAmount;
+            changeAmount = 0;
+          }
+
+          // 7. Validate customer if provided
+          if (customerId) {
+            const customer = await tx.customer.findUnique({
+              where: { id: customerId },
+              select: { id: true },
+            });
+            if (!customer) {
+              throw new ApiError('Customer not found', 400);
+            }
+          }
+
+          // 8. Atomic stock update — prevent overselling
+          for (const item of saleItemsData) {
+            const result = await tx.product.updateMany({
+              where: {
+                id: item.productId,
+                stockQuantity: { gte: items.find((i) => i.productId === item.productId)!.quantity },
+              },
+              data: {
+                stockQuantity: { decrement: items.find((i) => i.productId === item.productId)!.quantity },
+              },
+            });
+            if (result.count === 0) {
+              const product = productMap.get(item.productId)!;
+              throw new ApiError(
+                `Insufficient stock for ${product.name}. Available: ${product.stockQuantity}`,
+                409
+              );
+            }
+          }
+
+          // 9. Create the sale
+          const newSale = await tx.sale.create({
+            data: {
+              invoiceNumber,
+              customerId: customerId || null,
+              userId: user.id,
+              subtotal: discountedSubtotal,
+              discountAmount: totalDiscount,
+              taxAmount,
+              totalAmount,
+              paidAmount: finalPaid,
+              changeAmount,
+              paymentMethod,
+              notes: notes || null,
+              status: 'COMPLETED',
+              items: {
+                create: saleItemsData.map((item) => ({
+                  productId: item.productId,
+                  quantity: item.quantity,
+                  unitPrice: item.unitPrice,
+                  costPrice: item.costPrice,
+                  discount: item.discount,
+                  total: item.total,
+                })),
               },
             },
-          },
-          customer: {
-            select: { id: true, name: true, phone: true },
-          },
-          user: {
-            select: { id: true, name: true },
-          },
-        },
-      });
-
-      // Update product stock quantities
-      for (const item of items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: {
-            stockQuantity: {
-              decrement: item.quantity,
+            include: {
+              items: {
+                include: {
+                  product: {
+                    select: { name: true, nameMm: true, sku: true },
+                  },
+                },
+              },
+              customer: {
+                select: { id: true, name: true, phone: true },
+              },
+              user: {
+                select: { id: true, name: true },
+              },
             },
-          },
+          });
+
+          // 10. Create StockMovement records for each item
+          for (const item of saleItemsData) {
+            const product = productMap.get(item.productId)!;
+            const qty = items.find((i) => i.productId === item.productId)!.quantity;
+            await tx.stockMovement.create({
+              data: {
+                productId: item.productId,
+                userId: user.id,
+                saleId: newSale.id,
+                quantity: qty,
+                type: 'OUT',
+                reason: `Sale: ${invoiceNumber}`,
+                previousStock: product.stockQuantity,
+                newStock: product.stockQuantity - qty,
+              },
+            });
+          }
+
+          // 11. Update customer total purchases
+          if (customerId) {
+            await tx.customer.update({
+              where: { id: customerId },
+              data: {
+                totalPurchases: { increment: totalAmount },
+              },
+            });
+          }
+
+          return newSale;
         });
+
+        return NextResponse.json(sale, { status: 201 });
+      } catch (e: unknown) {
+        // Retry on unique constraint violation (invoice number race)
+        if (
+          e &&
+          typeof e === 'object' &&
+          'code' in e &&
+          (e as { code: string }).code === 'P2002'
+        ) {
+          lastError = e;
+          continue;
+        }
+        throw e;
       }
+    }
 
-      // Update customer total purchases if customer selected
-      if (customerId) {
-        await tx.customer.update({
-          where: { id: customerId },
-          data: {
-            totalPurchases: {
-              increment: totalAmount,
-            },
-          },
-        });
-      }
-
-      return newSale;
-    });
-
-    return NextResponse.json(sale, { status: 201 });
+    // All retries exhausted
+    console.error('Invoice generation failed after retries:', lastError);
+    return NextResponse.json(
+      { error: 'Failed to generate unique invoice number. Please try again.' },
+      { status: 500 }
+    );
   } catch (error) {
-    console.error('Failed to create sale:', error);
-    const message =
-      error instanceof Error ? error.message : 'Failed to create sale';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return handleApiError(error, 'Failed to create sale');
   }
 }

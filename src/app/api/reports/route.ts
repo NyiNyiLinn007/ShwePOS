@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
 
 export async function GET(request: NextRequest) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { searchParams } = new URL(request.url);
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
@@ -17,6 +20,16 @@ export async function GET(request: NextRequest) {
     const end = endDate ? new Date(endDate) : new Date();
     end.setHours(23, 59, 59, 999);
 
+    // Enforce max date range of 366 days
+    const diffMs = end.getTime() - start.getTime();
+    const diffDays = diffMs / (1000 * 60 * 60 * 24);
+    if (diffDays > 366) {
+      return NextResponse.json(
+        { error: 'Date range cannot exceed 366 days' },
+        { status: 400 }
+      );
+    }
+
     // Fetch all completed sales in range with items and product data
     const sales = await prisma.sale.findMany({
       where: {
@@ -25,15 +38,18 @@ export async function GET(request: NextRequest) {
       },
       include: {
         items: {
-          include: {
+          select: {
+            quantity: true,
+            unitPrice: true,
+            total: true,
+            costPrice: true,
+            productId: true,
             product: {
               select: {
                 id: true,
                 name: true,
                 nameMm: true,
                 sku: true,
-                costPrice: true,
-                sellingPrice: true,
                 categoryId: true,
                 category: {
                   select: { id: true, name: true, nameMm: true },
@@ -44,6 +60,7 @@ export async function GET(request: NextRequest) {
         },
       },
       orderBy: { createdAt: 'asc' },
+      take: 10000,
     });
 
     // ── Summary Totals ───────────────────────────────────────
@@ -52,7 +69,7 @@ export async function GET(request: NextRequest) {
       (sum, s) =>
         sum +
         s.items.reduce(
-          (itemSum, item) => itemSum + item.product.costPrice * item.quantity,
+          (itemSum, item) => itemSum + item.costPrice * item.quantity,
           0
         ),
       0
@@ -69,7 +86,7 @@ export async function GET(request: NextRequest) {
       const dateKey = sale.createdAt.toISOString().split('T')[0];
       const existing = dailyMap.get(dateKey) || { revenue: 0, count: 0, profit: 0 };
       const saleCost = sale.items.reduce(
-        (sum, item) => sum + item.product.costPrice * item.quantity,
+        (sum, item) => sum + item.costPrice * item.quantity,
         0
       );
       existing.revenue += sale.totalAmount;
@@ -143,7 +160,7 @@ export async function GET(request: NextRequest) {
         };
         existing.qtySold += item.quantity;
         existing.revenue += item.total;
-        existing.cost += item.product.costPrice * item.quantity;
+        existing.cost += item.costPrice * item.quantity;
         productMap.set(item.product.id, existing);
       }
     }
@@ -234,10 +251,6 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Failed to fetch reports:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch report data' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch report data');
   }
 }

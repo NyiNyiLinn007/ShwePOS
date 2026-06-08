@@ -1,7 +1,10 @@
 import prisma from '@/lib/prisma';
 import { SettingsClient } from '@/components/settings/SettingsClient';
+import { requirePageRole } from '@/lib/pageAuth';
 
 export default async function SettingsPage() {
+  await requirePageRole('ADMIN');
+
   let settings = await prisma.settings.findUnique({
     where: { id: 'default' },
   });

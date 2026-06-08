@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
     const expense = await prisma.expense.findUnique({
       where: { id },
@@ -20,11 +23,7 @@ export async function GET(
 
     return NextResponse.json(expense);
   } catch (error) {
-    console.error('Failed to fetch expense:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch expense' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch expense');
   }
 }
 
@@ -33,6 +32,8 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
     const body = await request.json();
     const { category, amount, description, date } = body;
@@ -83,11 +84,7 @@ export async function PUT(
 
     return NextResponse.json(expense);
   } catch (error) {
-    console.error('Failed to update expense:', error);
-    return NextResponse.json(
-      { error: 'Failed to update expense' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to update expense');
   }
 }
 
@@ -96,6 +93,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { id } = await params;
 
     const existing = await prisma.expense.findUnique({ where: { id } });
@@ -107,10 +106,6 @@ export async function DELETE(
 
     return NextResponse.json({ success: true, message: 'Expense deleted' });
   } catch (error) {
-    console.error('Failed to delete expense:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete expense' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to delete expense');
   }
 }

@@ -1,7 +1,10 @@
 import prisma from '@/lib/prisma';
 import { SalesClient } from '@/components/sales/SalesClient';
+import { requirePageRole } from '@/lib/pageAuth';
 
 export default async function SalesPage() {
+  await requirePageRole('MANAGER', 'ADMIN');
+
   const sales = await prisma.sale.findMany({
     include: {
       items: {

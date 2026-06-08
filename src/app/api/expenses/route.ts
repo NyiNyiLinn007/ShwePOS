@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
 
 export async function GET(request: NextRequest) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const { searchParams } = new URL(request.url);
     const category = searchParams.get('category');
     const startDate = searchParams.get('startDate');
@@ -59,22 +62,20 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('Failed to fetch expenses:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch expenses' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch expenses');
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { category, amount, description, userId, date } = body;
+    const user = await requireRole('MANAGER', 'ADMIN');
 
-    if (!category || !amount || !userId) {
+    const body = await request.json();
+    const { category, amount, description, date } = body;
+
+    if (!category || !amount) {
       return NextResponse.json(
-        { error: 'Category, amount, and user ID are required' },
+        { error: 'Category and amount are required' },
         { status: 400 }
       );
     }
@@ -103,17 +104,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
-    }
-
     const expense = await prisma.expense.create({
       data: {
         category,
         amount,
         description: description || null,
-        userId,
+        userId: user.id,
         date: date ? new Date(date) : new Date(),
       },
       include: {
@@ -125,10 +121,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(expense, { status: 201 });
   } catch (error) {
-    console.error('Failed to create expense:', error);
-    return NextResponse.json(
-      { error: 'Failed to create expense' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to create expense');
   }
 }

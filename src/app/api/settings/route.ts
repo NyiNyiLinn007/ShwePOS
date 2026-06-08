@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { requireAuth, requireRole, handleApiError } from '@/lib/apiAuth';
+import { updateSettingsSchema } from '@/lib/validations';
 
 export async function GET() {
   try {
+    await requireAuth();
+
     let settings = await prisma.settings.findUnique({
       where: { id: 'default' },
     });
@@ -21,17 +25,16 @@ export async function GET() {
 
     return NextResponse.json(settings);
   } catch (error) {
-    console.error('Failed to fetch settings:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch settings' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch settings');
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
+    await requireRole('ADMIN');
+
     const body = await request.json();
+    const parsed = updateSettingsSchema.parse(body);
     const {
       businessName,
       businessNameMm,
@@ -42,18 +45,7 @@ export async function PUT(request: NextRequest) {
       currencySymbol,
       logo,
       receiptFooter,
-    } = body;
-
-    // Validate tax rate
-    if (taxRate !== undefined) {
-      const rate = Number(taxRate);
-      if (isNaN(rate) || rate < 0 || rate > 100) {
-        return NextResponse.json(
-          { error: 'Tax rate must be between 0 and 100' },
-          { status: 400 }
-        );
-      }
-    }
+    } = parsed;
 
     const settings = await prisma.settings.upsert({
       where: { id: 'default' },
@@ -84,10 +76,6 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json(settings);
   } catch (error) {
-    console.error('Failed to update settings:', error);
-    return NextResponse.json(
-      { error: 'Failed to update settings' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to update settings');
   }
 }

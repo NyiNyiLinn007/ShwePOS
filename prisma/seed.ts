@@ -4,7 +4,14 @@ import { hash } from 'bcryptjs';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Seeding ShwePOS database...');
+  // Production safety guard
+  if (process.env.NODE_ENV === 'production') {
+    console.error('⛔ DANGER: Seed script should NOT run in production!');
+    console.error('   This will DELETE all data. Set NODE_ENV to something else if you really mean it.');
+    process.exit(1);
+  }
+
+  console.log('🌱 Seeding ShwePOS database (DEMO DATA ONLY)...');
 
   // Clean existing data
   await prisma.saleItem.deleteMany();
@@ -267,10 +274,10 @@ async function main() {
 
   console.log('✅ Sample expenses created');
   console.log('\n🎉 Database seeded successfully!');
-  console.log('\n📧 Login Credentials:');
-  console.log('   Admin:   admin@shwepos.com / admin123');
-  console.log('   Manager: manager@shwepos.com / manager123');
-  console.log('   Cashier: cashier@shwepos.com / cashier123');
+  console.log('\n📧 Login Credentials (DEMO ONLY — change for production):');
+  console.log('   Admin:   nyinyilinn@shwepos.com / Nyi!1234');
+  console.log('   Manager: manager@shwepos.com / Nyi!1234');
+  console.log('   Cashier: cashier@shwepos.com / Nyi!1234');
 }
 
 main()

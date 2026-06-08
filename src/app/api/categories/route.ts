@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { createCategorySchema } from '@/lib/validations';
+import { requireRole, handleApiError } from '@/lib/apiAuth';
 
 export async function GET(request: NextRequest) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const searchParams = request.nextUrl.searchParams;
     const search = searchParams.get('search') || '';
     const includeInactive = searchParams.get('includeInactive') === 'true';
@@ -33,16 +36,14 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(categories);
   } catch (error) {
-    console.error('Failed to fetch categories:', error);
-    return NextResponse.json(
-      { error: 'Failed to fetch categories' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to fetch categories');
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    await requireRole('MANAGER', 'ADMIN');
+
     const body = await request.json();
     const parsed = createCategorySchema.safeParse(body);
 
@@ -82,10 +83,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(category, { status: 201 });
   } catch (error) {
-    console.error('Failed to create category:', error);
-    return NextResponse.json(
-      { error: 'Failed to create category' },
-      { status: 500 }
-    );
+    return handleApiError(error, 'Failed to create category');
   }
 }
