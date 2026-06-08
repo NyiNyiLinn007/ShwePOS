@@ -1,37 +1,15 @@
+/**
+ * Full NextAuth configuration WITH Prisma + bcrypt.
+ * Used by API routes and server components (NOT Edge/middleware).
+ */
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
-
-declare module 'next-auth' {
-  interface User {
-    role: string;
-  }
-  interface Session {
-    user: {
-      id: string;
-      name: string;
-      email: string;
-      role: string;
-    };
-  }
-}
-
-declare module '@auth/core/jwt' {
-  interface JWT {
-    id: string;
-    role: string;
-  }
-}
+import { authConfig } from '@/lib/auth.config';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  pages: {
-    signIn: '/login',
-  },
-  session: {
-    strategy: 'jwt',
-    maxAge: 24 * 60 * 60, // 24 hours
-  },
+  ...authConfig,
   providers: [
     Credentials({
       name: 'credentials',
@@ -70,33 +48,4 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-  callbacks: {
-    async jwt({ token, user }) {
-      if (user) {
-        token.id = user.id as string;
-        token.role = user.role;
-      }
-      return token;
-    },
-    async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id;
-        session.user.role = token.role;
-      }
-      return session;
-    },
-    async authorized({ auth: session, request }) {
-      const isLoggedIn = !!session?.user;
-      const isOnLogin = request.nextUrl.pathname === '/login';
-
-      if (isOnLogin) {
-        if (isLoggedIn) {
-          return Response.redirect(new URL('/', request.nextUrl));
-        }
-        return true;
-      }
-
-      return isLoggedIn;
-    },
-  },
 });
