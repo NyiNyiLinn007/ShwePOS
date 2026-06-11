@@ -157,7 +157,7 @@ export async function PUT(
           },
         },
       });
-    });
+    }, { maxWait: 10000, timeout: 15000 });
 
     return NextResponse.json(updatedSale);
   } catch (error) {

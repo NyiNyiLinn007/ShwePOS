@@ -4,6 +4,7 @@
  */
 import { auth } from '@/lib/auth';
 import { NextResponse } from 'next/server';
+import { ZodError } from 'zod';
 import type { UserRole } from '@/lib/constants';
 
 export interface AuthUser {
@@ -13,11 +14,13 @@ export interface AuthUser {
   role: UserRole;
 }
 
-export class ApiError {
-  constructor(
-    public message: string,
-    public status: number
-  ) {}
+export class ApiError extends Error {
+  public status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = 'ApiError';
+  }
 }
 
 /**
@@ -57,11 +60,18 @@ export function hasMinRole(userRole: UserRole, minRole: UserRole): boolean {
 }
 
 /**
- * Handle ApiError in catch blocks — returns proper JSON error response.
+ * Handle ApiError, ZodError, and generic errors in catch blocks.
+ * Returns proper JSON error response with appropriate status codes.
  */
 export function handleApiError(error: unknown, fallbackMessage = 'Internal server error'): NextResponse {
   if (error instanceof ApiError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
+  }
+  if (error instanceof ZodError) {
+    return NextResponse.json(
+      { error: 'Validation failed', details: error.issues },
+      { status: 400 }
+    );
   }
   console.error(fallbackMessage + ':', error);
   const message = error instanceof Error ? error.message : fallbackMessage;

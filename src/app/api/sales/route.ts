@@ -306,7 +306,7 @@ export async function POST(request: NextRequest) {
           }
 
           return newSale;
-        });
+        }, { maxWait: 10000, timeout: 15000 });
 
         return NextResponse.json(sale, { status: 201 });
       } catch (e: unknown) {
