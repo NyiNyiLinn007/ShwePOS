@@ -16,6 +16,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
+        force: { label: 'Force', type: 'text' },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) {
@@ -39,11 +40,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
+        // Bump sessionVersion and update lastLoginAt on every successful login
+        // This invalidates any existing JWT tokens with older sessionVersion
+        const updated = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            sessionVersion: { increment: 1 },
+            lastLoginAt: new Date(),
+          },
+        });
+
         return {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
+          id: updated.id,
+          name: updated.name,
+          email: updated.email,
+          role: updated.role,
+          sessionVersion: updated.sessionVersion,
         };
       },
     }),

@@ -1,12 +1,13 @@
 /**
  * NextAuth configuration WITHOUT Prisma/bcrypt — Edge-compatible.
- * Used by middleware.ts only (runs on Vercel Edge, max 1MB).
+ * Used by proxy.ts only (runs on Vercel Edge, max 1MB).
  */
 import type { NextAuthConfig } from 'next-auth';
 
 declare module 'next-auth' {
   interface User {
     role: string;
+    sessionVersion?: number;
   }
   interface Session {
     user: {
@@ -14,6 +15,7 @@ declare module 'next-auth' {
       name: string;
       email: string;
       role: string;
+      sessionVersion: number;
     };
   }
 }
@@ -22,6 +24,7 @@ declare module '@auth/core/jwt' {
   interface JWT {
     id: string;
     role: string;
+    sessionVersion: number;
   }
 }
 
@@ -39,6 +42,7 @@ export const authConfig: NextAuthConfig = {
       if (user) {
         token.id = user.id as string;
         token.role = (user as { role: string }).role;
+        token.sessionVersion = (user as { sessionVersion?: number }).sessionVersion ?? 0;
       }
       return token;
     },
@@ -46,6 +50,7 @@ export const authConfig: NextAuthConfig = {
       if (session.user) {
         session.user.id = token.id;
         session.user.role = token.role;
+        session.user.sessionVersion = token.sessionVersion;
       }
       return session;
     },
@@ -64,3 +69,4 @@ export const authConfig: NextAuthConfig = {
     },
   },
 };
+

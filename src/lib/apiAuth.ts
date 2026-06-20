@@ -24,13 +24,48 @@ export class ApiError extends Error {
 }
 
 /**
+ * In-memory cache for session version validation.
+ * Avoids hitting DB on every API request. TTL: 30 seconds.
+ */
+const sessionVersionCache = new Map<string, { version: number; expiry: number }>();
+const CACHE_TTL_MS = 30_000; // 30 seconds
+
+/**
  * Get authenticated user from session. Throws ApiError(401) if not authenticated.
+ * Also validates sessionVersion to enforce single-session policy.
  */
 export async function requireAuth(): Promise<AuthUser> {
   const session = await auth();
   if (!session?.user?.id) {
     throw new ApiError('Authentication required', 401);
   }
+
+  // Validate sessionVersion (single-session enforcement)
+  const userId = session.user.id;
+  const tokenVersion = (session.user as { sessionVersion?: number }).sessionVersion ?? 0;
+
+  // Check cache first
+  const cached = sessionVersionCache.get(userId);
+  const now = Date.now();
+
+  let dbVersion: number;
+  if (cached && cached.expiry > now) {
+    dbVersion = cached.version;
+  } else {
+    // Lazy import to avoid circular dependency issues
+    const { prisma } = await import('@/lib/prisma');
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { sessionVersion: true },
+    });
+    dbVersion = user?.sessionVersion ?? 0;
+    sessionVersionCache.set(userId, { version: dbVersion, expiry: now + CACHE_TTL_MS });
+  }
+
+  if (tokenVersion !== dbVersion) {
+    throw new ApiError('Session expired — logged in from another device', 401);
+  }
+
   return session.user as AuthUser;
 }
 

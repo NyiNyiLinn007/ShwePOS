@@ -10,22 +10,17 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showSessionConfirm, setShowSessionConfirm] = useState(false);
+  const [lastLoginInfo, setLastLoginInfo] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-
-    if (!email || !password) {
-      setError('Please enter both email and password.');
-      return;
-    }
-
+  const doLogin = async () => {
     setIsLoading(true);
-
+    setError('');
     try {
       const result = await signIn('credentials', {
         email,
         password,
+        force: 'true',
         redirect: false,
       });
 
@@ -42,6 +37,62 @@ export default function LoginPage() {
     }
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setShowSessionConfirm(false);
+
+    if (!email || !password) {
+      setError('Please enter both email and password.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Step 1: Check if user has an active session elsewhere
+      const checkRes = await fetch('/api/auth/check-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const checkData = await checkRes.json();
+
+      if (!checkRes.ok || !checkData.valid) {
+        setError('Invalid email or password. Please try again.');
+        setIsLoading(false);
+        return;
+      }
+
+      if (checkData.hasActiveSession) {
+        // Show confirmation dialog
+        const loginTime = checkData.lastLoginAt
+          ? new Date(checkData.lastLoginAt).toLocaleString('en-US', {
+              timeZone: 'Asia/Yangon',
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            })
+          : null;
+        setLastLoginInfo(loginTime);
+        setShowSessionConfirm(true);
+        setIsLoading(false);
+        return;
+      }
+
+      // No active session — login directly
+      await doLogin();
+    } catch {
+      setError('An unexpected error occurred. Please try again.');
+      setIsLoading(false);
+    }
+  };
+
+  const handleConfirmLogin = async () => {
+    setShowSessionConfirm(false);
+    await doLogin();
+  };
+
   return (
     <div className="login-page">
       <div className="login-card animate-slide-up">
@@ -56,6 +107,55 @@ export default function LoginPage() {
         {error && (
           <div className="login-error animate-fade-in" role="alert">
             {error}
+          </div>
+        )}
+
+        {/* Session Confirmation Dialog */}
+        {showSessionConfirm && (
+          <div
+            className="animate-fade-in"
+            style={{
+              padding: 'var(--space-md)',
+              background: 'rgba(255, 193, 7, 0.1)',
+              border: '1px solid rgba(255, 193, 7, 0.3)',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: 'var(--space-md)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-sm)' }}>
+              <span style={{ fontSize: 'var(--text-lg)' }}>⚠️</span>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)', marginBottom: 'var(--space-xs)', color: 'var(--warning)' }}>
+                  Active Session Detected
+                </div>
+                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginBottom: 'var(--space-xs)', lineHeight: 1.5 }}>
+                  ဒီ account ကို အခြား device/browser မှာ login ဝင်ထားပါတယ်။
+                  ဆက်ဝင်ရင် အဟောင်းက auto logout ဖြစ်ပါမယ်။
+                </p>
+                {lastLoginInfo && (
+                  <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    Last login: {lastLoginInfo}
+                  </p>
+                )}
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ fontSize: 'var(--text-xs)', padding: '6px 16px' }}
+                    onClick={() => setShowSessionConfirm(false)}
+                  >
+                    ပယ်ဖျက် / Cancel
+                  </button>
+                  <button
+                    className="btn btn-warning"
+                    style={{ fontSize: 'var(--text-xs)', padding: '6px 16px' }}
+                    onClick={handleConfirmLogin}
+                    disabled={isLoading}
+                  >
+                    {isLoading ? 'Signing in...' : 'ဆက်ဝင်ရန် / Continue'}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -97,7 +197,7 @@ export default function LoginPage() {
           <button
             type="submit"
             className="btn btn-primary btn-lg"
-            disabled={isLoading}
+            disabled={isLoading || showSessionConfirm}
           >
             {isLoading ? (
               <span className="flex items-center gap-sm">
