@@ -115,46 +115,53 @@ export default function LoginPage() {
           <div
             className="animate-fade-in"
             style={{
-              padding: 'var(--space-md)',
-              background: 'rgba(255, 193, 7, 0.1)',
-              border: '1px solid rgba(255, 193, 7, 0.3)',
-              borderRadius: 'var(--radius-md)',
-              marginBottom: 'var(--space-md)',
+              padding: 'var(--space-lg)',
+              background: 'rgba(255, 193, 7, 0.08)',
+              border: '1px solid rgba(255, 193, 7, 0.25)',
+              borderRadius: 'var(--radius-lg)',
+              marginBottom: 'var(--space-lg)',
+              textAlign: 'center',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-sm)' }}>
-              <span style={{ fontSize: 'var(--text-lg)' }}>⚠️</span>
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)', marginBottom: 'var(--space-xs)', color: 'var(--warning)' }}>
-                  Active Session Detected
-                </div>
-                <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)', marginBottom: 'var(--space-xs)', lineHeight: 1.5 }}>
-                  ဒီ account ကို အခြား device/browser မှာ login ဝင်ထားပါတယ်။
-                  ဆက်ဝင်ရင် အဟောင်းက auto logout ဖြစ်ပါမယ်။
-                </p>
-                {lastLoginInfo && (
-                  <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                    Last login: {lastLoginInfo}
-                  </p>
-                )}
-                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
-                  <button
-                    className="btn btn-ghost"
-                    style={{ fontSize: 'var(--text-xs)', padding: '6px 16px' }}
-                    onClick={() => setShowSessionConfirm(false)}
-                  >
-                    ပယ်ဖျက် / Cancel
-                  </button>
-                  <button
-                    className="btn btn-warning"
-                    style={{ fontSize: 'var(--text-xs)', padding: '6px 16px' }}
-                    onClick={handleConfirmLogin}
-                    disabled={isLoading}
-                  >
-                    {isLoading ? 'Signing in...' : 'ဆက်ဝင်ရန် / Continue'}
-                  </button>
-                </div>
-              </div>
+            <div style={{ fontSize: '2rem', marginBottom: 'var(--space-sm)' }}>⚠️</div>
+            <div style={{ fontWeight: 700, fontSize: 'var(--text-base)', marginBottom: 'var(--space-sm)', color: 'var(--warning)' }}>
+              Active Session Detected
+            </div>
+            <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 'var(--space-sm)' }}>
+              ဒီ account ကို အခြား device/browser မှာ login ဝင်ထားပါတယ်။
+              <br />
+              ဆက်ဝင်ရင် အဟောင်းက auto logout ဖြစ်ပါမယ်။
+            </p>
+            {lastLoginInfo && (
+              <p style={{
+                fontSize: 'var(--text-xs)',
+                color: 'var(--text-muted)',
+                fontFamily: 'var(--font-mono)',
+                background: 'rgba(0,0,0,0.2)',
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                display: 'inline-block',
+                marginBottom: 'var(--space-md)',
+              }}>
+                🕐 {lastLoginInfo}
+              </p>
+            )}
+            <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
+              <button
+                className="btn btn-ghost"
+                style={{ flex: 1, padding: '10px' }}
+                onClick={() => setShowSessionConfirm(false)}
+              >
+                ပယ်ဖျက် / Cancel
+              </button>
+              <button
+                className="btn btn-warning"
+                style={{ flex: 1, padding: '10px' }}
+                onClick={handleConfirmLogin}
+                disabled={isLoading}
+              >
+                {isLoading ? 'Signing in...' : 'ဆက်ဝင်ရန် / Continue'}
+              </button>
             </div>
           </div>
         )}

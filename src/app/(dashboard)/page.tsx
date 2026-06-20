@@ -2,9 +2,11 @@ export const dynamic = 'force-dynamic';
 
 import { prisma } from '@/lib/prisma';
 import { getTodayRange, getLastNDayLabels, formatShortDate } from '@/lib/utils';
+import { requirePageAuth } from '@/lib/pageAuth';
 import DashboardClient from '@/components/dashboard/DashboardClient';
 
 export default async function DashboardPage() {
+  await requirePageAuth();
   const { start: todayStart, end: todayEnd } = getTodayRange();
 
   // --- Fetch today's sales data ---
