@@ -34,7 +34,7 @@ export default async function POSPage() {
 
   const taxRate = settings?.taxRate ?? 0;
 
-  // Serialize for client component (strip Date objects)
+  // Serialize for client component (strip Date objects and sensitive fields)
   const serializedProducts = products.map((p) => ({
     id: p.id,
     name: p.name,
@@ -42,7 +42,7 @@ export default async function POSPage() {
     sku: p.sku,
     barcode: p.barcode,
     sellingPrice: p.sellingPrice,
-    costPrice: p.costPrice,
+    // costPrice intentionally excluded — sensitive margin data
     stockQuantity: p.stockQuantity,
     unit: p.unit,
     imageUrl: p.imageUrl,

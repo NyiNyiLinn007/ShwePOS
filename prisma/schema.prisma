@@ -76,6 +76,7 @@ model Customer {
 model Sale {
   id            String   @id @default(cuid())
   invoiceNumber String   @unique
+  clientSaleId  String?  @unique
   customerId    String?
   userId        String
   subtotal      Float    @default(0)

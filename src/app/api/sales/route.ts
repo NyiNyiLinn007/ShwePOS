@@ -98,7 +98,30 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const { items, customerId, paymentMethod, paidAmount, notes } = parsed.data;
+    const { items, customerId, paymentMethod, paidAmount, cartDiscount, clientSaleId, notes } = parsed.data;
+
+    // Fix 6: CREDIT sales not yet supported
+    if (paymentMethod === 'CREDIT') {
+      return NextResponse.json(
+        { error: 'Credit sales are not yet supported' },
+        { status: 400 }
+      );
+    }
+
+    // Fix 5: Idempotency — return existing sale if same clientSaleId
+    if (clientSaleId) {
+      const existingSale = await prisma.sale.findUnique({
+        where: { clientSaleId },
+        include: {
+          items: { include: { product: { select: { name: true, nameMm: true, sku: true } } } },
+          customer: { select: { id: true, name: true, phone: true } },
+          user: { select: { id: true, name: true } },
+        },
+      });
+      if (existingSale) {
+        return NextResponse.json(existingSale, { status: 200 });
+      }
+    }
 
     // Server-side recalculation with retries for invoice uniqueness
     let lastError: unknown = null;
@@ -180,8 +203,10 @@ export async function POST(request: NextRequest) {
             });
           }
 
-          // 5. Compute tax and grand total
-          const discountedSubtotal = subtotal - totalDiscount;
+          // 5. Compute tax and grand total (Fix 1: include cartDiscount)
+          const totalItemDiscount = totalDiscount;
+          const effectiveDiscount = totalItemDiscount + (cartDiscount || 0);
+          const discountedSubtotal = Math.max(0, subtotal - effectiveDiscount);
           const taxAmount = Math.round(discountedSubtotal * taxRate) / 100;
           const totalAmount = discountedSubtotal + taxAmount;
 
@@ -214,19 +239,19 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // 8. Atomic stock update — prevent overselling
-          for (const item of saleItemsData) {
+          // 8. Atomic stock update — prevent overselling (Fix 2: use saleItemsData directly)
+          for (const saleItem of saleItemsData) {
             const result = await tx.product.updateMany({
               where: {
-                id: item.productId,
-                stockQuantity: { gte: items.find((i) => i.productId === item.productId)!.quantity },
+                id: saleItem.productId,
+                stockQuantity: { gte: saleItem.quantity },
               },
               data: {
-                stockQuantity: { decrement: items.find((i) => i.productId === item.productId)!.quantity },
+                stockQuantity: { decrement: saleItem.quantity },
               },
             });
             if (result.count === 0) {
-              const product = productMap.get(item.productId)!;
+              const product = productMap.get(saleItem.productId)!;
               throw new ApiError(
                 `Insufficient stock for ${product.name}. Available: ${product.stockQuantity}`,
                 409
@@ -238,10 +263,11 @@ export async function POST(request: NextRequest) {
           const newSale = await tx.sale.create({
             data: {
               invoiceNumber,
+              clientSaleId: clientSaleId || null,
               customerId: customerId || null,
               userId: user.id,
               subtotal: discountedSubtotal,
-              discountAmount: totalDiscount,
+              discountAmount: effectiveDiscount,
               taxAmount,
               totalAmount,
               paidAmount: finalPaid,
@@ -277,20 +303,19 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          // 10. Create StockMovement records for each item
-          for (const item of saleItemsData) {
-            const product = productMap.get(item.productId)!;
-            const qty = items.find((i) => i.productId === item.productId)!.quantity;
+          // 10. Create StockMovement records for each item (Fix 2: use saleItem.quantity)
+          for (const saleItem of saleItemsData) {
+            const product = productMap.get(saleItem.productId)!;
             await tx.stockMovement.create({
               data: {
-                productId: item.productId,
+                productId: saleItem.productId,
                 userId: user.id,
                 saleId: newSale.id,
-                quantity: qty,
+                quantity: saleItem.quantity,
                 type: 'OUT',
                 reason: `Sale: ${invoiceNumber}`,
                 previousStock: product.stockQuantity,
-                newStock: product.stockQuantity - qty,
+                newStock: product.stockQuantity - saleItem.quantity,
               },
             });
           }

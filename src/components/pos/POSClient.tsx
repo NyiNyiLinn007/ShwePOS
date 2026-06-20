@@ -21,7 +21,7 @@ interface Product {
   name: string;
   nameMm: string | null;
   sellingPrice: number;
-  costPrice: number;
+  costPrice?: number;
   stockQuantity: number;
   sku: string;
   barcode: string | null;

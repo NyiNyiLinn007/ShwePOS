@@ -8,7 +8,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
     const { id } = await params;
 
     const sale = await prisma.sale.findUnique({
@@ -43,6 +43,11 @@ export async function GET(
       );
     }
 
+    // Cashier can only view their own sales
+    if (user.role === 'CASHIER' && sale.userId !== user.id) {
+      return NextResponse.json({ error: 'Sale not found' }, { status: 404 });
+    }
+
     return NextResponse.json(sale);
   } catch (error) {
     return handleApiError(error, 'Failed to fetch sale');
@@ -54,13 +59,11 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    // Only MANAGER and ADMIN can refund/void
     const user = await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;
     const body = await request.json();
 
-    // Zod validation — require status + reason
     const parsed = updateSaleStatusSchema.safeParse(body);
     if (!parsed.success) {
       return NextResponse.json(
@@ -70,29 +73,39 @@ export async function PUT(
     }
     const { status: newStatus, reason } = parsed.data;
 
-    const existingSale = await prisma.sale.findUnique({
-      where: { id },
-      include: { items: true },
-    });
-
-    if (!existingSale) {
-      return NextResponse.json(
-        { error: 'Sale not found' },
-        { status: 404 }
-      );
-    }
-
-    // State machine: only COMPLETED can transition to REFUNDED or VOIDED
-    if (existingSale.status !== 'COMPLETED') {
-      return NextResponse.json(
-        {
-          error: `Cannot ${newStatus.toLowerCase()} a sale with status "${existingSale.status}". Only COMPLETED sales can be refunded or voided.`,
-        },
-        { status: 400 }
-      );
-    }
-
     const updatedSale = await prisma.$transaction(async (tx) => {
+      // Optimistic lock: atomically transition COMPLETED → target status
+      // If another request already changed the status, count will be 0
+      const transitioned = await tx.sale.updateMany({
+        where: { id, status: 'COMPLETED' },
+        data: {
+          status: newStatus,
+          notes: `[${newStatus} by ${user.name}] ${reason}`,
+        },
+      });
+
+      if (transitioned.count === 0) {
+        // Either sale doesn't exist or already processed
+        const existing = await tx.sale.findUnique({ where: { id }, select: { status: true } });
+        if (!existing) {
+          throw new ApiError('Sale not found', 404);
+        }
+        throw new ApiError(
+          `Cannot ${newStatus.toLowerCase()} — sale is already ${existing.status}`,
+          409
+        );
+      }
+
+      // Fetch sale with items for stock restore
+      const existingSale = await tx.sale.findUnique({
+        where: { id },
+        include: { items: true },
+      });
+
+      if (!existingSale) {
+        throw new ApiError('Sale not found', 404);
+      }
+
       // Restore stock for each item
       for (const item of existingSale.items) {
         // Atomic stock increment
@@ -134,13 +147,9 @@ export async function PUT(
         });
       }
 
-      // Update sale status with reason and user audit
-      return tx.sale.update({
+      // Fetch updated sale with full includes for response
+      const finalSale = await tx.sale.findUnique({
         where: { id },
-        data: {
-          status: newStatus,
-          notes: `[${newStatus} by ${user.name}] ${reason}${existingSale.notes ? `\n---\n${existingSale.notes}` : ''}`,
-        },
         include: {
           items: {
             include: {
@@ -157,6 +166,8 @@ export async function PUT(
           },
         },
       });
+
+      return finalSale;
     }, { maxWait: 10000, timeout: 15000 });
 
     return NextResponse.json(updatedSale);

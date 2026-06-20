@@ -35,7 +35,7 @@ export interface Product {
   sku: string;
   barcode: string | null;
   categoryId: string;
-  costPrice: number;
+  costPrice?: number;
   sellingPrice: number;
   stockQuantity: number;
   lowStockThreshold: number;
@@ -138,7 +138,7 @@ export interface CartItem {
   nameMm: string | null;
   sku: string;
   unitPrice: number;
-  costPrice: number;
+  costPrice?: number;
   quantity: number;
   maxStock: number;
   unit: string;

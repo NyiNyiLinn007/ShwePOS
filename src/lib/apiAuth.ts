@@ -3,9 +3,40 @@
  * Use these in every API route to enforce auth + role checks.
  */
 import { auth } from '@/lib/auth';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { headers } from 'next/headers';
 import { ZodError } from 'zod';
 import type { UserRole } from '@/lib/constants';
+
+/**
+ * Validate Origin header for CSRF protection on state-changing requests.
+ * Call this in POST/PUT/DELETE handlers before processing.
+ */
+export async function validateCsrf(): Promise<void> {
+  const headersList = await headers();
+  const origin = headersList.get('origin');
+  const referer = headersList.get('referer');
+
+  // Allow requests without Origin (e.g., same-origin non-CORS, server-side)
+  if (!origin && !referer) return;
+
+  const allowedHost = process.env.NEXTAUTH_URL
+    ? new URL(process.env.NEXTAUTH_URL).host
+    : null;
+
+  // In development, allow localhost
+  const source = origin || (referer ? new URL(referer).origin : null);
+  if (!source) return;
+
+  const sourceHost = new URL(source).host;
+
+  if (allowedHost && sourceHost !== allowedHost) {
+    // Also allow localhost in development
+    if (!sourceHost.startsWith('localhost') && !sourceHost.startsWith('127.0.0.1')) {
+      throw new ApiError('Forbidden: invalid origin', 403);
+    }
+  }
+}
 
 export interface AuthUser {
   id: string;
@@ -109,6 +140,5 @@ export function handleApiError(error: unknown, fallbackMessage = 'Internal serve
     );
   }
   console.error(fallbackMessage + ':', error);
-  const message = error instanceof Error ? error.message : fallbackMessage;
-  return NextResponse.json({ error: message }, { status: 500 });
+  return NextResponse.json({ error: fallbackMessage }, { status: 500 });
 }

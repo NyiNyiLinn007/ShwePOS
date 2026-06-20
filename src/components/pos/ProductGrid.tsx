@@ -12,7 +12,7 @@ interface ProductForGrid {
   sku: string;
   barcode: string | null;
   sellingPrice: number;
-  costPrice: number;
+  costPrice?: number;
   stockQuantity: number;
   unit: string;
   imageUrl: string | null;
@@ -78,7 +78,7 @@ export default function ProductGrid({ products }: ProductGridProps) {
       sku: product.sku,
       barcode: product.barcode,
       categoryId: product.category.id,
-      costPrice: product.costPrice,
+      costPrice: product.costPrice ?? 0,
       sellingPrice: product.sellingPrice,
       stockQuantity: product.stockQuantity,
       lowStockThreshold: 10,

@@ -43,7 +43,7 @@ export const createProductSchema = z.object({
   isActive: z.boolean().optional().default(true),
 });
 
-export const updateProductSchema = createProductSchema.partial();
+export const updateProductSchema = createProductSchema.partial().omit({ stockQuantity: true });
 
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
@@ -61,6 +61,8 @@ export const createSaleSchema = z.object({
   customerId: z.string().optional().nullable(),
   paymentMethod: PaymentMethodEnum,
   paidAmount: z.number().min(0, 'Paid amount cannot be negative'),
+  cartDiscount: z.number().min(0, 'Cart discount cannot be negative').default(0),
+  clientSaleId: z.string().uuid('Invalid idempotency key').optional(),
   notes: z.string().max(500).optional().nullable(),
 });
 

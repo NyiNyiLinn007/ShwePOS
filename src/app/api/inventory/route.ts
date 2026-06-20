@@ -91,28 +91,38 @@ export async function POST(request: NextRequest) {
 
       switch (type) {
         case 'IN':
-        case 'RETURN':
+        case 'RETURN': {
           newStock = previousStock + quantity;
+          await tx.product.update({
+            where: { id: productId },
+            data: { stockQuantity: { increment: quantity } },
+          });
           break;
-        case 'OUT':
-          if (previousStock < quantity) {
+        }
+        case 'OUT': {
+          const outResult = await tx.product.updateMany({
+            where: { id: productId, stockQuantity: { gte: quantity } },
+            data: { stockQuantity: { decrement: quantity } },
+          });
+          if (outResult.count === 0) {
             throw new Error(
               `Insufficient stock. Current: ${previousStock}, Requested: ${quantity}`
             );
           }
           newStock = previousStock - quantity;
           break;
-        case 'ADJUSTMENT':
+        }
+        case 'ADJUSTMENT': {
           newStock = quantity;
+          await tx.product.update({
+            where: { id: productId },
+            data: { stockQuantity: newStock },
+          });
           break;
+        }
         default:
           throw new Error('Invalid movement type');
       }
-
-      await tx.product.update({
-        where: { id: productId },
-        data: { stockQuantity: newStock },
-      });
 
       const created = await tx.stockMovement.create({
         data: {
