@@ -55,6 +55,8 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
   };
 
   const handleLogout = async () => {
+    // Clear lastLoginAt so check-session won't show false "active session"
+    try { await fetch('/api/auth/signout-cleanup', { method: 'POST' }); } catch { /* ignore */ }
     await signOut({ callbackUrl: '/login' });
   };
 
