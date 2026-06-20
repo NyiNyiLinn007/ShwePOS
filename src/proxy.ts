@@ -1,6 +1,6 @@
 /**
- * Next.js middleware — uses lightweight auth config (no Prisma/bcrypt)
- * to stay under Vercel Edge Function 1MB size limit.
+ * Next.js proxy (formerly middleware) — uses lightweight auth config
+ * (no Prisma/bcrypt) to stay under Vercel Edge Function 1MB size limit.
  */
 import NextAuth from 'next-auth';
 import { authConfig } from '@/lib/auth.config';
