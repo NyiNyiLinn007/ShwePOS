@@ -148,7 +148,7 @@ export function formatTime(date: Date | string): string {
 }
 
 /**
- * Format a Date to a short date string.
+ * Format a Date to a short date string in Myanmar timezone.
  * Example: formatShortDate(new Date()) => "May 23"
  */
 export function formatShortDate(date: Date | string): string {
@@ -156,40 +156,58 @@ export function formatShortDate(date: Date | string): string {
   return d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
+    timeZone: 'Asia/Yangon',
   });
 }
 
+/** Myanmar timezone offset: UTC+6:30 = 6.5 hours in milliseconds */
+const MYANMAR_OFFSET_MS = 6.5 * 60 * 60 * 1000;
+
 /**
- * Get the start and end of the current day in local time.
+ * Get current date parts in Myanmar timezone (UTC+6:30).
+ * Works correctly on Vercel (UTC) and any server timezone.
+ */
+function getMyanmarDateParts(d?: Date): { year: number; month: number; day: number } {
+  const utcMs = (d ?? new Date()).getTime();
+  const mmDate = new Date(utcMs + MYANMAR_OFFSET_MS);
+  return {
+    year: mmDate.getUTCFullYear(),
+    month: mmDate.getUTCMonth(),
+    day: mmDate.getUTCDate(),
+  };
+}
+
+/**
+ * Get the start and end of the current day in Myanmar timezone (UTC+6:30).
+ * Returns UTC Date objects that correspond to Myanmar midnight-to-midnight.
  */
 export function getTodayRange(): { start: Date; end: Date } {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+  const { year, month, day } = getMyanmarDateParts();
+  // Myanmar midnight in UTC = Myanmar midnight - offset
+  const start = new Date(Date.UTC(year, month, day, 0, 0, 0, 0) - MYANMAR_OFFSET_MS);
+  const end = new Date(Date.UTC(year, month, day, 23, 59, 59, 999) - MYANMAR_OFFSET_MS);
   return { start, end };
 }
 
 /**
- * Get the date range for the last N days (including today).
+ * Get the date range for the last N days (including today) in Myanmar timezone.
  */
 export function getLastNDaysRange(n: number): { start: Date; end: Date } {
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-  const start = new Date();
-  start.setDate(start.getDate() - (n - 1));
-  start.setHours(0, 0, 0, 0);
-  return { start, end };
+  const { year, month, day } = getMyanmarDateParts();
+  const endUtc = new Date(Date.UTC(year, month, day, 23, 59, 59, 999) - MYANMAR_OFFSET_MS);
+  const startDate = new Date(Date.UTC(year, month, day - (n - 1), 0, 0, 0, 0) - MYANMAR_OFFSET_MS);
+  return { start: startDate, end: endUtc };
 }
 
 /**
- * Generate an array of the last N day labels.
+ * Generate an array of the last N day labels in Myanmar timezone.
  * Example: getLastNDayLabels(3) => ["May 21", "May 22", "May 23"]
  */
 export function getLastNDayLabels(n: number): string[] {
   const labels: string[] = [];
+  const { year, month, day } = getMyanmarDateParts();
   for (let i = n - 1; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
+    const d = new Date(Date.UTC(year, month, day - i, 12, 0, 0, 0) - MYANMAR_OFFSET_MS);
     labels.push(formatShortDate(d));
   }
   return labels;

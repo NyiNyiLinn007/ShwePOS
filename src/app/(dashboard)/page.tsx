@@ -1,3 +1,5 @@
+export const dynamic = 'force-dynamic';
+
 import { prisma } from '@/lib/prisma';
 import { getTodayRange, getLastNDayLabels, formatShortDate } from '@/lib/utils';
 import DashboardClient from '@/components/dashboard/DashboardClient';
