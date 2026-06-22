@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requireAuth, requireRole, handleApiError } from '@/lib/apiAuth';
+import { requireAuth, requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 
 export async function GET(request: NextRequest) {
   try {
@@ -57,6 +57,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    await validateCsrf(request);
     await requireRole('MANAGER', 'ADMIN');
 
     const body = await request.json();

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requireRole, handleApiError } from '@/lib/apiAuth';
+import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
+import { createExpenseSchema } from '@/lib/validations';
 
 export async function GET(request: NextRequest) {
   try {
@@ -68,41 +69,17 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    await validateCsrf(request);
     const user = await requireRole('MANAGER', 'ADMIN');
 
-    const body = await request.json();
-    const { category, amount, description, date } = body;
-
-    if (!category || !amount) {
+    const parsed = createExpenseSchema.safeParse(await request.json());
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: 'Category and amount are required' },
+        { error: 'Validation failed', details: parsed.error.flatten().fieldErrors },
         { status: 400 }
       );
     }
-
-    if (typeof amount !== 'number' || amount <= 0) {
-      return NextResponse.json(
-        { error: 'Amount must be a positive number' },
-        { status: 400 }
-      );
-    }
-
-    const validCategories = [
-      'Rent',
-      'Utilities',
-      'Supplies',
-      'Transport',
-      'Salary',
-      'Marketing',
-      'Maintenance',
-      'Other',
-    ];
-    if (!validCategories.includes(category)) {
-      return NextResponse.json(
-        { error: 'Invalid expense category' },
-        { status: 400 }
-      );
-    }
+    const { category, amount, description, date } = parsed.data;
 
     const expense = await prisma.expense.create({
       data: {

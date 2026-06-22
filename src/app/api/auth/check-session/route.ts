@@ -1,6 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
+import { handleApiError, validateCsrf } from '@/lib/apiAuth';
+import {
+  consumeRateLimit,
+  getClientIp,
+  normalizeRateLimitPart,
+  resetRateLimit,
+} from '@/lib/rateLimit';
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_EMAIL_LIMIT = 10;
+const LOGIN_IP_LIMIT = 50;
+
+function rateLimitedResponse(retryAfterSeconds: number) {
+  return NextResponse.json(
+    { error: 'Too many login attempts. Please try again later.' },
+    {
+      status: 429,
+      headers: { 'Retry-After': String(retryAfterSeconds) },
+    }
+  );
+}
 
 /**
  * POST /api/auth/check-session
@@ -9,6 +30,8 @@ import { prisma } from '@/lib/prisma';
  */
 export async function POST(request: NextRequest) {
   try {
+    await validateCsrf(request);
+
     const body = await request.json();
     const { email, password } = body;
 
@@ -19,8 +42,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const normalizedEmail = normalizeRateLimitPart(email as string);
+    const emailKey = `login:email:${normalizedEmail}`;
+    const ipKey = `login:ip:${normalizeRateLimitPart(getClientIp(request.headers))}`;
+    const emailLimit = consumeRateLimit(emailKey, {
+      limit: LOGIN_EMAIL_LIMIT,
+      windowMs: LOGIN_WINDOW_MS,
+    });
+    const ipLimit = consumeRateLimit(ipKey, {
+      limit: LOGIN_IP_LIMIT,
+      windowMs: LOGIN_WINDOW_MS,
+    });
+
+    if (!emailLimit.allowed || !ipLimit.allowed) {
+      return rateLimitedResponse(
+        Math.max(emailLimit.retryAfterSeconds, ipLimit.retryAfterSeconds)
+      );
+    }
+
     const user = await prisma.user.findUnique({
-      where: { email: (email as string).toLowerCase().trim() },
+      where: { email: normalizedEmail },
       select: {
         id: true,
         password: true,
@@ -53,15 +94,15 @@ export async function POST(request: NextRequest) {
       user.lastLoginAt !== null &&
       Date.now() - new Date(user.lastLoginAt).getTime() < 24 * 60 * 60 * 1000;
 
+    resetRateLimit(emailKey);
+    resetRateLimit(ipKey);
+
     return NextResponse.json({
       valid: true,
       hasActiveSession,
       lastLoginAt: user.lastLoginAt?.toISOString() ?? null,
     });
-  } catch {
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
+  } catch (error) {
+    return handleApiError(error, 'Failed to check session');
   }
 }

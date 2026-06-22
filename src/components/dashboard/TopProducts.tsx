@@ -1,6 +1,6 @@
 'use client';
 
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useAppStore } from '@/lib/store';
 import { formatCurrency, formatNumber } from '@/lib/utils';
 
 interface TopProductItem {
@@ -15,7 +15,8 @@ interface TopProductsProps {
 }
 
 export default function TopProducts({ products }: TopProductsProps) {
-  const { t } = useSettingsStore();
+  const { language } = useAppStore();
+  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
   const maxRevenue = products.length > 0 ? Math.max(...products.map((p) => p.totalRevenue)) : 1;
 
   return (

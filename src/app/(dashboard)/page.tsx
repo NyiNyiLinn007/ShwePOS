@@ -6,12 +6,15 @@ import { requirePageAuth } from '@/lib/pageAuth';
 import DashboardClient from '@/components/dashboard/DashboardClient';
 
 export default async function DashboardPage() {
-  await requirePageAuth();
+  const session = await requirePageAuth();
+  const isCashier = session.user.role === 'CASHIER';
+  const saleScope = isCashier ? { userId: session.user.id } : {};
   const { start: todayStart, end: todayEnd } = getTodayRange();
 
   // --- Fetch today's sales data ---
   const todaySales = await prisma.sale.findMany({
     where: {
+      ...saleScope,
       createdAt: { gte: todayStart, lte: todayEnd },
       status: 'COMPLETED',
     },
@@ -61,6 +64,7 @@ export default async function DashboardPage() {
     by: ['productId'],
     where: {
       sale: {
+        ...saleScope,
         status: 'COMPLETED',
         createdAt: { gte: thirtyDaysAgo },
       },
@@ -98,6 +102,7 @@ export default async function DashboardPage() {
 
   const last7DaysSales = await prisma.sale.findMany({
     where: {
+      ...saleScope,
       createdAt: { gte: sevenDaysAgo },
       status: 'COMPLETED',
     },

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requireAuth, requireRole, handleApiError, ApiError } from '@/lib/apiAuth';
+import { requireAuth, handleApiError, ApiError, validateCsrf } from '@/lib/apiAuth';
 import { createSaleSchema } from '@/lib/validations';
 
 export async function GET(request: NextRequest) {
@@ -83,8 +83,32 @@ export async function GET(request: NextRequest) {
 
 const MAX_INVOICE_RETRIES = 3;
 
+const saleResponseInclude = {
+  items: { include: { product: { select: { name: true, nameMm: true, sku: true } } } },
+  customer: { select: { id: true, name: true, phone: true } },
+  user: { select: { id: true, name: true } },
+} as const;
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code: string }).code === 'P2002'
+  );
+}
+
+function findExistingSaleByClientSaleId(clientSaleId: string) {
+  return prisma.sale.findUnique({
+    where: { clientSaleId },
+    include: saleResponseInclude,
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
+    await validateCsrf(request);
+
     // Auth: all authenticated users can create sales
     const user = await requireAuth();
 
@@ -98,7 +122,16 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const { items, customerId, paymentMethod, paidAmount, cartDiscount, clientSaleId, notes } = parsed.data;
+    const {
+      items,
+      customerId,
+      paymentMethod,
+      paidAmount,
+      cartDiscount,
+      clientSaleId,
+      paymentReference,
+      notes,
+    } = parsed.data;
 
     // Fix 6: CREDIT sales not yet supported
     if (paymentMethod === 'CREDIT') {
@@ -108,16 +141,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const cleanPaymentReference = paymentReference?.trim() || null;
+    if (paymentMethod !== 'CASH' && !cleanPaymentReference) {
+      return NextResponse.json(
+        { error: 'Payment reference is required for non-cash payments' },
+        { status: 400 }
+      );
+    }
+
     // Fix 5: Idempotency — return existing sale if same clientSaleId
     if (clientSaleId) {
-      const existingSale = await prisma.sale.findUnique({
-        where: { clientSaleId },
-        include: {
-          items: { include: { product: { select: { name: true, nameMm: true, sku: true } } } },
-          customer: { select: { id: true, name: true, phone: true } },
-          user: { select: { id: true, name: true } },
-        },
-      });
+      const existingSale = await findExistingSaleByClientSaleId(clientSaleId);
       if (existingSale) {
         return NextResponse.json(existingSale, { status: 200 });
       }
@@ -165,6 +199,7 @@ export async function POST(request: NextRequest) {
           // 4. Validate items and compute server-side totals
           let subtotal = 0;
           let totalDiscount = 0;
+          const stockDeductions = new Map<string, number>();
           const saleItemsData: Array<{
             productId: string;
             quantity: number;
@@ -201,13 +236,19 @@ export async function POST(request: NextRequest) {
               discount: itemDiscount,
               total: itemTotal,
             });
+            stockDeductions.set(
+              item.productId,
+              (stockDeductions.get(item.productId) ?? 0) + item.quantity
+            );
           }
 
           // 5. Compute tax and grand total (Fix 1: include cartDiscount)
           const totalItemDiscount = totalDiscount;
-          const effectiveDiscount = totalItemDiscount + (cartDiscount || 0);
+          const maxCartDiscount = Math.max(0, subtotal - totalItemDiscount);
+          const cartDiscountAmount = Math.min(cartDiscount || 0, maxCartDiscount);
+          const effectiveDiscount = totalItemDiscount + cartDiscountAmount;
           const discountedSubtotal = Math.max(0, subtotal - effectiveDiscount);
-          const taxAmount = Math.round(discountedSubtotal * taxRate) / 100;
+          const taxAmount = Math.round(discountedSubtotal * (taxRate / 100));
           const totalAmount = discountedSubtotal + taxAmount;
 
           // 6. Validate payment
@@ -240,23 +281,46 @@ export async function POST(request: NextRequest) {
           }
 
           // 8. Atomic stock update — prevent overselling (Fix 2: use saleItemsData directly)
-          for (const saleItem of saleItemsData) {
+          const stockMovementsData: Array<{
+            productId: string;
+            quantity: number;
+            previousStock: number;
+            newStock: number;
+          }> = [];
+
+          for (const [productId, quantity] of stockDeductions) {
             const result = await tx.product.updateMany({
               where: {
-                id: saleItem.productId,
-                stockQuantity: { gte: saleItem.quantity },
+                id: productId,
+                stockQuantity: { gte: quantity },
               },
               data: {
-                stockQuantity: { decrement: saleItem.quantity },
+                stockQuantity: { decrement: quantity },
               },
             });
             if (result.count === 0) {
-              const product = productMap.get(saleItem.productId)!;
+              const currentProduct =
+                await tx.product.findUnique({
+                  where: { id: productId },
+                  select: { name: true, stockQuantity: true },
+                }) ?? productMap.get(productId);
               throw new ApiError(
-                `Insufficient stock for ${product.name}. Available: ${product.stockQuantity}`,
+                `Insufficient stock for ${currentProduct?.name ?? 'product'}. Available: ${currentProduct?.stockQuantity ?? 0}`,
                 409
               );
             }
+
+            const updatedProduct = await tx.product.findUnique({
+              where: { id: productId },
+              select: { stockQuantity: true },
+            });
+            const newStock = updatedProduct?.stockQuantity ?? 0;
+            stockMovementsData.push({
+              productId,
+              quantity,
+              previousStock: newStock + quantity,
+              newStock,
+            });
           }
 
           // 9. Create the sale
@@ -266,13 +330,16 @@ export async function POST(request: NextRequest) {
               clientSaleId: clientSaleId || null,
               customerId: customerId || null,
               userId: user.id,
-              subtotal: discountedSubtotal,
+              subtotal,
               discountAmount: effectiveDiscount,
               taxAmount,
               totalAmount,
               paidAmount: finalPaid,
               changeAmount,
               paymentMethod,
+              paymentStatus: 'PAID',
+              paymentReference: cleanPaymentReference,
+              paymentProviderResponse: null,
               notes: notes || null,
               status: 'COMPLETED',
               items: {
@@ -286,36 +353,21 @@ export async function POST(request: NextRequest) {
                 })),
               },
             },
-            include: {
-              items: {
-                include: {
-                  product: {
-                    select: { name: true, nameMm: true, sku: true },
-                  },
-                },
-              },
-              customer: {
-                select: { id: true, name: true, phone: true },
-              },
-              user: {
-                select: { id: true, name: true },
-              },
-            },
+            include: saleResponseInclude,
           });
 
-          // 10. Create StockMovement records for each item (Fix 2: use saleItem.quantity)
-          for (const saleItem of saleItemsData) {
-            const product = productMap.get(saleItem.productId)!;
+          // 10. Create StockMovement records per product using actual updated stock.
+          for (const movement of stockMovementsData) {
             await tx.stockMovement.create({
               data: {
-                productId: saleItem.productId,
+                productId: movement.productId,
                 userId: user.id,
                 saleId: newSale.id,
-                quantity: saleItem.quantity,
+                quantity: movement.quantity,
                 type: 'OUT',
                 reason: `Sale: ${invoiceNumber}`,
-                previousStock: product.stockQuantity,
-                newStock: product.stockQuantity - saleItem.quantity,
+                previousStock: movement.previousStock,
+                newStock: movement.newStock,
               },
             });
           }
@@ -330,18 +382,38 @@ export async function POST(request: NextRequest) {
             });
           }
 
+          if (paymentMethod === 'CASH') {
+            const openShift = await tx.shift.findFirst({
+              where: { userId: user.id, status: 'OPEN' },
+              select: { id: true },
+              orderBy: { openedAt: 'desc' },
+            });
+
+            await tx.cashDrawerMovement.create({
+              data: {
+                shiftId: openShift?.id ?? null,
+                saleId: newSale.id,
+                userId: user.id,
+                type: 'CASH_SALE',
+                amount: totalAmount,
+                reason: `Sale: ${invoiceNumber}`,
+              },
+            });
+          }
+
           return newSale;
         }, { maxWait: 10000, timeout: 15000 });
 
         return NextResponse.json(sale, { status: 201 });
       } catch (e: unknown) {
         // Retry on unique constraint violation (invoice number race)
-        if (
-          e &&
-          typeof e === 'object' &&
-          'code' in e &&
-          (e as { code: string }).code === 'P2002'
-        ) {
+        if (isUniqueConstraintError(e)) {
+          if (clientSaleId) {
+            const existingSale = await findExistingSaleByClientSaleId(clientSaleId);
+            if (existingSale) {
+              return NextResponse.json(existingSale, { status: 200 });
+            }
+          }
           lastError = e;
           continue;
         }

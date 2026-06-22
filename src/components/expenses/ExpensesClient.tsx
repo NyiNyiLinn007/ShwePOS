@@ -13,6 +13,7 @@ import {
 import { useAppStore } from '@/lib/store';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDate } from '@/lib/utils';
+import { EXPENSE_CATEGORIES as SHARED_EXPENSE_CATEGORIES } from '@/lib/constants';
 
 /* ---------- Types ---------- */
 
@@ -55,16 +56,11 @@ interface ExpenseFormData {
 
 const ITEMS_PER_PAGE = 10;
 
-const EXPENSE_CATEGORIES = [
-  { value: 'Rent', en: 'Rent', mm: 'အငှား' },
-  { value: 'Utilities', en: 'Utilities', mm: 'အသုံးအဆောင်' },
-  { value: 'Supplies', en: 'Supplies', mm: 'ပစ္စည်းများ' },
-  { value: 'Transport', en: 'Transport', mm: 'သယ်ယူပို့ဆောင်ရေး' },
-  { value: 'Salary', en: 'Salary', mm: 'လစာ' },
-  { value: 'Marketing', en: 'Marketing', mm: 'စျေးကွက်ရှာဖွေရေး' },
-  { value: 'Maintenance', en: 'Maintenance', mm: 'ပြုပြင်ထိန်းသိမ်းရေး' },
-  { value: 'Other', en: 'Other', mm: 'အခြား' },
-];
+const EXPENSE_CATEGORIES = SHARED_EXPENSE_CATEGORIES.map((cat) => ({
+  value: cat.value,
+  en: cat.label,
+  mm: cat.labelMm,
+}));
 
 const CATEGORY_COLORS: Record<string, string> = {
   Rent: '#D4A843',
@@ -74,6 +70,9 @@ const CATEGORY_COLORS: Record<string, string> = {
   Salary: '#A855F7',
   Marketing: '#EC4899',
   Maintenance: '#06B6D4',
+  Food: '#F59E0B',
+  Insurance: '#6366F1',
+  Tax: '#DC2626',
   Other: '#64748B',
 };
 

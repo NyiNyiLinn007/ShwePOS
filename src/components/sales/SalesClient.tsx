@@ -84,6 +84,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [voidTarget, setVoidTarget] = useState<Sale | null>(null);
   const [voidAction, setVoidAction] = useState<'VOIDED' | 'REFUNDED'>('VOIDED');
+  const [voidReason, setVoidReason] = useState('');
   const [processing, setProcessing] = useState(false);
 
   // Filtered sales
@@ -158,13 +159,18 @@ export function SalesClient({ initialSales }: SalesClientProps) {
   // Void/Refund
   async function handleVoidRefund() {
     if (!voidTarget) return;
+    const reason = voidReason.trim();
+    if (!reason) {
+      addToast(t('Reason is required', 'Reason is required'), 'error');
+      return;
+    }
     setProcessing(true);
 
     try {
       const res = await fetch(`/api/sales/${voidTarget.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: voidAction }),
+        body: JSON.stringify({ status: voidAction, reason }),
       });
 
       const data = await res.json();
@@ -184,6 +190,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
         'success'
       );
       setVoidTarget(null);
+      setVoidReason('');
       setSelectedSale(null);
     } catch {
       addToast(t('Network error. Please try again.', 'ကွန်ရက်ချို့ယွင်းချက်။ ထပ်ကြိုးစားပါ။'), 'error');
@@ -779,6 +786,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                     onClick={() => {
                       setVoidTarget(selectedSale);
                       setVoidAction('VOIDED');
+                      setVoidReason('');
                     }}
                   >
                     🚫 {t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')}
@@ -788,6 +796,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                     onClick={() => {
                       setVoidTarget(selectedSale);
                       setVoidAction('REFUNDED');
+                      setVoidReason('');
                     }}
                   >
                     ↩️ {t('Refund', 'ပြန်အမ်းရန်')}
@@ -809,7 +818,10 @@ export function SalesClient({ initialSales }: SalesClientProps) {
       {voidTarget && (
         <div
           className="modal-backdrop"
-          onClick={() => setVoidTarget(null)}
+          onClick={() => {
+            setVoidTarget(null);
+            setVoidReason('');
+          }}
         >
           <div
             className="modal"
@@ -822,7 +834,10 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               </h2>
               <button
                 className="btn btn-ghost btn-icon"
-                onClick={() => setVoidTarget(null)}
+                onClick={() => {
+                  setVoidTarget(null);
+                  setVoidReason('');
+                }}
               >
                 ✕
               </button>
@@ -858,11 +873,27 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               >
                 ⚠ {t('This action will restore stock quantities for all items in this sale.', 'ဤလုပ်ဆောင်ချက်သည် ဤအရောင်းရှိပစ္စည်းများ၏ ကုန်လက်ကျန်ကို ပြန်လည်ထည့်ပေးပါမည်။')}
               </div>
+              <div className="input-group" style={{ marginTop: 'var(--space-md)' }}>
+                <label className="input-label">
+                  {t('Reason', 'Reason')} *
+                </label>
+                <textarea
+                  className="input"
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  placeholder={t('Enter refund or void reason...', 'Enter refund or void reason...')}
+                  rows={3}
+                  maxLength={500}
+                />
+              </div>
             </div>
             <div className="modal-footer">
               <button
                 className="btn btn-secondary"
-                onClick={() => setVoidTarget(null)}
+                onClick={() => {
+                  setVoidTarget(null);
+                  setVoidReason('');
+                }}
                 disabled={processing}
               >
                 {t('Cancel', 'မလုပ်တော့ပါ')}
@@ -870,7 +901,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               <button
                 className="btn btn-danger"
                 onClick={handleVoidRefund}
-                disabled={processing}
+                disabled={processing || !voidReason.trim()}
               >
                 {processing
                   ? t('Processing...', 'ဆောင်ရွက်နေသည်...')

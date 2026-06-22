@@ -47,6 +47,19 @@ interface SaleResponse {
 
 type PaymentMethod = 'CASH' | 'CARD' | 'MOBILE_BANKING';
 
+function createClientSaleId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) =>
+    (
+      Number(c) ^
+      (Math.random() * 16) >> (Number(c) / 4)
+    ).toString(16)
+  );
+}
+
 const PAYMENT_METHODS: Array<{
   id: PaymentMethod;
   label: string;
@@ -70,6 +83,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [paidAmountStr, setPaidAmountStr] = useState('');
+  const [paymentReference, setPaymentReference] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
@@ -80,6 +94,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
     Array<{ id: string; name: string; phone: string | null }>
   >([]);
   const [showCustomerSearch, setShowCustomerSearch] = useState(false);
+  const [clientSaleId] = useState(createClientSaleId);
 
   const subtotal = getSubtotal();
   const afterDiscount = getTotal(); // This is subtotal - discount
@@ -144,7 +159,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
   };
 
   const canProcess =
-    paymentMethod !== 'CASH' || paidAmount >= grandTotal;
+    paymentMethod === 'CASH' ? paidAmount >= grandTotal : paymentReference.trim().length > 0;
 
   const handleProcess = async () => {
     if (!canProcess || isProcessing) return;
@@ -153,7 +168,6 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
     setError(null);
 
     const finalPaidAmount = paymentMethod === 'CASH' ? paidAmount : grandTotal;
-    const finalChangeAmount = paymentMethod === 'CASH' ? Math.max(0, finalPaidAmount - grandTotal) : 0;
 
     try {
       const res = await fetch('/api/sales', {
@@ -163,16 +177,13 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
           items: items.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
-            unitPrice: item.unitPrice,
             discount: 0,
           })),
           customerId: customerId || null,
-          subtotal,
-          discountAmount,
-          taxAmount,
-          totalAmount: grandTotal,
+          cartDiscount: discountAmount,
+          clientSaleId,
+          paymentReference: paymentMethod === 'CASH' ? null : paymentReference.trim(),
           paidAmount: finalPaidAmount,
-          changeAmount: finalChangeAmount,
           paymentMethod,
           notes: notes || null,
         }),
@@ -360,6 +371,29 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {paymentMethod !== 'CASH' && (
+            <div>
+              <div
+                style={{
+                  fontSize: 'var(--text-sm)',
+                  fontWeight: 600,
+                  marginBottom: 'var(--space-sm)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {t('Payment Reference', 'Payment Reference')}
+              </div>
+              <input
+                type="text"
+                className="input"
+                placeholder={t('Transaction ID or approval code...', 'Transaction ID or approval code...')}
+                value={paymentReference}
+                onChange={(e) => setPaymentReference(e.target.value)}
+                maxLength={100}
+              />
             </div>
           )}
 

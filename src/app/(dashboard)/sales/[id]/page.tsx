@@ -9,7 +9,7 @@ interface SaleDetailPageProps {
 }
 
 export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
-  await requirePageAuth();
+  const session = await requirePageAuth();
   const { id } = await params;
 
   const sale = await prisma.sale.findUnique({
@@ -38,6 +38,10 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
   });
 
   if (!sale) {
+    notFound();
+  }
+
+  if (session.user.role === 'CASHIER' && sale.userId !== session.user.id) {
     notFound();
   }
 

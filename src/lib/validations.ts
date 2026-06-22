@@ -2,6 +2,7 @@
  * Zod validation schemas for all API routes.
  */
 import { z } from 'zod';
+import { EXPENSE_CATEGORY_VALUES } from '@/lib/constants';
 
 // ---- Shared Enums ----
 
@@ -63,6 +64,7 @@ export const createSaleSchema = z.object({
   paidAmount: z.number().min(0, 'Paid amount cannot be negative'),
   cartDiscount: z.number().min(0, 'Cart discount cannot be negative').default(0),
   clientSaleId: z.string().uuid('Invalid idempotency key').optional(),
+  paymentReference: z.string().max(100).optional().nullable(),
   notes: z.string().max(500).optional().nullable(),
 });
 
@@ -102,13 +104,8 @@ export type UpdateCustomerInput = z.infer<typeof updateCustomerSchema>;
 
 // ---- Expense Schemas ----
 
-const EXPENSE_CATEGORIES = [
-  'RENT', 'UTILITIES', 'SALARY', 'SUPPLIES', 'MAINTENANCE',
-  'TRANSPORT', 'MARKETING', 'FOOD', 'INSURANCE', 'TAX', 'OTHER',
-] as const;
-
 export const createExpenseSchema = z.object({
-  category: z.enum(EXPENSE_CATEGORIES),
+  category: z.enum(EXPENSE_CATEGORY_VALUES),
   amount: z.number().positive('Amount must be positive'),
   description: z.string().max(500).optional().nullable(),
   date: z.string().optional(), // ISO date string

@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { handleApiError, validateCsrf } from '@/lib/apiAuth';
 
 /**
  * POST /api/auth/signout-cleanup
@@ -8,7 +9,13 @@ import { prisma } from '@/lib/prisma';
  * This prevents check-session from falsely detecting an "active session"
  * after the user has properly logged out.
  */
-export async function POST() {
+export async function POST(request: NextRequest) {
+  try {
+    await validateCsrf(request);
+  } catch (error) {
+    return handleApiError(error, 'Failed to validate request');
+  }
+
   try {
     const session = await auth();
     if (!session?.user?.id) {

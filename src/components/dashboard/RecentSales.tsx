@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useAppStore } from '@/lib/store';
 import { formatCurrency, formatTime } from '@/lib/utils';
 
 interface RecentSaleItem {
@@ -33,7 +33,8 @@ const paymentMethodLabel: Record<string, { en: string; mm: string }> = {
 };
 
 export default function RecentSales({ sales }: RecentSalesProps) {
-  const { t } = useSettingsStore();
+  const { language } = useAppStore();
+  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
 
   return (
     <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>

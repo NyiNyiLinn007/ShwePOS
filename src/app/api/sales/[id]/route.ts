@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requireAuth, requireRole, handleApiError, ApiError } from '@/lib/apiAuth';
+import { requireAuth, requireRole, handleApiError, ApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateSaleStatusSchema } from '@/lib/validations';
 
 export async function GET(
@@ -59,6 +59,8 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await validateCsrf(request);
+
     const user = await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;
@@ -106,6 +108,19 @@ export async function PUT(
         throw new ApiError('Sale not found', 404);
       }
 
+      await tx.saleAdjustment.create({
+        data: {
+          saleId: existingSale.id,
+          approverUserId: user.id,
+          type: newStatus === 'REFUNDED' ? 'REFUND' : 'VOID',
+          reason,
+          amount: existingSale.totalAmount,
+          paymentMethod: existingSale.paymentMethod,
+          paymentReversalStatus:
+            existingSale.paymentMethod === 'CASH' ? 'COMPLETED' : 'PENDING',
+        },
+      });
+
       // Restore stock for each item
       for (const item of existingSale.items) {
         // Atomic stock increment
@@ -143,6 +158,25 @@ export async function PUT(
           where: { id: existingSale.customerId },
           data: {
             totalPurchases: { decrement: existingSale.totalAmount },
+          },
+        });
+      }
+
+      if (existingSale.paymentMethod === 'CASH') {
+        const openShift = await tx.shift.findFirst({
+          where: { userId: existingSale.userId, status: 'OPEN' },
+          select: { id: true },
+          orderBy: { openedAt: 'desc' },
+        });
+
+        await tx.cashDrawerMovement.create({
+          data: {
+            shiftId: openShift?.id ?? null,
+            saleId: existingSale.id,
+            userId: user.id,
+            type: newStatus === 'REFUNDED' ? 'REFUND' : 'VOID',
+            amount: -existingSale.totalAmount,
+            reason: `${newStatus}: ${reason} (Invoice: ${existingSale.invoiceNumber})`,
           },
         });
       }

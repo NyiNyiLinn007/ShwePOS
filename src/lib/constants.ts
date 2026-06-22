@@ -39,19 +39,35 @@ export const STOCK_MOVEMENT_TYPES = [
 ] as const;
 
 /** Expense categories. */
-export const EXPENSE_CATEGORIES = [
-  { value: 'RENT', label: 'Rent', labelMm: 'အခန်းခ' },
-  { value: 'UTILITIES', label: 'Utilities', labelMm: 'ရေ/မီး' },
-  { value: 'SALARY', label: 'Salary', labelMm: 'လစာ' },
-  { value: 'SUPPLIES', label: 'Supplies', labelMm: 'ကုန်ပစ္စည်းများ' },
-  { value: 'MAINTENANCE', label: 'Maintenance', labelMm: 'ပြုပြင်ထိန်းသိမ်းစရိတ်' },
-  { value: 'TRANSPORT', label: 'Transport', labelMm: 'သယ်ယူပို့ဆောင်ရေး' },
-  { value: 'MARKETING', label: 'Marketing', labelMm: 'စျေးကွက်ရှာဖွေရေး' },
-  { value: 'FOOD', label: 'Food & Beverages', labelMm: 'အစားအသောက်' },
-  { value: 'INSURANCE', label: 'Insurance', labelMm: 'အာမခံ' },
-  { value: 'TAX', label: 'Tax', labelMm: 'အခွန်' },
-  { value: 'OTHER', label: 'Other', labelMm: 'အခြား' },
+export const EXPENSE_CATEGORY_VALUES = [
+  'Rent',
+  'Utilities',
+  'Salary',
+  'Supplies',
+  'Maintenance',
+  'Transport',
+  'Marketing',
+  'Food',
+  'Insurance',
+  'Tax',
+  'Other',
 ] as const;
+
+export type ExpenseCategory = typeof EXPENSE_CATEGORY_VALUES[number];
+
+export const EXPENSE_CATEGORIES = [
+  { value: 'Rent', label: 'Rent', labelMm: 'အခန်းခ' },
+  { value: 'Utilities', label: 'Utilities', labelMm: 'ရေ/မီး' },
+  { value: 'Salary', label: 'Salary', labelMm: 'လစာ' },
+  { value: 'Supplies', label: 'Supplies', labelMm: 'ကုန်ပစ္စည်းများ' },
+  { value: 'Maintenance', label: 'Maintenance', labelMm: 'ပြုပြင်ထိန်းသိမ်းစရိတ်' },
+  { value: 'Transport', label: 'Transport', labelMm: 'သယ်ယူပို့ဆောင်ရေး' },
+  { value: 'Marketing', label: 'Marketing', labelMm: 'စျေးကွက်ရှာဖွေရေး' },
+  { value: 'Food', label: 'Food & Beverages', labelMm: 'အစားအသောက်' },
+  { value: 'Insurance', label: 'Insurance', labelMm: 'အာမခံ' },
+  { value: 'Tax', label: 'Tax', labelMm: 'အခွန်' },
+  { value: 'Other', label: 'Other', labelMm: 'အခြား' },
+] satisfies ReadonlyArray<{ value: ExpenseCategory; label: string; labelMm: string }>;
 
 /** Sale statuses. */
 export const SALE_STATUSES = [

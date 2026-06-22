@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requireAuth, requireRole, handleApiError } from '@/lib/apiAuth';
+import { requireAuth, requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 
 export async function GET(
   _request: NextRequest,
@@ -48,6 +48,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await validateCsrf(request);
     await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;
@@ -100,6 +101,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await validateCsrf(_request);
     await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;

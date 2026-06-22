@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requireRole, handleApiError } from '@/lib/apiAuth';
+import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
+import { updateExpenseSchema } from '@/lib/validations';
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -32,41 +33,22 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await validateCsrf(request);
     await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;
-    const body = await request.json();
-    const { category, amount, description, date } = body;
+    const parsed = updateExpenseSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Validation failed', details: parsed.error.flatten().fieldErrors },
+        { status: 400 }
+      );
+    }
+    const { category, amount, description, date } = parsed.data;
 
     const existing = await prisma.expense.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
-    }
-
-    if (amount !== undefined && (typeof amount !== 'number' || amount <= 0)) {
-      return NextResponse.json(
-        { error: 'Amount must be a positive number' },
-        { status: 400 }
-      );
-    }
-
-    if (category) {
-      const validCategories = [
-        'Rent',
-        'Utilities',
-        'Supplies',
-        'Transport',
-        'Salary',
-        'Marketing',
-        'Maintenance',
-        'Other',
-      ];
-      if (!validCategories.includes(category)) {
-        return NextResponse.json(
-          { error: 'Invalid expense category' },
-          { status: 400 }
-        );
-      }
     }
 
     const expense = await prisma.expense.update({
@@ -93,6 +75,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    await validateCsrf(request);
     await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;

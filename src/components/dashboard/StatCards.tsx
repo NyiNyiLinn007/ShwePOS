@@ -1,6 +1,6 @@
 'use client';
 
-import { useSettingsStore } from '@/stores/settingsStore';
+import { useAppStore } from '@/lib/store';
 import { formatCurrency } from '@/lib/utils';
 
 interface StatCardsProps {
@@ -16,7 +16,8 @@ export default function StatCards({
   totalProducts,
   lowStockCount,
 }: StatCardsProps) {
-  const { t } = useSettingsStore();
+  const { language } = useAppStore();
+  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
 
   const stats = [
     {

@@ -8,34 +8,63 @@ import { headers } from 'next/headers';
 import { ZodError } from 'zod';
 import type { UserRole } from '@/lib/constants';
 
+function hostFromUrl(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function normalizeHost(value: string | null): string | null {
+  const host = value?.split(',')[0]?.trim().toLowerCase();
+  return host || null;
+}
+
+function isLocalHost(host: string | null): boolean {
+  return !!host && (
+    host.startsWith('localhost') ||
+    host.startsWith('127.0.0.1') ||
+    host.startsWith('[::1]')
+  );
+}
+
 /**
- * Validate Origin header for CSRF protection on state-changing requests.
- * Call this in POST/PUT/DELETE handlers before processing.
+ * Validate Origin/Referer for CSRF protection on state-changing requests.
+ * Call this in POST/PUT/PATCH/DELETE handlers before processing.
  */
-export async function validateCsrf(): Promise<void> {
-  const headersList = await headers();
+export async function validateCsrf(request?: NextRequest): Promise<void> {
+  const headersList = request?.headers ?? await headers();
   const origin = headersList.get('origin');
   const referer = headersList.get('referer');
 
-  // Allow requests without Origin (e.g., same-origin non-CORS, server-side)
-  if (!origin && !referer) return;
-
-  const allowedHost = process.env.NEXTAUTH_URL
-    ? new URL(process.env.NEXTAUTH_URL).host
-    : null;
-
-  // In development, allow localhost
-  const source = origin || (referer ? new URL(referer).origin : null);
-  if (!source) return;
-
-  const sourceHost = new URL(source).host;
-
-  if (allowedHost && sourceHost !== allowedHost) {
-    // Also allow localhost in development
-    if (!sourceHost.startsWith('localhost') && !sourceHost.startsWith('127.0.0.1')) {
-      throw new ApiError('Forbidden: invalid origin', 403);
-    }
+  if (!origin && !referer) {
+    if (process.env.NODE_ENV !== 'production') return;
+    throw new ApiError('Forbidden: missing origin', 403);
   }
+
+  const sourceHost = hostFromUrl(origin) ?? hostFromUrl(referer);
+  if (!sourceHost) {
+    throw new ApiError('Forbidden: invalid origin', 403);
+  }
+
+  const allowedHosts = new Set<string>();
+  const requestHost =
+    normalizeHost(headersList.get('x-forwarded-host')) ??
+    normalizeHost(headersList.get('host'));
+  const configuredHost = hostFromUrl(process.env.NEXTAUTH_URL ?? null);
+
+  if (requestHost) allowedHosts.add(requestHost);
+  if (configuredHost) allowedHosts.add(configuredHost);
+
+  if (allowedHosts.has(sourceHost)) return;
+
+  if (process.env.NODE_ENV !== 'production' && isLocalHost(sourceHost) && isLocalHost(requestHost)) {
+    return;
+  }
+
+  throw new ApiError('Forbidden: invalid origin', 403);
 }
 
 export interface AuthUser {

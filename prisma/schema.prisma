@@ -21,7 +21,10 @@ model User {
   updatedAt      DateTime  @updatedAt
 
   sales          Sale[]
+  saleAdjustments SaleAdjustment[]
   stockMovements StockMovement[]
+  shifts         Shift[]
+  cashDrawerMovements CashDrawerMovement[]
   expenses       Expense[]
 }
 
@@ -86,6 +89,9 @@ model Sale {
   paidAmount    Float    @default(0)
   changeAmount  Float    @default(0)
   paymentMethod String   @default("CASH") // CASH, CARD, MOBILE_BANKING, CREDIT
+  paymentStatus  String   @default("PAID") // PAID, PENDING, FAILED, REVERSED
+  paymentReference String?
+  paymentProviderResponse String?
   status        String   @default("COMPLETED") // COMPLETED, REFUNDED, VOIDED
   notes         String?
   createdAt     DateTime @default(now())
@@ -94,6 +100,26 @@ model Sale {
   user           User            @relation(fields: [userId], references: [id])
   items          SaleItem[]
   stockMovements StockMovement[]
+  adjustments    SaleAdjustment[]
+  cashDrawerMovements CashDrawerMovement[]
+}
+
+model SaleAdjustment {
+  id                    String   @id @default(cuid())
+  saleId                String
+  approverUserId        String
+  type                  String   // REFUND, VOID
+  reason                String
+  amount                Decimal  @default(0) @db.Decimal(18, 2)
+  paymentMethod         String
+  paymentReversalStatus String   @default("PENDING") // PENDING, COMPLETED, FAILED, NOT_REQUIRED
+  createdAt             DateTime @default(now())
+
+  sale     Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  approver User @relation(fields: [approverUserId], references: [id])
+
+  @@index([saleId])
+  @@index([approverUserId])
 }
 
 model SaleItem {
@@ -137,6 +163,49 @@ model Expense {
   createdAt   DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
+  cashDrawerMovements CashDrawerMovement[]
+}
+
+model Shift {
+  id             String   @id @default(cuid())
+  userId         String
+  openingCash    Decimal  @default(0) @db.Decimal(18, 2)
+  closingCash    Decimal? @db.Decimal(18, 2)
+  expectedCash   Decimal? @db.Decimal(18, 2)
+  actualCash     Decimal? @db.Decimal(18, 2)
+  variance       Decimal? @db.Decimal(18, 2)
+  status         String   @default("OPEN") // OPEN, CLOSED
+  openedAt       DateTime @default(now())
+  closedAt       DateTime?
+  notes          String?
+
+  user User @relation(fields: [userId], references: [id])
+  cashDrawerMovements CashDrawerMovement[]
+
+  @@index([userId, status])
+}
+
+model CashDrawerMovement {
+  id        String   @id @default(cuid())
+  shiftId   String?
+  saleId    String?
+  expenseId String?
+  userId    String
+  type      String   // OPENING, CASH_SALE, REFUND, VOID, PAID_IN, PAID_OUT, CLOSING
+  amount    Decimal  @db.Decimal(18, 2)
+  reason    String?
+  createdAt DateTime @default(now())
+
+  shift   Shift?   @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  sale    Sale?    @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  expense Expense? @relation(fields: [expenseId], references: [id], onDelete: SetNull)
+  user    User     @relation(fields: [userId], references: [id])
+
+  @@index([shiftId])
+  @@index([saleId])
+  @@index([expenseId])
+  @@index([userId])
+  @@index([type])
 }
 
 model Settings {

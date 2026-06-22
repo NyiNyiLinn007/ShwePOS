@@ -7,6 +7,14 @@ import Credentials from 'next-auth/providers/credentials';
 import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { authConfig } from '@/lib/auth.config';
+import {
+  consumeRateLimit,
+  normalizeRateLimitPart,
+  resetRateLimit,
+} from '@/lib/rateLimit';
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_EMAIL_LIMIT = 10;
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
@@ -23,8 +31,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           return null;
         }
 
-        const email = (credentials.email as string).toLowerCase().trim();
+        const email = normalizeRateLimitPart(credentials.email as string);
         const password = credentials.password as string;
+        const emailKey = `login:email:${email}`;
+        const emailLimit = consumeRateLimit(emailKey, {
+          limit: LOGIN_EMAIL_LIMIT,
+          windowMs: LOGIN_WINDOW_MS,
+        });
+
+        if (!emailLimit.allowed) {
+          return null;
+        }
 
         const user = await prisma.user.findUnique({
           where: { email },
@@ -49,6 +66,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             lastLoginAt: new Date(),
           },
         });
+
+        resetRateLimit(emailKey);
 
         return {
           id: updated.id,
