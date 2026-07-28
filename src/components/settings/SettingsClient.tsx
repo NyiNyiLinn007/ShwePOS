@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useAppStore } from '@/lib/store';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useToast } from '@/contexts/ToastContext';
@@ -101,6 +101,11 @@ export function SettingsClient({
   const [savingUser, setSavingUser] = useState(false);
   const [deleteUserTarget, setDeleteUserTarget] = useState<UserRecord | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
+
+  // ── Data Migration ────────────────────────────────────────────────────────
+  const migrationFileInput = useRef<HTMLInputElement>(null);
+  const [migrationFile, setMigrationFile] = useState<File | null>(null);
+  const [importingData, setImportingData] = useState(false);
 
   /* ---- Save Handlers ---- */
 
@@ -298,6 +303,41 @@ export function SettingsClient({
       addToast('Network error', 'error');
     } finally {
       setSavingUser(false);
+    }
+  }
+
+  function downloadMigrationWorkbook(mode: 'template' | 'export') {
+    window.location.href = `/api/data-migration?mode=${mode}`;
+  }
+
+  async function importMigrationWorkbook() {
+    if (!migrationFile) {
+      addToast(t('Please choose an Excel file first', 'Excel ဖိုင်ကို အရင်ရွေးပေးပါ'), 'error');
+      return;
+    }
+
+    setImportingData(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', migrationFile);
+      const res = await fetch('/api/data-migration', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const detail = data.details?.[0]?.message;
+        addToast(detail ? `${data.error}: ${detail}` : data.error || 'Import failed', 'error');
+        return;
+      }
+
+      addToast(data.message || t('Data imported successfully', 'Data များကို အောင်မြင်စွာ ထည့်သွင်းပြီးပါပြီ'), 'success');
+      setMigrationFile(null);
+      if (migrationFileInput.current) migrationFileInput.current.value = '';
+    } catch {
+      addToast(t('Network error while importing data', 'Data ထည့်သွင်းရာတွင် Network error ဖြစ်နေပါသည်'), 'error');
+    } finally {
+      setImportingData(false);
     }
   }
 
@@ -775,7 +815,95 @@ export function SettingsClient({
           )}
         </div>
 
-        {/* Section 6: About */}
+        {/* Section 6: Data Migration */}
+        <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
+          <div style={{ marginBottom: 'var(--space-lg)' }}>
+            <h3 className="heading-4" style={{ marginBottom: 4 }}>
+              📦 {t('Data Migration', 'Data Migration')}
+            </h3>
+            <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+              {t(
+                'Download an Excel template, fill all data sheets, and import the workbook. You can also export all current data for backup or migration.',
+                'Excel Format ကို Download လုပ်ပြီး Data ဖြည့်ကာ ပြန်လည် Import လုပ်နိုင်ပါသည်။ လက်ရှိ Data အားလုံးကိုလည်း Backup သို့မဟုတ် Migration အတွက် Export လုပ်နိုင်ပါသည်။'
+              )}
+            </p>
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 'var(--space-sm)',
+              alignItems: 'center',
+            }}
+          >
+            <button
+              className="btn btn-secondary"
+              onClick={() => downloadMigrationWorkbook('template')}
+            >
+              📄 {t('Download Excel Template', 'Excel Format Download')}
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => downloadMigrationWorkbook('export')}
+            >
+              ⬇️ {t('Export All Data', 'Data အားလုံး Export')}
+            </button>
+            <input
+              ref={migrationFileInput}
+              type="file"
+              accept=".xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={(event) => setMigrationFile(event.target.files?.[0] || null)}
+            />
+            <button
+              className="btn btn-secondary"
+              onClick={() => migrationFileInput.current?.click()}
+              disabled={importingData}
+            >
+              📎 {t('Choose Excel File', 'Excel ဖိုင်ရွေးရန်')}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={importMigrationWorkbook}
+              disabled={!migrationFile || importingData}
+            >
+              {importingData
+                ? t('Importing...', 'Import လုပ်နေသည်...')
+                : t('Import Data', 'Data Import')}
+            </button>
+          </div>
+
+          {migrationFile && (
+            <div
+              style={{
+                marginTop: 'var(--space-md)',
+                padding: 'var(--space-sm) var(--space-md)',
+                background: 'var(--bg-tertiary)',
+                borderRadius: 'var(--radius-md)',
+                fontSize: 'var(--text-sm)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              {t('Selected file', 'ရွေးထားသောဖိုင်')}: <strong style={{ color: 'var(--text-primary)' }}>{migrationFile.name}</strong>
+            </div>
+          )}
+
+          <p
+            style={{
+              marginTop: 'var(--space-md)',
+              fontSize: 'var(--text-xs)',
+              color: 'var(--text-muted)',
+            }}
+          >
+            {t(
+              'Import uses upsert and does not delete records. Exported workbooks contain password hashes; keep them private.',
+              'Import သည် ရှိပြီးသား Record များကို Update/Create လုပ်ပြီး မပါသော Record များကို မဖျက်ပါ။ Export ဖိုင်တွင် Password hash များပါသောကြောင့် လုံခြုံစွာ သိမ်းဆည်းပါ။'
+            )}
+          </p>
+        </div>
+
+        {/* Section 7: About */}
         <div className="glass-card">
           <div style={{ marginBottom: 'var(--space-lg)' }}>
             <h3 className="heading-4" style={{ marginBottom: 4 }}>
