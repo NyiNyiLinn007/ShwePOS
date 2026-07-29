@@ -76,6 +76,7 @@ export default function POSClient({
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showPayment, setShowPayment] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
+  const [hasOpenShift, setHasOpenShift] = useState<boolean | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const clearCart = useCartStore((s) => s.clearCart);
   const cartItemCount = useCartStore((s) => s.getItemCount());
@@ -87,6 +88,22 @@ export default function POSClient({
     return () => {
       document.body.classList.remove('pos-fullscreen');
     };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/shifts?current=true', { cache: 'no-store' })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return response.json();
+      })
+      .then((data) => {
+        if (active && data) setHasOpenShift(Boolean(data.current));
+      })
+      .catch(() => {
+        // The API remains the final authority; keep payment available if the status check is unavailable.
+      });
+    return () => { active = false; };
   }, []);
 
   // Keep unavailable products available as an optional disabled view.
@@ -268,6 +285,19 @@ export default function POSClient({
         </div>
 
         {/* Category Filters */}
+        <div className={`pos-shift-banner${hasOpenShift === true ? ' is-open' : hasOpenShift === false ? ' is-closed' : ''}`}>
+          <span className="pos-shift-dot" aria-hidden="true" />
+          {hasOpenShift === true && <span>Cashier shift open · Cash payments enabled</span>}
+          {hasOpenShift === false && (
+            <>
+              <span>Open a cashier shift before accepting cash</span>
+              <button type="button" onClick={() => router.push('/shifts')}>Open shift</button>
+            </>
+          )}
+          {hasOpenShift === null && <span>Checking cashier shift…</span>}
+        </div>
+
+        {/* Category Filters */}
         <div className="pos-categories" role="tablist" aria-label="Product categories">
           <button
             className={`pos-category-btn ${selectedCategory === null ? 'active' : ''}`}
@@ -335,6 +365,7 @@ export default function POSClient({
           onClose={() => setShowPayment(false)}
           onSuccess={handlePaymentSuccess}
           taxRate={taxRate}
+          hasOpenShift={hasOpenShift}
         />
       )}
 

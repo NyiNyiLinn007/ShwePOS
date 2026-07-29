@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useCartStore } from '@/store/cartStore';
 import { useAppStore } from '@/lib/store';
 import { formatCurrency } from '@/lib/utils';
@@ -9,6 +10,7 @@ interface PaymentModalProps {
   onClose: () => void;
   onSuccess: (saleData: SaleResponse) => void;
   taxRate: number;
+  hasOpenShift?: boolean | null;
 }
 
 interface SaleResponse {
@@ -71,7 +73,8 @@ const PAYMENT_METHODS: Array<{
   { id: 'MOBILE_BANKING', label: 'Mobile Banking', labelMm: 'မိုဘိုင်းဘလ်', icon: '📱' },
 ];
 
-export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentModalProps) {
+export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift }: PaymentModalProps) {
+  const router = useRouter();
   const items = useCartStore((s) => s.items);
   const discount = useCartStore((s) => s.discount);
   const getSubtotal = useCartStore((s) => s.getSubtotal);
@@ -159,7 +162,9 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
   };
 
   const canProcess =
-    paymentMethod === 'CASH' ? paidAmount >= grandTotal : paymentReference.trim().length > 0;
+    paymentMethod === 'CASH'
+      ? paidAmount >= grandTotal && hasOpenShift !== false
+      : paymentReference.trim().length > 0;
 
   const handleProcess = async () => {
     if (!canProcess || isProcessing) return;
@@ -321,6 +326,22 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
                   padding: '14px',
                 }}
               />
+
+              {hasOpenShift === false && (
+                <div className="shift-payment-block" role="alert">
+                  <span>Cash payments require an open cashier shift.</span>
+                  <button
+                    className="btn btn-secondary btn-sm"
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      router.push('/shifts');
+                    }}
+                  >
+                    Open shift
+                  </button>
+                </div>
+              )}
 
               {/* Quick Cash Buttons */}
               <div

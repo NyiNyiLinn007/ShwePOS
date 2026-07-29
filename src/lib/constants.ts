@@ -111,6 +111,17 @@ export const NAV_ITEMS = [
     hasBadge: false,
   },
   {
+    key: 'shifts',
+    path: '/shifts',
+    href: '/shifts',
+    label: 'Cashier Shifts',
+    labelMm: 'Cashier Shift များ',
+    icon: '▣',
+    section: 'main' as NavSection,
+    roles: ['ADMIN', 'MANAGER', 'CASHIER'] as UserRole[],
+    hasBadge: false,
+  },
+  {
     key: 'products',
     path: '/products',
     href: '/products',

@@ -122,6 +122,21 @@ export const updateExpenseSchema = createExpenseSchema.partial();
 export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
 export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
 
+// ---- Cashier Shift Schemas ----
+
+export const openShiftSchema = z.object({
+  openingCash: moneySchema,
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export const closeShiftSchema = z.object({
+  actualCash: moneySchema,
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export type OpenShiftInput = z.infer<typeof openShiftSchema>;
+export type CloseShiftInput = z.infer<typeof closeShiftSchema>;
+
 // ---- User Schemas ----
 
 export const createUserSchema = z.object({
