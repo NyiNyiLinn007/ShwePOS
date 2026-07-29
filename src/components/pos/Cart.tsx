@@ -8,9 +8,11 @@ import { useState } from 'react';
 interface CartProps {
   onOpenPayment: () => void;
   taxRate: number;
+  isMobileOpen?: boolean;
+  onClose?: () => void;
 }
 
-export default function Cart({ onOpenPayment, taxRate }: CartProps) {
+export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onClose }: CartProps) {
   const { language } = useAppStore();
   const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
   const items = useCartStore((s) => s.items);
@@ -42,7 +44,7 @@ export default function Cart({ onOpenPayment, taxRate }: CartProps) {
   };
 
   return (
-    <div className="pos-cart">
+    <div className={`pos-cart${isMobileOpen ? ' is-open' : ''}`}>
       {/* Header */}
       <div className="pos-cart-header">
         <div className="flex items-center gap-sm">
@@ -53,12 +55,16 @@ export default function Cart({ onOpenPayment, taxRate }: CartProps) {
         </div>
         {items.length > 0 && (
           <button
-            className="btn btn-ghost btn-sm"
+            className="btn btn-ghost btn-sm pos-clear-cart"
             onClick={clearCart}
             type="button"
-            style={{ color: 'var(--danger)' }}
           >
             ✕ {t('Clear', 'ရှင်းရန်')}
+          </button>
+        )}
+        {onClose && (
+          <button className="btn btn-ghost btn-icon pos-cart-close" onClick={onClose} type="button" aria-label="Close cart">
+            ×
           </button>
         )}
       </div>

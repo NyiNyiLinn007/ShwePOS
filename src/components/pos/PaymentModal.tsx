@@ -208,6 +208,9 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
     <div className="modal-backdrop" onClick={onClose}>
       <div
         className="modal modal-lg"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Payment"
         onClick={(e) => e.stopPropagation()}
         style={{ maxHeight: '95vh' }}
       >
@@ -520,7 +523,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate }: PaymentMod
 
           {/* Error */}
           {error && (
-            <div className="login-error">{error}</div>
+            <div className="login-error" role="alert">{error}</div>
           )}
         </div>
 

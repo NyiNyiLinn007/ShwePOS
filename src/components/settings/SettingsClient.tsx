@@ -829,7 +829,15 @@ export function SettingsClient({
             </p>
           </div>
 
+          <div className="migration-steps" aria-label="Data migration steps">
+            <div className="migration-step is-ready"><span>1</span><strong>{t('Download template', 'Template Download')}</strong></div>
+            <div className="migration-step"><span>2</span><strong>{t('Fill Excel', 'Excel ဖြည့်ရန်')}</strong></div>
+            <div className="migration-step"><span>3</span><strong>{t('Choose file', 'ဖိုင်ရွေးရန်')}</strong></div>
+            <div className="migration-step"><span>4</span><strong>{t('Import & review', 'Import ရလဒ်ကြည့်ရန်')}</strong></div>
+          </div>
+
           <div
+            className="migration-actions"
             style={{
               display: 'flex',
               flexWrap: 'wrap',
@@ -898,7 +906,7 @@ export function SettingsClient({
           >
             {t(
               'Import uses upsert and does not delete records. User passwords are not included in exports; existing users keep their current password.',
-              'Import သည် ရှိပြီးသား Record များကို Update/Create လုပ်ပြီး မပါသော Record များကို မဖျက်ပါ။ Export ဖိုင်တွင် Password hash များပါသောကြောင့် လုံခြုံစွာ သိမ်းဆည်းပါ။'
+              'Import သည် ရှိပြီးသား Record များကို Update/Create လုပ်ပြီး မပါသော Record များကို မဖျက်ပါ။ Export ဖိုင်တွင် Password များမပါပါ။ ရှိပြီးသား User များ၏ password ကို မပြောင်းပါ။'
             )}
           </p>
         </div>
@@ -933,7 +941,7 @@ export function SettingsClient({
               <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: 4 }}>
                 {t('Database', 'ဒေတာဘေ့စ်')}
               </div>
-              <div style={{ fontWeight: 600 }}>SQLite (Prisma ORM)</div>
+              <div style={{ fontWeight: 600 }}>PostgreSQL (Neon + Prisma)</div>
             </div>
             <div>
               <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: 4 }}>

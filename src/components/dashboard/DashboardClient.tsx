@@ -29,6 +29,7 @@ interface SalesDataPoint {
 }
 
 interface DashboardClientProps {
+  role: string;
   todayRevenue: number;
   totalSales: number;
   totalProducts: number;
@@ -39,6 +40,7 @@ interface DashboardClientProps {
 }
 
 export default function DashboardClient({
+  role,
   todayRevenue,
   totalSales,
   totalProducts,
@@ -63,6 +65,9 @@ export default function DashboardClient({
             )}
           </p>
         </div>
+        <span className="badge badge-primary dashboard-role-badge">
+          {role === 'CASHIER' ? 'Cashier workspace' : `${role.toLowerCase()} overview`}
+        </span>
       </div>
 
       {/* Page Body */}

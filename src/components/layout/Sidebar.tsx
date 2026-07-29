@@ -21,6 +21,11 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
   const { businessName } = useSettingsStore();
   const [lowStockCount, setLowStockCount] = useState(0);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     const fetchLowStock = async () => {
@@ -60,11 +65,34 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
     await signOut({ callbackUrl: '/login' });
   };
 
+  const openMobileNav = () => {
+    if (sidebarCollapsed) toggleSidebar();
+    setMobileOpen(true);
+  };
+
   return (
-    <aside
-      className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}
-      style={sidebarCollapsed ? { width: 'var(--sidebar-collapsed)' } : undefined}
-    >
+    <>
+      <button
+        className="mobile-nav-trigger"
+        type="button"
+        onClick={openMobileNav}
+        aria-label="Open navigation"
+        aria-expanded={mobileOpen}
+      >
+        <span aria-hidden="true">☰</span>
+      </button>
+      {mobileOpen && (
+        <button
+          className="mobile-nav-backdrop"
+          type="button"
+          onClick={() => setMobileOpen(false)}
+          aria-label="Close navigation"
+        />
+      )}
+      <aside
+        className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}`}
+        style={sidebarCollapsed ? { width: 'var(--sidebar-collapsed)' } : undefined}
+      >
       {/* Logo */}
       <div className="sidebar-logo">
         <div className="sidebar-logo-icon">{businessName.charAt(0).toUpperCase()}</div>
@@ -111,6 +139,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
                     href={item.href}
                     className={`sidebar-link${isActive ? ' active' : ''}`}
                     title={sidebarCollapsed ? (language === 'mm' ? item.labelMm : item.label) : undefined}
+                    onClick={() => setMobileOpen(false)}
                   >
                     <span className="sidebar-link-icon">{item.icon}</span>
                     {!sidebarCollapsed && (
@@ -243,6 +272,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
           }}
         />
       )}
-    </aside>
+      </aside>
+    </>
   );
 }

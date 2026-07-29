@@ -130,6 +130,7 @@ export default async function DashboardPage() {
 
   return (
     <DashboardClient
+      role={session.user.role}
       todayRevenue={todayRevenue}
       totalSales={totalSalesToday}
       totalProducts={totalProducts}
