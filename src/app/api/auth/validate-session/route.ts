@@ -18,17 +18,17 @@ export async function GET() {
 
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
-      select: { sessionVersion: true },
+      select: { sessionVersion: true, isActive: true },
     });
 
-    if (!user || tokenVersion !== user.sessionVersion) {
+    if (!user || !user.isActive || tokenVersion !== user.sessionVersion) {
       return NextResponse.json(
         { valid: false, reason: 'Session expired — logged in from another device' },
-        { status: 401 }
+        { status: 401, headers: { 'Cache-Control': 'no-store' } }
       );
     }
 
-    return NextResponse.json({ valid: true });
+    return NextResponse.json({ valid: true }, { headers: { 'Cache-Control': 'no-store' } });
   } catch {
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import prisma from '@/lib/prisma';
 import { requirePageAuth } from '@/lib/pageAuth';
 import { SaleDetailClient } from '@/components/sales/SaleDetailClient';
+import { serializePrismaData } from '@/lib/number';
 
 interface SaleDetailPageProps {
   params: Promise<{ id: string }>;
@@ -65,7 +66,7 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
         </div>
       </div>
 
-      <SaleDetailClient sale={JSON.parse(JSON.stringify(sale))} />
+      <SaleDetailClient sale={serializePrismaData(sale)} />
     </>
   );
 }

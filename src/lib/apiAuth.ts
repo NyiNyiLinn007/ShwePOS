@@ -49,16 +49,12 @@ export async function validateCsrf(request?: NextRequest): Promise<void> {
     throw new ApiError('Forbidden: invalid origin', 403);
   }
 
-  const allowedHosts = new Set<string>();
-  const requestHost =
-    normalizeHost(headersList.get('x-forwarded-host')) ??
-    normalizeHost(headersList.get('host'));
+  // Use the actual Host header and configured canonical URL. Never add an
+  // attacker-supplied forwarded host to the CSRF allow-list.
+  const requestHost = normalizeHost(headersList.get('host'));
   const configuredHost = hostFromUrl(process.env.NEXTAUTH_URL ?? null);
 
-  if (requestHost) allowedHosts.add(requestHost);
-  if (configuredHost) allowedHosts.add(configuredHost);
-
-  if (allowedHosts.has(sourceHost)) return;
+  if (configuredHost ? sourceHost === configuredHost : sourceHost === requestHost) return;
 
   if (process.env.NODE_ENV !== 'production' && isLocalHost(sourceHost) && isLocalHost(requestHost)) {
     return;
@@ -84,15 +80,10 @@ export class ApiError extends Error {
 }
 
 /**
- * In-memory cache for session version validation.
- * Avoids hitting DB on every API request. TTL: 30 seconds.
- */
-const sessionVersionCache = new Map<string, { version: number; expiry: number }>();
-const CACHE_TTL_MS = 30_000; // 30 seconds
-
-/**
  * Get authenticated user from session. Throws ApiError(401) if not authenticated.
- * Also validates sessionVersion to enforce single-session policy.
+ * The database is authoritative for active state, current role, and session
+ * version. This prevents stale JWT claims from granting access after an admin
+ * changes a user account.
  */
 export async function requireAuth(): Promise<AuthUser> {
   const session = await auth();
@@ -100,33 +91,35 @@ export async function requireAuth(): Promise<AuthUser> {
     throw new ApiError('Authentication required', 401);
   }
 
-  // Validate sessionVersion (single-session enforcement)
   const userId = session.user.id;
   const tokenVersion = (session.user as { sessionVersion?: number }).sessionVersion ?? 0;
+  const { prisma } = await import('@/lib/prisma');
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
+      sessionVersion: true,
+    },
+  });
 
-  // Check cache first
-  const cached = sessionVersionCache.get(userId);
-  const now = Date.now();
-
-  let dbVersion: number;
-  if (cached && cached.expiry > now) {
-    dbVersion = cached.version;
-  } else {
-    // Lazy import to avoid circular dependency issues
-    const { prisma } = await import('@/lib/prisma');
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { sessionVersion: true },
-    });
-    dbVersion = user?.sessionVersion ?? 0;
-    sessionVersionCache.set(userId, { version: dbVersion, expiry: now + CACHE_TTL_MS });
+  if (!user || !user.isActive) {
+    throw new ApiError('Authentication required', 401);
   }
 
-  if (tokenVersion !== dbVersion) {
+  if (tokenVersion !== user.sessionVersion) {
     throw new ApiError('Session expired — logged in from another device', 401);
   }
 
-  return session.user as AuthUser;
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role as UserRole,
+  };
 }
 
 /**

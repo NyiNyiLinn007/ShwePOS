@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateExpenseSchema } from '@/lib/validations';
+import { serializePrismaData } from '@/lib/number';
 
 export async function GET(
   _request: NextRequest,
@@ -22,7 +23,7 @@ export async function GET(
       return NextResponse.json({ error: 'Expense not found' }, { status: 404 });
     }
 
-    return NextResponse.json(expense);
+    return NextResponse.json(serializePrismaData(expense));
   } catch (error) {
     return handleApiError(error, 'Failed to fetch expense');
   }
@@ -64,7 +65,7 @@ export async function PUT(
       },
     });
 
-    return NextResponse.json(expense);
+    return NextResponse.json(serializePrismaData(expense));
   } catch (error) {
     return handleApiError(error, 'Failed to update expense');
   }

@@ -1,12 +1,13 @@
-import * as XLSX from 'xlsx';
+import readXlsxFile from 'read-excel-file/node';
+import writeXlsxFile, { type SheetData } from 'write-excel-file/node';
 import bcrypt from 'bcryptjs';
 import type { Prisma, PrismaClient } from '@prisma/client';
 
 export const DATA_MIGRATION_SHEETS = {
   Users: {
     headers: ['id', 'name', 'email', 'password', 'role', 'phone', 'isActive', 'sessionVersion', 'lastLoginAt', 'createdAt', 'updatedAt'],
-    required: ['name', 'email', 'password'],
-    description: 'System users. Keep password as a bcrypt hash when migrating existing users, or enter a plain password for a new user.',
+    required: ['name', 'email'],
+    description: 'System users. Password is not exported. Existing users keep their current password; new users require a strong password.',
   },
   Categories: {
     headers: ['id', 'name', 'nameMm', 'description', 'slug', 'isActive', 'createdAt'],
@@ -86,6 +87,80 @@ export class DataMigrationError extends Error {
 
 const INSTRUCTIONS_SHEET = 'Instructions';
 const MAX_IMPORT_ROWS = 100_000;
+const MAX_IMPORT_COLUMNS = 64;
+
+const USER_ROLES = new Set(['ADMIN', 'MANAGER', 'CASHIER']);
+const PAYMENT_METHODS = new Set(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT']);
+const PAYMENT_STATUSES = new Set(['PAID', 'PENDING', 'FAILED', 'REVERSED']);
+const SALE_STATUSES = new Set(['COMPLETED', 'REFUNDED', 'VOIDED']);
+const MOVEMENT_TYPES = new Set(['IN', 'OUT', 'ADJUSTMENT', 'RETURN']);
+const SHIFT_STATUSES = new Set(['OPEN', 'CLOSED']);
+const CASH_MOVEMENT_TYPES = new Set(['OPENING', 'CASH_SALE', 'REFUND', 'VOID', 'PAID_IN', 'PAID_OUT', 'CLOSING']);
+const ADJUSTMENT_TYPES = new Set(['REFUND', 'VOID']);
+const REVERSAL_STATUSES = new Set(['PENDING', 'COMPLETED', 'FAILED', 'NOT_REQUIRED']);
+const PRODUCT_UNITS = new Set(['pcs', 'kg', 'g', 'liter', 'ml', 'pack', 'box', 'bottle', 'dozen', 'set']);
+const MAX_MIGRATION_MONEY = 1_000_000_000_000;
+const MAX_MIGRATION_INTEGER = 1_000_000_000;
+const MAX_XLSX_ENTRIES = 2_000;
+const MAX_XLSX_UNCOMPRESSED_SIZE = 128 * 1024 * 1024;
+
+/** Reject ZIP bombs and malformed containers before invoking the XLSX parser. */
+export function validateXlsxContainer(buffer: Buffer): void {
+  if (buffer.length < 22 || buffer.subarray(0, 4).toString('hex') !== '504b0304') {
+    throw new DataMigrationError('The uploaded file is not a valid .xlsx workbook');
+  }
+
+  const endRecordSignature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+  const endRecordOffset = buffer.lastIndexOf(endRecordSignature);
+  if (endRecordOffset < 0 || endRecordOffset + 22 > buffer.length) {
+    throw new DataMigrationError('The uploaded file has an invalid ZIP directory');
+  }
+
+  const centralDirectorySize = buffer.readUInt32LE(endRecordOffset + 12);
+  const centralDirectoryOffset = buffer.readUInt32LE(endRecordOffset + 16);
+  if (centralDirectorySize === 0xffffffff || centralDirectoryOffset === 0xffffffff) {
+    throw new DataMigrationError('ZIP64 workbooks are not supported');
+  }
+  const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize;
+  if (centralDirectoryEnd > buffer.length) {
+    throw new DataMigrationError('The uploaded file has an invalid ZIP directory');
+  }
+
+  let entries = 0;
+  let uncompressedSize = 0;
+  let cursor = centralDirectoryOffset;
+  while (cursor < centralDirectoryEnd) {
+    if (cursor + 46 > centralDirectoryEnd || buffer.readUInt32LE(cursor) !== 0x02014b50) {
+      throw new DataMigrationError('The uploaded file has an invalid ZIP entry');
+    }
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const entrySize = buffer.readUInt32LE(cursor + 24);
+    const fileNameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const entryEnd = cursor + 46 + fileNameLength + extraLength + commentLength;
+    if (entryEnd > centralDirectoryEnd) {
+      throw new DataMigrationError('The uploaded file has an invalid ZIP entry');
+    }
+    const fileName = buffer.subarray(cursor + 46, cursor + 46 + fileNameLength).toString('utf8');
+    if (fileName.startsWith('/') || fileName.split('/').includes('..')) {
+      throw new DataMigrationError('The uploaded file contains an unsafe ZIP path');
+    }
+    if (compressedSize > buffer.length || entrySize > MAX_XLSX_UNCOMPRESSED_SIZE) {
+      throw new DataMigrationError('The uploaded workbook contains an oversized ZIP entry');
+    }
+    entries += 1;
+    uncompressedSize += entrySize;
+    if (entries > MAX_XLSX_ENTRIES || uncompressedSize > MAX_XLSX_UNCOMPRESSED_SIZE) {
+      throw new DataMigrationError('The uploaded workbook is too large after decompression');
+    }
+    cursor = entryEnd;
+  }
+
+  if (entries === 0 || cursor !== centralDirectoryEnd) {
+    throw new DataMigrationError('The uploaded workbook contains no ZIP entries');
+  }
+}
 
 function isBlank(value: unknown): boolean {
   return value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
@@ -93,7 +168,10 @@ function isBlank(value: unknown): boolean {
 
 function stringValue(value: unknown): string | null {
   if (isBlank(value)) return null;
-  return String(value).trim();
+  const text = String(value).trim();
+  // Excel commonly prefixes formula-like text with an apostrophe. Remove only
+  // the protection marker we add on export, never arbitrary user apostrophes.
+  return /^'[=+\-@]/.test(text) ? text.slice(1) : text;
 }
 
 function requiredString(row: Record<string, unknown>, field: string, sheet: string, rowNumber: number): string {
@@ -124,6 +202,11 @@ function numberValue(
       { sheet, row: rowNumber, message: `${field} must be a valid number` },
     ]);
   }
+  if (Math.abs(value) > MAX_MIGRATION_MONEY) {
+    throw new DataMigrationError(`Number in ${field} is too large`, [
+      { sheet, row: rowNumber, message: `${field} is outside the supported range` },
+    ]);
+  }
   return value;
 }
 
@@ -140,6 +223,95 @@ function integerValue(
     throw new DataMigrationError(`Invalid integer in ${field}`, [
       { sheet, row: rowNumber, message: `${field} must be a whole number` },
     ]);
+  }
+  if (Math.abs(value) > MAX_MIGRATION_INTEGER) {
+    throw new DataMigrationError(`Integer in ${field} is too large`, [
+      { sheet, row: rowNumber, message: `${field} is outside the supported range` },
+    ]);
+  }
+  return value;
+}
+
+function migrationError(field: string, message: string, sheet: string, rowNumber: number): never {
+  throw new DataMigrationError(`Invalid ${field}`, [
+    { sheet, row: rowNumber, message },
+  ]);
+}
+
+function nonNegativeNumberValue(
+  row: Record<string, unknown>,
+  field: string,
+  sheet: string,
+  rowNumber: number,
+  required = false
+): number | null {
+  const value = numberValue(row, field, sheet, rowNumber, required);
+  if (value !== null && value < 0) migrationError(field, `${field} cannot be negative`, sheet, rowNumber);
+  return value;
+}
+
+function positiveNumberValue(
+  row: Record<string, unknown>,
+  field: string,
+  sheet: string,
+  rowNumber: number,
+  required = false
+): number | null {
+  const value = numberValue(row, field, sheet, rowNumber, required);
+  if (value !== null && value <= 0) migrationError(field, `${field} must be positive`, sheet, rowNumber);
+  return value;
+}
+
+function nonNegativeIntegerValue(
+  row: Record<string, unknown>,
+  field: string,
+  sheet: string,
+  rowNumber: number,
+  required = false
+): number | null {
+  const value = integerValue(row, field, sheet, rowNumber, required);
+  if (value !== null && value < 0) migrationError(field, `${field} cannot be negative`, sheet, rowNumber);
+  return value;
+}
+
+function positiveIntegerValue(
+  row: Record<string, unknown>,
+  field: string,
+  sheet: string,
+  rowNumber: number,
+  required = false
+): number | null {
+  const value = integerValue(row, field, sheet, rowNumber, required);
+  if (value !== null && value <= 0) migrationError(field, `${field} must be positive`, sheet, rowNumber);
+  return value;
+}
+
+function enumValue(
+  row: Record<string, unknown>,
+  field: string,
+  allowed: Set<string>,
+  sheet: string,
+  rowNumber: number,
+  defaultValue?: string
+): string {
+  const value = stringValue(row[field]) || defaultValue;
+  if (!value || !allowed.has(value)) {
+    migrationError(field, `${field} must be one of: ${Array.from(allowed).join(', ')}`, sheet, rowNumber);
+  }
+  return value;
+}
+
+function boundedString(
+  row: Record<string, unknown>,
+  field: string,
+  sheet: string,
+  rowNumber: number,
+  maxLength: number,
+  required = false
+): string | null {
+  const value = required ? requiredString(row, field, sheet, rowNumber) : stringValue(row[field]);
+  if (value && value.length > maxLength) {
+    migrationError(field, `${field} cannot exceed ${maxLength} characters`, sheet, rowNumber);
   }
   return value;
 }
@@ -204,9 +376,18 @@ function isEmptyRow(row: Record<string, unknown>): boolean {
   return Object.values(row).every(isBlank);
 }
 
-function workbookRows(workbook: XLSX.WorkBook): MigrationRows {
+type SpreadsheetCell = string | number | boolean | Date | null;
+type MigrationWorkbook = Array<{
+  data: SheetData;
+  sheet: string;
+  columns: Array<{ width: number }>;
+  stickyRowsCount?: number;
+  dateFormat?: string;
+}>;
+
+function workbookRows(workbook: Array<{ sheet: string; data: Array<Array<unknown>> }>): MigrationRows {
   const knownNames = new Set<string>(Object.keys(DATA_MIGRATION_SHEETS));
-  const unknownSheets = workbook.SheetNames.filter(
+  const unknownSheets = workbook.map(({ sheet }) => sheet).filter(
     (name) => name !== INSTRUCTIONS_SHEET && !knownNames.has(name)
   );
   if (unknownSheets.length > 0) {
@@ -216,19 +397,17 @@ function workbookRows(workbook: XLSX.WorkBook): MigrationRows {
   const result: MigrationRows = {};
   let totalRows = 0;
 
-  for (const sheetName of workbook.SheetNames) {
+  for (const { sheet: sheetName, data: matrix } of workbook) {
     if (sheetName === INSTRUCTIONS_SHEET) continue;
     const definition = DATA_MIGRATION_SHEETS[sheetName as MigrationSheetName];
-    const sheet = workbook.Sheets[sheetName];
-    const matrix = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
-      header: 1,
-      defval: null,
-      raw: true,
-      blankrows: false,
-    });
 
     if (matrix.length === 0) continue;
     const headerRow = (matrix[0] ?? []).map((value) => String(value ?? '').trim().replace(/^\uFEFF/, ''));
+    if (headerRow.length > MAX_IMPORT_COLUMNS) {
+      throw new DataMigrationError(`A sheet cannot contain more than ${MAX_IMPORT_COLUMNS} columns`, [
+        { sheet: sheetName, row: 1, message: 'Too many columns' },
+      ]);
+    }
     const missingHeaders = definition.headers.filter((header) => !headerRow.includes(header));
     if (missingHeaders.length > 0) {
       throw new DataMigrationError(`Invalid ${sheetName} sheet headers`, [
@@ -262,32 +441,36 @@ function workbookRows(workbook: XLSX.WorkBook): MigrationRows {
   return result;
 }
 
-export function parseDataMigrationWorkbook(buffer: Buffer): MigrationRows {
+export async function parseDataMigrationWorkbook(buffer: Buffer): Promise<MigrationRows> {
   try {
-    const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true, cellNF: false });
-    return workbookRows(workbook);
+    const workbook = await readXlsxFile(buffer);
+    return workbookRows(workbook as unknown as Array<{ sheet: string; data: Array<Array<unknown>> }>);
   } catch (error) {
     if (error instanceof DataMigrationError) throw error;
     throw new DataMigrationError('The uploaded file is not a readable Excel workbook');
   }
 }
 
-function exportValue(value: unknown): string | number | boolean | null {
+function exportValue(value: unknown): SpreadsheetCell {
   if (value === null || value === undefined) return null;
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'object' && 'toNumber' in value && typeof (value as { toNumber?: unknown }).toNumber === 'function') {
     return (value as { toNumber: () => number }).toNumber();
   }
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    // Prevent spreadsheet formula injection when data originated from users.
+    return /^[=+\-@]/.test(value) ? `'${value}` : value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return value;
   return String(value);
 }
 
-function rowsForSheet(rows: unknown[], headers: readonly string[]): Array<Array<string | number | boolean | null>> {
+function rowsForSheet(rows: unknown[], headers: readonly string[]): Array<Array<SpreadsheetCell>> {
   return rows.map((row) => headers.map((header) => exportValue((row as Record<string, unknown>)[header])));
 }
 
-export function createDataMigrationWorkbook(data: MigrationRows = {}): XLSX.WorkBook {
-  const workbook = XLSX.utils.book_new();
+export function createDataMigrationWorkbook(data: MigrationRows = {}): MigrationWorkbook {
+  const workbook: MigrationWorkbook = [];
   const instructions = [
     ['ShwePOS Data Migration Workbook'],
     ['How to use'],
@@ -296,8 +479,8 @@ export function createDataMigrationWorkbook(data: MigrationRows = {}): XLSX.Work
     ['3. Blank id cells are allowed for new records. Existing ids can be kept to update/migrate the same records.'],
     ['4. Relation fields accept ids and selected natural keys (category slug/name, product SKU, invoice number, user email).'],
     ['5. Import is additive/upsert. It does not delete records that are not included in the workbook.'],
-    ['6. Users: password can be a normal password for a new user or an existing bcrypt hash from an export.'],
-    ['7. Do not share exported workbooks because the Users sheet contains password hashes.'],
+    ['6. Users: password is blank in exports. Existing users keep their current password; enter a password only for a new user.'],
+    ['7. Do not place passwords, payment secrets, or other sensitive data in this workbook.'],
     [],
     ['Sheet', 'Required fields', 'Notes'],
     ...Object.entries(DATA_MIGRATION_SHEETS).map(([name, definition]) => [
@@ -306,27 +489,34 @@ export function createDataMigrationWorkbook(data: MigrationRows = {}): XLSX.Work
       definition.description,
     ]),
   ];
-  const instructionSheet = XLSX.utils.aoa_to_sheet(instructions);
-  instructionSheet['!cols'] = [{ wch: 24 }, { wch: 42 }, { wch: 110 }];
-  XLSX.utils.book_append_sheet(workbook, instructionSheet, INSTRUCTIONS_SHEET);
+  workbook.push({
+    data: instructions,
+    sheet: INSTRUCTIONS_SHEET,
+    columns: [{ width: 24 }, { width: 42 }, { width: 110 }],
+    stickyRowsCount: 1,
+  });
 
   for (const [sheetName, definition] of Object.entries(DATA_MIGRATION_SHEETS)) {
     const rows = data[sheetName as MigrationSheetName] ?? [];
-    const sheet = XLSX.utils.aoa_to_sheet([
-      [...definition.headers],
-      ...rowsForSheet(rows, definition.headers),
-    ]);
-    sheet['!cols'] = definition.headers.map((header) => ({
-      wch: Math.min(34, Math.max(14, header.length + 3)),
-    }));
-    XLSX.utils.book_append_sheet(workbook, sheet, sheetName);
+    workbook.push({
+      data: [
+        [...definition.headers],
+        ...rowsForSheet(rows, definition.headers),
+      ],
+      sheet: sheetName,
+      columns: definition.headers.map((header) => ({
+        width: Math.min(34, Math.max(14, header.length + 3)),
+      })),
+      stickyRowsCount: 1,
+      dateFormat: 'yyyy-mm-dd hh:mm:ss',
+    });
   }
 
   return workbook;
 }
 
-export function workbookBuffer(workbook: XLSX.WorkBook): Buffer {
-  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx', compression: true }) as Buffer;
+export async function workbookBuffer(workbook: MigrationWorkbook): Promise<Buffer> {
+  return writeXlsxFile(workbook).toBuffer();
 }
 
 type ImportClient = Prisma.TransactionClient;
@@ -459,6 +649,41 @@ function optionalDecimal(value: number | null): number | null {
   return value === null ? null : value;
 }
 
+function signedMoneyValue(
+  row: Record<string, unknown>,
+  field: string,
+  sheet: string,
+  rowNumber: number,
+  required = false
+): number | null {
+  return numberValue(row, field, sheet, rowNumber, required);
+}
+
+function assertEmail(value: string | null, field: string, sheet: string, rowNumber: number): string | null {
+  if (value && (!/^\S+@\S+\.\S+$/.test(value) || value.length > 200)) {
+    migrationError(field, 'email must be a valid address', sheet, rowNumber);
+  }
+  return value;
+}
+
+function assertMoneyBalance(
+  subtotal: number,
+  discountAmount: number,
+  taxAmount: number,
+  totalAmount: number,
+  paidAmount: number,
+  changeAmount: number,
+  sheet: string,
+  rowNumber: number
+): void {
+  if (discountAmount > subtotal) migrationError('discountAmount', 'discount cannot exceed subtotal', sheet, rowNumber);
+  const expectedTotal = Math.round((subtotal - discountAmount + taxAmount) * 100) / 100;
+  if (Math.abs(totalAmount - expectedTotal) > 0.01) {
+    migrationError('totalAmount', 'totalAmount must equal subtotal - discountAmount + taxAmount', sheet, rowNumber);
+  }
+  if (changeAmount > paidAmount) migrationError('changeAmount', 'changeAmount cannot exceed paidAmount', sheet, rowNumber);
+}
+
 function passwordIsHash(value: string): boolean {
   return /^\$2[aby]\$\d{2}\$/.test(value);
 }
@@ -472,27 +697,44 @@ async function importUsers(tx: ImportClient, rows: Record<string, unknown>[], ma
     const row = rows[index];
     const rowNumber = index + 2;
     const id = inputId(row);
-    const name = requiredString(row, 'name', 'Users', rowNumber);
+    const name = boundedString(row, 'name', 'Users', rowNumber, 100, true) as string;
     const email = requiredString(row, 'email', 'Users', rowNumber).toLowerCase();
-    const password = requiredString(row, 'password', 'Users', rowNumber);
+    if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 200) {
+      migrationError('email', 'email must be a valid address', 'Users', rowNumber);
+    }
+    const password = boundedString(row, 'password', 'Users', rowNumber, 256);
     const existing = (id
-      ? await tx.user.findUnique({ where: { id }, select: { id: true } })
-      : null) ?? await tx.user.findUnique({ where: { email }, select: { id: true } });
-    const hashedPassword = passwordIsHash(password) ? password : await bcrypt.hash(password, 10);
+      ? await tx.user.findUnique({ where: { id }, select: { id: true, password: true } })
+      : null) ?? await tx.user.findUnique({ where: { email }, select: { id: true, password: true } });
+    if (!existing && !password) {
+      migrationError('password', 'password is required for a new user', 'Users', rowNumber);
+    }
+    if (password && !passwordIsHash(password) && !/^(?=.*[A-Za-z])(?=.*\d).{8,256}$/.test(password)) {
+      migrationError('password', 'plain passwords must be 8-256 characters and contain a letter and number', 'Users', rowNumber);
+    }
+    if (password && passwordIsHash(password) && !/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(password)) {
+      migrationError('password', 'password hash is not a valid bcrypt hash', 'Users', rowNumber);
+    }
+    const hashedPassword = password
+      ? (passwordIsHash(password) ? password : await bcrypt.hash(password, 10))
+      : existing?.password;
+    if (!hashedPassword) migrationError('password', 'password is required', 'Users', rowNumber);
     const data = {
       name,
       email,
       password: hashedPassword,
-      role: nullableString(row, 'role') || 'CASHIER',
-      phone: nullableString(row, 'phone'),
+      role: enumValue(row, 'role', USER_ROLES, 'Users', rowNumber, 'CASHIER'),
+      phone: boundedString(row, 'phone', 'Users', rowNumber, 20),
       isActive: booleanValue(row, 'isActive', 'Users', rowNumber, true),
-      sessionVersion: integerValue(row, 'sessionVersion', 'Users', rowNumber) ?? 0,
-      lastLoginAt: dateValue(row, 'lastLoginAt', 'Users', rowNumber),
+      lastLoginAt: null,
       createdAt: dateValue(row, 'createdAt', 'Users', rowNumber) ?? new Date(),
       updatedAt: dateValue(row, 'updatedAt', 'Users', rowNumber) ?? new Date(),
     };
     const user = existing
-      ? await tx.user.update({ where: { id: existing.id }, data })
+      ? await tx.user.update({
+          where: { id: existing.id },
+          data: { ...data, sessionVersion: { increment: 1 } },
+        })
       : await tx.user.create({ data: id ? { id, ...data } : data });
     track(maps.usersById, id, user.id);
     maps.usersByEmail.set(email, user.id);
@@ -505,15 +747,15 @@ async function importCategories(tx: ImportClient, rows: Record<string, unknown>[
     const row = rows[index];
     const rowNumber = index + 2;
     const id = inputId(row);
-    const name = requiredString(row, 'name', 'Categories', rowNumber);
-    const slug = requiredString(row, 'slug', 'Categories', rowNumber);
+    const name = boundedString(row, 'name', 'Categories', rowNumber, 100, true) as string;
+    const slug = boundedString(row, 'slug', 'Categories', rowNumber, 100, true) as string;
     const existing = (id
       ? await tx.category.findUnique({ where: { id }, select: { id: true } })
       : null) ?? await tx.category.findUnique({ where: { slug }, select: { id: true } });
     const data = {
       name,
-      nameMm: nullableString(row, 'nameMm'),
-      description: nullableString(row, 'description'),
+      nameMm: boundedString(row, 'nameMm', 'Categories', rowNumber, 100),
+      description: boundedString(row, 'description', 'Categories', rowNumber, 500),
       slug,
       isActive: booleanValue(row, 'isActive', 'Categories', rowNumber, true),
       createdAt: dateValue(row, 'createdAt', 'Categories', rowNumber) ?? new Date(),
@@ -533,8 +775,8 @@ async function importCustomers(tx: ImportClient, rows: Record<string, unknown>[]
     const row = rows[index];
     const rowNumber = index + 2;
     const id = inputId(row);
-    const name = requiredString(row, 'name', 'Customers', rowNumber);
-    const phone = nullableString(row, 'phone');
+    const name = boundedString(row, 'name', 'Customers', rowNumber, 200, true) as string;
+    const phone = boundedString(row, 'phone', 'Customers', rowNumber, 20);
     const existing = (id
       ? await tx.customer.findUnique({ where: { id }, select: { id: true } })
       : null) ?? (phone
@@ -543,10 +785,10 @@ async function importCustomers(tx: ImportClient, rows: Record<string, unknown>[]
     const data = {
       name,
       phone,
-      email: nullableString(row, 'email'),
-      address: nullableString(row, 'address'),
-      totalPurchases: numberValue(row, 'totalPurchases', 'Customers', rowNumber) ?? 0,
-      loyaltyPoints: integerValue(row, 'loyaltyPoints', 'Customers', rowNumber) ?? 0,
+      email: assertEmail(boundedString(row, 'email', 'Customers', rowNumber, 200), 'email', 'Customers', rowNumber),
+      address: boundedString(row, 'address', 'Customers', rowNumber, 500),
+      totalPurchases: nonNegativeNumberValue(row, 'totalPurchases', 'Customers', rowNumber) ?? 0,
+      loyaltyPoints: nonNegativeIntegerValue(row, 'loyaltyPoints', 'Customers', rowNumber) ?? 0,
       createdAt: dateValue(row, 'createdAt', 'Customers', rowNumber) ?? new Date(),
       updatedAt: dateValue(row, 'updatedAt', 'Customers', rowNumber) ?? new Date(),
     };
@@ -564,24 +806,24 @@ async function importProducts(tx: ImportClient, rows: Record<string, unknown>[],
     const row = rows[index];
     const rowNumber = index + 2;
     const id = inputId(row);
-    const name = requiredString(row, 'name', 'Products', rowNumber);
-    const sku = requiredString(row, 'sku', 'Products', rowNumber);
+    const name = boundedString(row, 'name', 'Products', rowNumber, 200, true) as string;
+    const sku = boundedString(row, 'sku', 'Products', rowNumber, 50, true) as string;
     const categoryId = await resolveCategory(tx, row.categoryId, maps, 'Products', rowNumber);
     const existing = (id
       ? await tx.product.findUnique({ where: { id }, select: { id: true } })
       : null) ?? await tx.product.findUnique({ where: { sku }, select: { id: true } });
     const data = {
       name,
-      nameMm: nullableString(row, 'nameMm'),
+      nameMm: boundedString(row, 'nameMm', 'Products', rowNumber, 200),
       sku,
-      barcode: nullableString(row, 'barcode'),
+      barcode: boundedString(row, 'barcode', 'Products', rowNumber, 50),
       categoryId,
-      costPrice: numberValue(row, 'costPrice', 'Products', rowNumber) ?? 0,
-      sellingPrice: numberValue(row, 'sellingPrice', 'Products', rowNumber) ?? 0,
-      stockQuantity: integerValue(row, 'stockQuantity', 'Products', rowNumber) ?? 0,
-      lowStockThreshold: integerValue(row, 'lowStockThreshold', 'Products', rowNumber) ?? 10,
-      unit: nullableString(row, 'unit') || 'pcs',
-      imageUrl: nullableString(row, 'imageUrl'),
+      costPrice: nonNegativeNumberValue(row, 'costPrice', 'Products', rowNumber) ?? 0,
+      sellingPrice: nonNegativeNumberValue(row, 'sellingPrice', 'Products', rowNumber) ?? 0,
+      stockQuantity: nonNegativeIntegerValue(row, 'stockQuantity', 'Products', rowNumber) ?? 0,
+      lowStockThreshold: nonNegativeIntegerValue(row, 'lowStockThreshold', 'Products', rowNumber) ?? 10,
+      unit: enumValue(row, 'unit', PRODUCT_UNITS, 'Products', rowNumber, 'pcs'),
+      imageUrl: boundedString(row, 'imageUrl', 'Products', rowNumber, 500),
       isActive: booleanValue(row, 'isActive', 'Products', rowNumber, true),
       createdAt: dateValue(row, 'createdAt', 'Products', rowNumber) ?? new Date(),
       updatedAt: dateValue(row, 'updatedAt', 'Products', rowNumber) ?? new Date(),
@@ -600,11 +842,11 @@ async function importSales(tx: ImportClient, rows: Record<string, unknown>[], ma
     const row = rows[index];
     const rowNumber = index + 2;
     const id = inputId(row);
-    const invoiceNumber = requiredString(row, 'invoiceNumber', 'Sales', rowNumber);
+    const invoiceNumber = boundedString(row, 'invoiceNumber', 'Sales', rowNumber, 50, true) as string;
     const userId = await resolveUser(tx, row.userId, maps, 'Sales', rowNumber);
     const rawCustomerId = stringValue(row.customerId);
     const customerId = rawCustomerId ? await resolveCustomer(tx, rawCustomerId, maps, 'Sales', rowNumber) : null;
-    const clientSaleId = nullableString(row, 'clientSaleId');
+    const clientSaleId = boundedString(row, 'clientSaleId', 'Sales', rowNumber, 100);
     const existing = (id
       ? await tx.sale.findUnique({ where: { id }, select: { id: true } })
       : null) ?? await tx.sale.findUnique({ where: { invoiceNumber }, select: { id: true } });
@@ -613,20 +855,30 @@ async function importSales(tx: ImportClient, rows: Record<string, unknown>[], ma
       clientSaleId,
       customerId,
       userId,
-      subtotal: numberValue(row, 'subtotal', 'Sales', rowNumber) ?? 0,
-      discountAmount: numberValue(row, 'discountAmount', 'Sales', rowNumber) ?? 0,
-      taxAmount: numberValue(row, 'taxAmount', 'Sales', rowNumber) ?? 0,
-      totalAmount: numberValue(row, 'totalAmount', 'Sales', rowNumber) ?? 0,
-      paidAmount: numberValue(row, 'paidAmount', 'Sales', rowNumber) ?? 0,
-      changeAmount: numberValue(row, 'changeAmount', 'Sales', rowNumber) ?? 0,
-      paymentMethod: nullableString(row, 'paymentMethod') || 'CASH',
-      paymentStatus: nullableString(row, 'paymentStatus') || 'PAID',
-      paymentReference: nullableString(row, 'paymentReference'),
-      paymentProviderResponse: nullableString(row, 'paymentProviderResponse'),
-      status: nullableString(row, 'status') || 'COMPLETED',
-      notes: nullableString(row, 'notes'),
+      subtotal: nonNegativeNumberValue(row, 'subtotal', 'Sales', rowNumber) ?? 0,
+      discountAmount: nonNegativeNumberValue(row, 'discountAmount', 'Sales', rowNumber) ?? 0,
+      taxAmount: nonNegativeNumberValue(row, 'taxAmount', 'Sales', rowNumber) ?? 0,
+      totalAmount: nonNegativeNumberValue(row, 'totalAmount', 'Sales', rowNumber) ?? 0,
+      paidAmount: nonNegativeNumberValue(row, 'paidAmount', 'Sales', rowNumber) ?? 0,
+      changeAmount: nonNegativeNumberValue(row, 'changeAmount', 'Sales', rowNumber) ?? 0,
+      paymentMethod: enumValue(row, 'paymentMethod', PAYMENT_METHODS, 'Sales', rowNumber, 'CASH'),
+      paymentStatus: enumValue(row, 'paymentStatus', PAYMENT_STATUSES, 'Sales', rowNumber, 'PAID'),
+      paymentReference: boundedString(row, 'paymentReference', 'Sales', rowNumber, 100),
+      paymentProviderResponse: boundedString(row, 'paymentProviderResponse', 'Sales', rowNumber, 2000),
+      status: enumValue(row, 'status', SALE_STATUSES, 'Sales', rowNumber, 'COMPLETED'),
+      notes: boundedString(row, 'notes', 'Sales', rowNumber, 500),
       createdAt: dateValue(row, 'createdAt', 'Sales', rowNumber) ?? new Date(),
     };
+    assertMoneyBalance(
+      data.subtotal,
+      data.discountAmount,
+      data.taxAmount,
+      data.totalAmount,
+      data.paidAmount,
+      data.changeAmount,
+      'Sales',
+      rowNumber
+    );
     const sale = existing
       ? await tx.sale.update({ where: { id: existing.id }, data })
       : await tx.sale.create({ data: id ? { id, ...data } : data });
@@ -643,16 +895,20 @@ async function importSaleItems(tx: ImportClient, rows: Record<string, unknown>[]
     const id = inputId(row);
     const saleId = await resolveSale(tx, row.saleId, maps, 'SaleItems', rowNumber);
     const productId = await resolveProduct(tx, row.productId, maps, 'SaleItems', rowNumber);
-    const quantity = integerValue(row, 'quantity', 'SaleItems', rowNumber, true) as number;
+    const quantity = positiveIntegerValue(row, 'quantity', 'SaleItems', rowNumber, true) as number;
     const data = {
       saleId,
       productId,
       quantity,
-      unitPrice: numberValue(row, 'unitPrice', 'SaleItems', rowNumber) ?? 0,
-      costPrice: numberValue(row, 'costPrice', 'SaleItems', rowNumber) ?? 0,
-      discount: numberValue(row, 'discount', 'SaleItems', rowNumber) ?? 0,
-      total: numberValue(row, 'total', 'SaleItems', rowNumber) ?? 0,
+      unitPrice: nonNegativeNumberValue(row, 'unitPrice', 'SaleItems', rowNumber) ?? 0,
+      costPrice: nonNegativeNumberValue(row, 'costPrice', 'SaleItems', rowNumber) ?? 0,
+      discount: nonNegativeNumberValue(row, 'discount', 'SaleItems', rowNumber) ?? 0,
+      total: nonNegativeNumberValue(row, 'total', 'SaleItems', rowNumber) ?? 0,
     };
+    const expectedLineTotal = Math.round(Math.max(0, data.unitPrice * quantity - data.discount) * 100) / 100;
+    if (Math.abs(data.total - expectedLineTotal) > 0.01) {
+      migrationError('total', 'line total must equal unitPrice * quantity - discount', 'SaleItems', rowNumber);
+    }
     if (id) {
       await tx.saleItem.upsert({ where: { id }, create: { id, ...data }, update: data });
     } else {
@@ -675,13 +931,24 @@ async function importStockMovements(tx: ImportClient, rows: Record<string, unkno
       productId,
       userId,
       saleId,
-      quantity: integerValue(row, 'quantity', 'StockMovements', rowNumber, true) as number,
-      type: requiredString(row, 'type', 'StockMovements', rowNumber),
-      reason: nullableString(row, 'reason'),
-      previousStock: integerValue(row, 'previousStock', 'StockMovements', rowNumber, true) as number,
-      newStock: integerValue(row, 'newStock', 'StockMovements', rowNumber, true) as number,
+      quantity: positiveIntegerValue(row, 'quantity', 'StockMovements', rowNumber, true) as number,
+      type: enumValue(row, 'type', MOVEMENT_TYPES, 'StockMovements', rowNumber),
+      reason: boundedString(row, 'reason', 'StockMovements', rowNumber, 500),
+      previousStock: nonNegativeIntegerValue(row, 'previousStock', 'StockMovements', rowNumber, true) as number,
+      newStock: nonNegativeIntegerValue(row, 'newStock', 'StockMovements', rowNumber, true) as number,
       createdAt: dateValue(row, 'createdAt', 'StockMovements', rowNumber) ?? new Date(),
     };
+    if (data.type === 'IN' || data.type === 'RETURN') {
+      if (data.newStock !== data.previousStock + data.quantity) {
+        migrationError('newStock', 'IN/RETURN movement must increase stock by quantity', 'StockMovements', rowNumber);
+      }
+    } else if (data.type === 'OUT') {
+      if (data.newStock !== data.previousStock - data.quantity) {
+        migrationError('newStock', 'OUT movement must decrease stock by quantity', 'StockMovements', rowNumber);
+      }
+    } else if (data.newStock !== data.quantity) {
+      migrationError('newStock', 'ADJUSTMENT quantity must equal newStock', 'StockMovements', rowNumber);
+    }
     if (id) {
       await tx.stockMovement.upsert({ where: { id }, create: { id, ...data }, update: data });
     } else {
@@ -698,9 +965,9 @@ async function importExpenses(tx: ImportClient, rows: Record<string, unknown>[],
     const id = inputId(row);
     const userId = await resolveUser(tx, row.userId, maps, 'Expenses', rowNumber);
     const data = {
-      category: requiredString(row, 'category', 'Expenses', rowNumber),
-      amount: numberValue(row, 'amount', 'Expenses', rowNumber, true) as number,
-      description: nullableString(row, 'description'),
+      category: boundedString(row, 'category', 'Expenses', rowNumber, 100, true) as string,
+      amount: positiveNumberValue(row, 'amount', 'Expenses', rowNumber, true) as number,
+      description: boundedString(row, 'description', 'Expenses', rowNumber, 500),
       userId,
       date: dateValue(row, 'date', 'Expenses', rowNumber) ?? new Date(),
       createdAt: dateValue(row, 'createdAt', 'Expenses', rowNumber) ?? new Date(),
@@ -722,17 +989,20 @@ async function importShifts(tx: ImportClient, rows: Record<string, unknown>[], m
     const rowNumber = index + 2;
     const id = inputId(row);
     const userId = await resolveUser(tx, row.userId, maps, 'Shifts', rowNumber);
+    const status = enumValue(row, 'status', SHIFT_STATUSES, 'Shifts', rowNumber);
+    const closedAt = dateValue(row, 'closedAt', 'Shifts', rowNumber);
+    if (status === 'OPEN' && closedAt) migrationError('closedAt', 'an OPEN shift cannot have closedAt', 'Shifts', rowNumber);
+    if (status === 'CLOSED' && !closedAt) migrationError('closedAt', 'a CLOSED shift must have closedAt', 'Shifts', rowNumber);
     const data = {
       userId,
-      openingCash: numberValue(row, 'openingCash', 'Shifts', rowNumber, true) as number,
-      closingCash: optionalDecimal(numberValue(row, 'closingCash', 'Shifts', rowNumber)),
-      expectedCash: optionalDecimal(numberValue(row, 'expectedCash', 'Shifts', rowNumber)),
-      actualCash: optionalDecimal(numberValue(row, 'actualCash', 'Shifts', rowNumber)),
-      variance: optionalDecimal(numberValue(row, 'variance', 'Shifts', rowNumber)),
-      status: requiredString(row, 'status', 'Shifts', rowNumber),
+      openingCash: nonNegativeNumberValue(row, 'openingCash', 'Shifts', rowNumber, true) as number,
+      closingCash: optionalDecimal(nonNegativeNumberValue(row, 'closingCash', 'Shifts', rowNumber)),
+      expectedCash: optionalDecimal(nonNegativeNumberValue(row, 'expectedCash', 'Shifts', rowNumber)),
+      actualCash: optionalDecimal(nonNegativeNumberValue(row, 'actualCash', 'Shifts', rowNumber)),
+      variance: optionalDecimal(signedMoneyValue(row, 'variance', 'Shifts', rowNumber)),
       openedAt: dateValue(row, 'openedAt', 'Shifts', rowNumber, true) as Date,
-      closedAt: dateValue(row, 'closedAt', 'Shifts', rowNumber),
-      notes: nullableString(row, 'notes'),
+      closedAt,
+      notes: boundedString(row, 'notes', 'Shifts', rowNumber, 500),
     };
     if (id) {
       await tx.shift.upsert({ where: { id }, create: { id, ...data }, update: data });
@@ -749,17 +1019,17 @@ async function importSaleAdjustments(tx: ImportClient, rows: Record<string, unkn
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
-    const id = inputId(row);
-    const data = {
-      saleId: await resolveSale(tx, row.saleId, maps, 'SaleAdjustments', rowNumber),
-      approverUserId: await resolveUser(tx, row.approverUserId, maps, 'SaleAdjustments', rowNumber),
-      type: requiredString(row, 'type', 'SaleAdjustments', rowNumber),
-      reason: requiredString(row, 'reason', 'SaleAdjustments', rowNumber),
-      amount: numberValue(row, 'amount', 'SaleAdjustments', rowNumber, true) as number,
-      paymentMethod: requiredString(row, 'paymentMethod', 'SaleAdjustments', rowNumber),
-      paymentReversalStatus: nullableString(row, 'paymentReversalStatus') || 'PENDING',
-      createdAt: dateValue(row, 'createdAt', 'SaleAdjustments', rowNumber) ?? new Date(),
-    };
+      const id = inputId(row);
+      const data = {
+        saleId: await resolveSale(tx, row.saleId, maps, 'SaleAdjustments', rowNumber),
+        approverUserId: await resolveUser(tx, row.approverUserId, maps, 'SaleAdjustments', rowNumber),
+        type: enumValue(row, 'type', ADJUSTMENT_TYPES, 'SaleAdjustments', rowNumber),
+        reason: boundedString(row, 'reason', 'SaleAdjustments', rowNumber, 500, true) as string,
+        amount: positiveNumberValue(row, 'amount', 'SaleAdjustments', rowNumber, true) as number,
+        paymentMethod: enumValue(row, 'paymentMethod', PAYMENT_METHODS, 'SaleAdjustments', rowNumber),
+        paymentReversalStatus: enumValue(row, 'paymentReversalStatus', REVERSAL_STATUSES, 'SaleAdjustments', rowNumber, 'PENDING'),
+        createdAt: dateValue(row, 'createdAt', 'SaleAdjustments', rowNumber) ?? new Date(),
+      };
     if (id) {
       await tx.saleAdjustment.upsert({ where: { id }, create: { id, ...data }, update: data });
     } else {
@@ -780,16 +1050,22 @@ async function importCashDrawerMovements(tx: ImportClient, rows: Record<string, 
     const shiftId = rawShiftId ? await resolveShift(tx, rawShiftId, maps, 'CashDrawerMovements', rowNumber) : null;
     const saleId = rawSaleId ? await resolveSale(tx, rawSaleId, maps, 'CashDrawerMovements', rowNumber) : null;
     const expenseId = rawExpenseId ? await resolveExpense(tx, rawExpenseId, maps, 'CashDrawerMovements', rowNumber) : null;
-    const data = {
+      const data = {
       shiftId,
       saleId,
-      expenseId,
-      userId: await resolveUser(tx, row.userId, maps, 'CashDrawerMovements', rowNumber),
-      type: requiredString(row, 'type', 'CashDrawerMovements', rowNumber),
-      amount: numberValue(row, 'amount', 'CashDrawerMovements', rowNumber, true) as number,
-      reason: nullableString(row, 'reason'),
-      createdAt: dateValue(row, 'createdAt', 'CashDrawerMovements', rowNumber) ?? new Date(),
-    };
+        expenseId,
+        userId: await resolveUser(tx, row.userId, maps, 'CashDrawerMovements', rowNumber),
+        type: enumValue(row, 'type', CASH_MOVEMENT_TYPES, 'CashDrawerMovements', rowNumber),
+        amount: signedMoneyValue(row, 'amount', 'CashDrawerMovements', rowNumber, true) as number,
+        reason: boundedString(row, 'reason', 'CashDrawerMovements', rowNumber, 500),
+        createdAt: dateValue(row, 'createdAt', 'CashDrawerMovements', rowNumber) ?? new Date(),
+      };
+      if (!shiftId) migrationError('shiftId', 'cash drawer movements must belong to a shift', 'CashDrawerMovements', rowNumber);
+      if (data.type === 'CASH_SALE' && !saleId) migrationError('saleId', 'CASH_SALE movement must reference a sale', 'CashDrawerMovements', rowNumber);
+      if ((data.type === 'REFUND' || data.type === 'VOID') && !saleId) migrationError('saleId', `${data.type} movement must reference a sale`, 'CashDrawerMovements', rowNumber);
+      if ((data.type === 'REFUND' || data.type === 'VOID') && data.amount >= 0) migrationError('amount', `${data.type} movement amount must be negative`, 'CashDrawerMovements', rowNumber);
+      if (data.type !== 'REFUND' && data.type !== 'VOID' && data.amount <= 0) migrationError('amount', `${data.type} movement amount must be positive`, 'CashDrawerMovements', rowNumber);
+      if (data.type === 'PAID_OUT' && !expenseId && !data.reason) migrationError('reason', 'PAID_OUT movement needs an expense or reason', 'CashDrawerMovements', rowNumber);
     if (id) {
       await tx.cashDrawerMovement.upsert({ where: { id }, create: { id, ...data }, update: data });
     } else {
@@ -803,18 +1079,19 @@ async function importSettings(tx: ImportClient, rows: Record<string, unknown>[])
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
-    const id = nullableString(row, 'id') || 'default';
+    const id = boundedString(row, 'id', 'Settings', rowNumber, 100) || 'default';
     const data = {
-      businessName: requiredString(row, 'businessName', 'Settings', rowNumber),
-      businessNameMm: nullableString(row, 'businessNameMm'),
-      address: nullableString(row, 'address'),
-      phone: nullableString(row, 'phone'),
-      email: nullableString(row, 'email'),
-      taxRate: numberValue(row, 'taxRate', 'Settings', rowNumber, true) as number,
-      currencySymbol: requiredString(row, 'currencySymbol', 'Settings', rowNumber),
-      logo: nullableString(row, 'logo'),
-      receiptFooter: nullableString(row, 'receiptFooter'),
+      businessName: boundedString(row, 'businessName', 'Settings', rowNumber, 200, true) as string,
+      businessNameMm: boundedString(row, 'businessNameMm', 'Settings', rowNumber, 200),
+      address: boundedString(row, 'address', 'Settings', rowNumber, 500),
+      phone: boundedString(row, 'phone', 'Settings', rowNumber, 20),
+      email: assertEmail(boundedString(row, 'email', 'Settings', rowNumber, 200), 'email', 'Settings', rowNumber),
+      taxRate: nonNegativeNumberValue(row, 'taxRate', 'Settings', rowNumber, true) as number,
+      currencySymbol: boundedString(row, 'currencySymbol', 'Settings', rowNumber, 10, true) as string,
+      logo: boundedString(row, 'logo', 'Settings', rowNumber, 1000),
+      receiptFooter: boundedString(row, 'receiptFooter', 'Settings', rowNumber, 500),
     };
+    if (data.taxRate > 100) migrationError('taxRate', 'taxRate cannot exceed 100', 'Settings', rowNumber);
     await tx.settings.upsert({ where: { id }, create: { id, ...data }, update: data });
   }
   return rows.length;
@@ -825,7 +1102,8 @@ async function importInvoiceCounters(tx: ImportClient, rows: Record<string, unkn
     const row = rows[index];
     const rowNumber = index + 2;
     const date = requiredString(row, 'date', 'InvoiceCounters', rowNumber);
-    const counter = integerValue(row, 'counter', 'InvoiceCounters', rowNumber, true) as number;
+    if (!/^\d{8}$/.test(date)) migrationError('date', 'date must use YYYYMMDD format', 'InvoiceCounters', rowNumber);
+    const counter = nonNegativeIntegerValue(row, 'counter', 'InvoiceCounters', rowNumber, true) as number;
     await tx.invoiceCounter.upsert({ where: { date }, create: { date, counter }, update: { counter } });
   }
   return rows.length;

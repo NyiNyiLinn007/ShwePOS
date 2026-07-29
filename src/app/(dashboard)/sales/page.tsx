@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { SalesClient } from '@/components/sales/SalesClient';
 import { requirePageRole } from '@/lib/pageAuth';
+import { toNumber } from '@/lib/number';
 
 export default async function SalesPage() {
   await requirePageRole('MANAGER', 'ADMIN');
@@ -25,5 +26,21 @@ export default async function SalesPage() {
     take: 500,
   });
 
-  return <SalesClient initialSales={sales} />;
+  const serializedSales = sales.map((sale) => ({
+    ...sale,
+    subtotal: toNumber(sale.subtotal),
+    discountAmount: toNumber(sale.discountAmount),
+    taxAmount: toNumber(sale.taxAmount),
+    totalAmount: toNumber(sale.totalAmount),
+    paidAmount: toNumber(sale.paidAmount),
+    changeAmount: toNumber(sale.changeAmount),
+    items: sale.items.map((item) => ({
+      ...item,
+      unitPrice: toNumber(item.unitPrice),
+      discount: toNumber(item.discount),
+      total: toNumber(item.total),
+    })),
+  }));
+
+  return <SalesClient initialSales={serializedSales} />;
 }

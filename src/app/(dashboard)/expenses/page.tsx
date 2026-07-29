@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { ExpensesClient } from '@/components/expenses/ExpensesClient';
 import { requirePageRole } from '@/lib/pageAuth';
+import { toNumber } from '@/lib/number';
 
 export default async function ExpensesPage() {
   await requirePageRole('MANAGER', 'ADMIN');
@@ -22,15 +23,19 @@ export default async function ExpensesPage() {
   // Calculate category totals
   const categoryTotals: Record<string, number> = {};
   let totalAmount = 0;
+  const serializedExpenses = expenses.map((expense) => ({
+    ...expense,
+    amount: toNumber(expense.amount),
+  }));
   for (const expense of expenses) {
     categoryTotals[expense.category] =
-      (categoryTotals[expense.category] || 0) + expense.amount;
-    totalAmount += expense.amount;
+      (categoryTotals[expense.category] || 0) + toNumber(expense.amount);
+    totalAmount += toNumber(expense.amount);
   }
 
   return (
     <ExpensesClient
-      initialExpenses={expenses}
+      initialExpenses={serializedExpenses}
       users={users}
       initialSummary={{
         totalAmount: Math.round(totalAmount),

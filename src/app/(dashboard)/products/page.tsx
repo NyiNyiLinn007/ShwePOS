@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { ProductsClient } from '@/components/products/ProductsClient';
 import { requirePageRole } from '@/lib/pageAuth';
+import { toNumber } from '@/lib/number';
 
 export default async function ProductsPage() {
   await requirePageRole('MANAGER', 'ADMIN');
@@ -24,5 +25,11 @@ export default async function ProductsPage() {
     }),
   ]);
 
-  return <ProductsClient initialProducts={products} categories={categories} />;
+  const serializedProducts = products.map((product) => ({
+    ...product,
+    costPrice: toNumber(product.costPrice),
+    sellingPrice: toNumber(product.sellingPrice),
+  }));
+
+  return <ProductsClient initialProducts={serializedProducts} categories={categories} />;
 }

@@ -48,6 +48,16 @@ export async function PUT(
       updateData.password = await bcrypt.hash(parsed.password, 10);
     }
 
+    // Any credential/authorization change invalidates all JWTs immediately.
+    if (
+      parsed.email !== undefined ||
+      parsed.role !== undefined ||
+      parsed.isActive !== undefined ||
+      (parsed.password && parsed.password.trim().length > 0)
+    ) {
+      updateData.sessionVersion = { increment: 1 };
+    }
+
     const user = await prisma.user.update({
       where: { id },
       data: updateData,
@@ -87,7 +97,10 @@ export async function DELETE(
     // Soft delete - deactivate user instead of hard delete
     await prisma.user.update({
       where: { id },
-      data: { isActive: false },
+      data: {
+        isActive: false,
+        sessionVersion: { increment: 1 },
+      },
     });
 
     return NextResponse.json({

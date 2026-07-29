@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { createExpenseSchema } from '@/lib/validations';
+import { toNumber } from '@/lib/number';
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,11 +23,13 @@ export async function GET(request: NextRequest) {
       where.date = {};
       if (startDate) {
         const start = new Date(startDate);
+        if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Invalid startDate' }, { status: 400 });
         start.setHours(0, 0, 0, 0);
         (where.date as Record<string, unknown>).gte = start;
       }
       if (endDate) {
         const end = new Date(endDate);
+        if (Number.isNaN(end.getTime())) return NextResponse.json({ error: 'Invalid endDate' }, { status: 400 });
         end.setHours(23, 59, 59, 999);
         (where.date as Record<string, unknown>).lte = end;
       }
@@ -47,12 +50,12 @@ export async function GET(request: NextRequest) {
     let totalAmount = 0;
     for (const expense of expenses) {
       categoryTotals[expense.category] =
-        (categoryTotals[expense.category] || 0) + expense.amount;
-      totalAmount += expense.amount;
+        (categoryTotals[expense.category] || 0) + toNumber(expense.amount);
+      totalAmount += toNumber(expense.amount);
     }
 
     return NextResponse.json({
-      expenses,
+      expenses: expenses.map((expense) => ({ ...expense, amount: toNumber(expense.amount) })),
       summary: {
         totalAmount: Math.round(totalAmount),
         categoryTotals: Object.entries(categoryTotals).map(([cat, amount]) => ({

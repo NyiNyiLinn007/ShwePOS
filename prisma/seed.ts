@@ -5,15 +5,24 @@ const prisma = new PrismaClient();
 
 async function main() {
   // Production safety guard
-  if (process.env.NODE_ENV === 'production') {
+  if (process.env.NODE_ENV === 'production' || process.env.SHWEPOS_ALLOW_DEMO_SEED !== 'true') {
     console.error('⛔ DANGER: Seed script should NOT run in production!');
     console.error('   This will DELETE all data. Set NODE_ENV to something else if you really mean it.');
     process.exit(1);
   }
 
+  const seedPassword = process.env.SHWEPOS_SEED_PASSWORD;
+  if (!seedPassword || !/^(?=.*[A-Za-z])(?=.*\d).{8,256}$/.test(seedPassword)) {
+    throw new Error('SHWEPOS_SEED_PASSWORD must be 8-256 characters and contain a letter and number.');
+  }
+
   console.log('🌱 Seeding ShwePOS database (DEMO DATA ONLY)...');
 
   // Clean existing data
+  await prisma.dataMigrationAudit.deleteMany();
+  await prisma.cashDrawerMovement.deleteMany();
+  await prisma.saleAdjustment.deleteMany();
+  await prisma.shift.deleteMany();
   await prisma.saleItem.deleteMany();
   await prisma.sale.deleteMany();
   await prisma.stockMovement.deleteMany();
@@ -23,6 +32,8 @@ async function main() {
   await prisma.customer.deleteMany();
   await prisma.user.deleteMany();
   await prisma.settings.deleteMany();
+  await prisma.invoiceCounter.deleteMany();
+  await prisma.rateLimitBucket.deleteMany();
 
   // Create Settings
   await prisma.settings.create({
@@ -40,9 +51,9 @@ async function main() {
   });
 
   // Create Users
-  const adminPassword = await hash('Nyi!1234', 12);
-  const managerPassword = await hash('Nyi!1234', 12);
-  const cashierPassword = await hash('Nyi!1234', 12);
+  const adminPassword = await hash(seedPassword, 12);
+  const managerPassword = await hash(seedPassword, 12);
+  const cashierPassword = await hash(seedPassword, 12);
 
   const admin = await prisma.user.create({
     data: {
@@ -206,12 +217,13 @@ async function main() {
       for (let i = 0; i < itemCount; i++) {
         const product = allProducts[Math.floor(Math.random() * allProducts.length)];
         const quantity = Math.floor(Math.random() * 3) + 1;
-        const total = product.sellingPrice * quantity;
+        const unitPrice = product.sellingPrice.toNumber();
+        const total = unitPrice * quantity;
         subtotal += total;
         saleItems.push({
           productId: product.id,
           quantity,
-          unitPrice: product.sellingPrice,
+          unitPrice,
           discount: 0,
           total,
         });
@@ -275,9 +287,7 @@ async function main() {
   console.log('✅ Sample expenses created');
   console.log('\n🎉 Database seeded successfully!');
   console.log('\n📧 Login Credentials (DEMO ONLY — change for production):');
-  console.log('   Admin:   nyinyilinn@shwepos.com / Nyi!1234');
-  console.log('   Manager: manager@shwepos.com / Nyi!1234');
-  console.log('   Cashier: cashier@shwepos.com / Nyi!1234');
+  console.log('Demo users created. Use the password supplied via SHWEPOS_SEED_PASSWORD and change it before any shared deployment.');
 }
 
 main()

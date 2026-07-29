@@ -852,7 +852,7 @@ export function SettingsClient({
             <input
               ref={migrationFileInput}
               type="file"
-              accept=".xlsx,.xls"
+              accept=".xlsx"
               style={{ display: 'none' }}
               onChange={(event) => setMigrationFile(event.target.files?.[0] || null)}
             />
@@ -897,7 +897,7 @@ export function SettingsClient({
             }}
           >
             {t(
-              'Import uses upsert and does not delete records. Exported workbooks contain password hashes; keep them private.',
+              'Import uses upsert and does not delete records. User passwords are not included in exports; existing users keep their current password.',
               'Import သည် ရှိပြီးသား Record များကို Update/Create လုပ်ပြီး မပါသော Record များကို မဖျက်ပါ။ Export ဖိုင်တွင် Password hash များပါသောကြောင့် လုံခြုံစွာ သိမ်းဆည်းပါ။'
             )}
           </p>

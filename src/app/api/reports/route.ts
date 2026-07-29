@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole, handleApiError } from '@/lib/apiAuth';
+import { toNumber } from '@/lib/number';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,22 +16,38 @@ export async function GET(request: NextRequest) {
     const start = startDate
       ? new Date(startDate)
       : new Date(now.getFullYear(), now.getMonth(), 1);
+    if (Number.isNaN(start.getTime())) {
+      return NextResponse.json({ error: 'Invalid startDate' }, { status: 400 });
+    }
     start.setHours(0, 0, 0, 0);
 
     const end = endDate ? new Date(endDate) : new Date();
+    if (Number.isNaN(end.getTime())) {
+      return NextResponse.json({ error: 'Invalid endDate' }, { status: 400 });
+    }
     end.setHours(23, 59, 59, 999);
 
     // Enforce max date range of 366 days
     const diffMs = end.getTime() - start.getTime();
     const diffDays = diffMs / (1000 * 60 * 60 * 24);
-    if (diffDays > 366) {
+    if (diffDays < 0 || diffDays > 366) {
       return NextResponse.json(
         { error: 'Date range cannot exceed 366 days' },
         { status: 400 }
       );
     }
 
-    // Fetch all completed sales in range with items and product data
+    const salesInRange = await prisma.sale.count({
+      where: {
+        status: 'COMPLETED',
+        createdAt: { gte: start, lte: end },
+      },
+    });
+    if (salesInRange > 10000) {
+      return NextResponse.json({ error: 'Report is too large. Narrow the date range.' }, { status: 400 });
+    }
+
+    // Fetch completed sales in range with items and product data
     const sales = await prisma.sale.findMany({
       where: {
         status: 'COMPLETED',
@@ -64,12 +81,12 @@ export async function GET(request: NextRequest) {
     });
 
     // ── Summary Totals ───────────────────────────────────────
-    const totalRevenue = sales.reduce((sum, s) => sum + s.totalAmount, 0);
+    const totalRevenue = sales.reduce((sum, s) => sum + toNumber(s.totalAmount), 0);
     const totalCost = sales.reduce(
       (sum, s) =>
         sum +
         s.items.reduce(
-          (itemSum, item) => itemSum + item.costPrice * item.quantity,
+          (itemSum, item) => itemSum + toNumber(item.costPrice) * item.quantity,
           0
         ),
       0
@@ -86,12 +103,12 @@ export async function GET(request: NextRequest) {
       const dateKey = sale.createdAt.toISOString().split('T')[0];
       const existing = dailyMap.get(dateKey) || { revenue: 0, count: 0, profit: 0 };
       const saleCost = sale.items.reduce(
-        (sum, item) => sum + item.costPrice * item.quantity,
+        (sum, item) => sum + toNumber(item.costPrice) * item.quantity,
         0
       );
-      existing.revenue += sale.totalAmount;
+      existing.revenue += toNumber(sale.totalAmount);
       existing.count += 1;
-      existing.profit += sale.totalAmount - saleCost;
+      existing.profit += toNumber(sale.totalAmount) - saleCost;
       dailyMap.set(dateKey, existing);
     }
 
@@ -121,7 +138,7 @@ export async function GET(request: NextRequest) {
       const method = sale.paymentMethod;
       const existing = paymentMap.get(method) || { count: 0, amount: 0 };
       existing.count += 1;
-      existing.amount += sale.totalAmount;
+      existing.amount += toNumber(sale.totalAmount);
       paymentMap.set(method, existing);
     }
 
@@ -159,8 +176,8 @@ export async function GET(request: NextRequest) {
           cost: 0,
         };
         existing.qtySold += item.quantity;
-        existing.revenue += item.total;
-        existing.cost += item.costPrice * item.quantity;
+        existing.revenue += toNumber(item.total);
+        existing.cost += toNumber(item.costPrice) * item.quantity;
         productMap.set(item.product.id, existing);
       }
     }
@@ -194,7 +211,7 @@ export async function GET(request: NextRequest) {
           revenue: 0,
           count: 0,
         };
-        existing.revenue += item.total;
+        existing.revenue += toNumber(item.total);
         existing.count += item.quantity;
         categoryMap.set(cat.id, existing);
       }
@@ -220,7 +237,7 @@ export async function GET(request: NextRequest) {
       const hour = sale.createdAt.getHours();
       const existing = hourlyMap.get(hour)!;
       existing.count += 1;
-      existing.revenue += sale.totalAmount;
+      existing.revenue += toNumber(sale.totalAmount);
     }
 
     const hourlyDistribution = Array.from(hourlyMap.entries())

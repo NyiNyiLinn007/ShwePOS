@@ -5,9 +5,8 @@ import { handleApiError, validateCsrf } from '@/lib/apiAuth';
 
 /**
  * POST /api/auth/signout-cleanup
- * Called before signOut to clear lastLoginAt.
- * This prevents check-session from falsely detecting an "active session"
- * after the user has properly logged out.
+ * Called before signOut to clear the login marker and invalidate the current
+ * JWT. This also prevents a copied cookie from being replayed after logout.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -24,7 +23,10 @@ export async function POST(request: NextRequest) {
 
     await prisma.user.update({
       where: { id: session.user.id },
-      data: { lastLoginAt: null },
+      data: {
+        lastLoginAt: null,
+        sessionVersion: { increment: 1 },
+      },
     });
 
     return NextResponse.json({ ok: true });

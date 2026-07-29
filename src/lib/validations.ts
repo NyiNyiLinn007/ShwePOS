@@ -4,6 +4,12 @@
 import { z } from 'zod';
 import { EXPENSE_CATEGORY_VALUES } from '@/lib/constants';
 
+const moneySchema = z.number().finite().min(0).max(1_000_000_000_000);
+const dateStringSchema = z.string().max(40).refine(
+  (value) => !Number.isNaN(Date.parse(value)),
+  'Date must be a valid ISO/date string'
+);
+
 // ---- Shared Enums ----
 
 export const PaymentMethodEnum = z.enum(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT']);
@@ -35,8 +41,8 @@ export const createProductSchema = z.object({
   sku: z.string().min(1, 'SKU is required').max(50),
   barcode: z.string().max(50).optional().nullable(),
   categoryId: z.string().min(1, 'Category is required'),
-  costPrice: z.number().min(0, 'Cost price must be 0 or more').default(0),
-  sellingPrice: z.number().min(0, 'Selling price must be 0 or more').default(0),
+  costPrice: moneySchema.default(0),
+  sellingPrice: moneySchema.default(0),
   stockQuantity: z.number().int().min(0).default(0),
   lowStockThreshold: z.number().int().min(0).default(10),
   unit: ProductUnitEnum.default('pcs'),
@@ -54,15 +60,15 @@ export type UpdateProductInput = z.infer<typeof updateProductSchema>;
 export const saleItemInputSchema = z.object({
   productId: z.string().min(1, 'Product ID is required'),
   quantity: z.number().int().positive('Quantity must be a positive integer'),
-  discount: z.number().min(0, 'Discount cannot be negative').default(0),
+  discount: moneySchema.default(0),
 });
 
 export const createSaleSchema = z.object({
   items: z.array(saleItemInputSchema).min(1, 'Sale must have at least one item'),
   customerId: z.string().optional().nullable(),
   paymentMethod: PaymentMethodEnum,
-  paidAmount: z.number().min(0, 'Paid amount cannot be negative'),
-  cartDiscount: z.number().min(0, 'Cart discount cannot be negative').default(0),
+  paidAmount: moneySchema,
+  cartDiscount: moneySchema.default(0),
   clientSaleId: z.string().uuid('Invalid idempotency key').optional(),
   paymentReference: z.string().max(100).optional().nullable(),
   notes: z.string().max(500).optional().nullable(),
@@ -106,9 +112,9 @@ export type UpdateCustomerInput = z.infer<typeof updateCustomerSchema>;
 
 export const createExpenseSchema = z.object({
   category: z.enum(EXPENSE_CATEGORY_VALUES),
-  amount: z.number().positive('Amount must be positive'),
+  amount: moneySchema.positive('Amount must be positive'),
   description: z.string().max(500).optional().nullable(),
-  date: z.string().optional(), // ISO date string
+  date: dateStringSchema.optional(),
 });
 
 export const updateExpenseSchema = createExpenseSchema.partial();
@@ -147,6 +153,11 @@ export const updateUserSchema = z.object({
 
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+
+export const loginCredentialsSchema = z.object({
+  email: z.string().email().max(200),
+  password: z.string().min(1).max(256),
+}).strict();
 
 // ---- Settings Schema ----
 

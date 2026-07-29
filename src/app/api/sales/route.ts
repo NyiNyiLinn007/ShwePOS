@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, handleApiError, ApiError, validateCsrf } from '@/lib/apiAuth';
 import { createSaleSchema } from '@/lib/validations';
+import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,10 +26,13 @@ export async function GET(request: NextRequest) {
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) {
-        (where.createdAt as Record<string, unknown>).gte = new Date(startDate);
+        const start = new Date(startDate);
+        if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Invalid startDate' }, { status: 400 });
+        (where.createdAt as Record<string, unknown>).gte = start;
       }
       if (endDate) {
         const end = new Date(endDate);
+        if (Number.isNaN(end.getTime())) return NextResponse.json({ error: 'Invalid endDate' }, { status: 400 });
         end.setHours(23, 59, 59, 999);
         (where.createdAt as Record<string, unknown>).lte = end;
       }
@@ -68,14 +72,14 @@ export async function GET(request: NextRequest) {
     ]);
 
     return NextResponse.json({
-      sales,
+      sales: serializePrismaData(sales),
       pagination: {
         page,
         limit,
         total,
         totalPages: Math.ceil(total / limit),
       },
-    });
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return handleApiError(error, 'Failed to fetch sales');
   }
@@ -153,7 +157,7 @@ export async function POST(request: NextRequest) {
     if (clientSaleId) {
       const existingSale = await findExistingSaleByClientSaleId(clientSaleId);
       if (existingSale) {
-        return NextResponse.json(existingSale, { status: 200 });
+        return NextResponse.json(serializePrismaData(existingSale), { status: 200 });
       }
     }
 
@@ -218,12 +222,14 @@ export async function POST(request: NextRequest) {
               throw new ApiError(`Product is inactive: ${product.name}`, 400);
             }
 
-            const itemSubtotal = product.sellingPrice * item.quantity;
+            const sellingPrice = toNumber(product.sellingPrice);
+            const costPrice = toNumber(product.costPrice);
+            const itemSubtotal = roundMoney(sellingPrice * item.quantity);
             const itemDiscount = Math.min(item.discount || 0, itemSubtotal); // Cap discount at item total
             if (itemDiscount < 0) {
               throw new ApiError('Discount cannot be negative', 400);
             }
-            const itemTotal = itemSubtotal - itemDiscount;
+            const itemTotal = roundMoney(itemSubtotal - itemDiscount);
 
             subtotal += itemSubtotal;
             totalDiscount += itemDiscount;
@@ -231,8 +237,8 @@ export async function POST(request: NextRequest) {
             saleItemsData.push({
               productId: item.productId,
               quantity: item.quantity,
-              unitPrice: product.sellingPrice,
-              costPrice: product.costPrice,
+              unitPrice: sellingPrice,
+              costPrice,
               discount: itemDiscount,
               total: itemTotal,
             });
@@ -248,8 +254,8 @@ export async function POST(request: NextRequest) {
           const cartDiscountAmount = Math.min(cartDiscount || 0, maxCartDiscount);
           const effectiveDiscount = totalItemDiscount + cartDiscountAmount;
           const discountedSubtotal = Math.max(0, subtotal - effectiveDiscount);
-          const taxAmount = Math.round(discountedSubtotal * (taxRate / 100));
-          const totalAmount = discountedSubtotal + taxAmount;
+          const taxAmount = roundMoney(discountedSubtotal * (taxRate / 100));
+          const totalAmount = roundMoney(discountedSubtotal + taxAmount);
 
           // 6. Validate payment
           let finalPaid = paidAmount;
@@ -267,6 +273,17 @@ export async function POST(request: NextRequest) {
             // Non-cash: paid = total, no change
             finalPaid = totalAmount;
             changeAmount = 0;
+          }
+
+          const openShift = paymentMethod === 'CASH'
+            ? await tx.shift.findFirst({
+                where: { userId: user.id, status: 'OPEN' },
+                select: { id: true },
+                orderBy: { openedAt: 'desc' },
+              })
+            : null;
+          if (paymentMethod === 'CASH' && !openShift) {
+            throw new ApiError('Open a cashier shift before recording a cash sale', 409);
           }
 
           // 7. Validate customer if provided
@@ -383,15 +400,9 @@ export async function POST(request: NextRequest) {
           }
 
           if (paymentMethod === 'CASH') {
-            const openShift = await tx.shift.findFirst({
-              where: { userId: user.id, status: 'OPEN' },
-              select: { id: true },
-              orderBy: { openedAt: 'desc' },
-            });
-
             await tx.cashDrawerMovement.create({
               data: {
-                shiftId: openShift?.id ?? null,
+                shiftId: openShift!.id,
                 saleId: newSale.id,
                 userId: user.id,
                 type: 'CASH_SALE',
@@ -404,14 +415,14 @@ export async function POST(request: NextRequest) {
           return newSale;
         }, { maxWait: 10000, timeout: 15000 });
 
-        return NextResponse.json(sale, { status: 201 });
+        return NextResponse.json(serializePrismaData(sale), { status: 201 });
       } catch (e: unknown) {
         // Retry on unique constraint violation (invoice number race)
         if (isUniqueConstraintError(e)) {
           if (clientSaleId) {
             const existingSale = await findExistingSaleByClientSaleId(clientSaleId);
             if (existingSale) {
-              return NextResponse.json(existingSale, { status: 200 });
+              return NextResponse.json(serializePrismaData(existingSale), { status: 200 });
             }
           }
           lastError = e;

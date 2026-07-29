@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { getTodayRange, getLastNDayLabels, formatShortDate } from '@/lib/utils';
 import { requirePageAuth } from '@/lib/pageAuth';
 import DashboardClient from '@/components/dashboard/DashboardClient';
+import { toNumber } from '@/lib/number';
 
 export default async function DashboardPage() {
   const session = await requirePageAuth();
@@ -25,7 +26,7 @@ export default async function DashboardPage() {
     orderBy: { createdAt: 'desc' },
   });
 
-  const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+  const todayRevenue = todaySales.reduce((sum, sale) => sum + toNumber(sale.totalAmount), 0);
   const totalSalesToday = todaySales.length;
 
   // --- Fetch total products count ---
@@ -50,7 +51,7 @@ export default async function DashboardPage() {
     invoiceNumber: sale.invoiceNumber,
     customerName: sale.customer?.name ?? null,
     itemCount: sale.items.length,
-    totalAmount: sale.totalAmount,
+    totalAmount: toNumber(sale.totalAmount),
     paymentMethod: sale.paymentMethod,
     createdAt: sale.createdAt.toISOString(),
   }));
@@ -91,7 +92,7 @@ export default async function DashboardPage() {
     productId: tp.productId,
     productName: productNameMap.get(tp.productId) ?? 'Unknown Product',
     totalQuantity: tp._sum.quantity ?? 0,
-    totalRevenue: tp._sum.total ?? 0,
+    totalRevenue: toNumber(tp._sum.total),
   }));
 
   // --- Sales chart data (last 7 days) ---
@@ -119,7 +120,7 @@ export default async function DashboardPage() {
   last7DaysSales.forEach((sale) => {
     const label = formatShortDate(sale.createdAt);
     const current = salesByDay.get(label) ?? 0;
-    salesByDay.set(label, current + sale.totalAmount);
+    salesByDay.set(label, current + toNumber(sale.totalAmount));
   });
 
   const salesChartData = dayLabels.map((label) => ({

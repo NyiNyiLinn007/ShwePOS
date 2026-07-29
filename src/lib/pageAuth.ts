@@ -13,22 +13,40 @@ import type { UserRole } from '@/lib/constants';
  */
 export async function requirePageAuth() {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.id) {
     redirect('/login');
   }
 
-  // Single-session enforcement: check sessionVersion
   const tokenVersion = (session.user as { sessionVersion?: number }).sessionVersion ?? 0;
   const dbUser = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { sessionVersion: true },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
+      sessionVersion: true,
+    },
   });
 
-  if (!dbUser || tokenVersion !== dbUser.sessionVersion) {
+  if (!dbUser || !dbUser.isActive || tokenVersion !== dbUser.sessionVersion) {
     redirect('/login');
   }
 
-  return session;
+  // Return database-derived role/name/email so page authorization does not
+  // trust stale JWT claims after an admin changes the account.
+  return {
+    ...session,
+    user: {
+      ...session.user,
+      id: dbUser.id,
+      name: dbUser.name,
+      email: dbUser.email,
+      role: dbUser.role as UserRole,
+      sessionVersion: dbUser.sessionVersion,
+    },
+  };
 }
 
 /**

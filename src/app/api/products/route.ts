@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { createProductSchema } from '@/lib/validations';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
+import { serializePrismaData } from '@/lib/number';
 
 export async function GET(request: NextRequest) {
   try {
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: 'desc' },
     });
 
-    return NextResponse.json(products);
+    return NextResponse.json(serializePrismaData(products));
   } catch (error) {
     return handleApiError(error, 'Failed to fetch products');
   }
@@ -130,7 +131,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(product, { status: 201 });
+    return NextResponse.json(serializePrismaData(product), { status: 201 });
   } catch (error) {
     return handleApiError(error, 'Failed to create product');
   }

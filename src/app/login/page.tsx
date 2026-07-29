@@ -20,7 +20,6 @@ export default function LoginPage() {
       const result = await signIn('credentials', {
         email,
         password,
-        force: 'true',
         redirect: false,
       });
 
@@ -40,8 +39,6 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setShowSessionConfirm(false);
-
     if (!email || !password) {
       setError('Please enter both email and password.');
       return;
@@ -50,37 +47,8 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      // Step 1: Check if user has an active session elsewhere
-      const checkRes = await fetch('/api/auth/check-session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const checkData = await checkRes.json();
-
-      if (!checkRes.ok || !checkData.valid) {
-        setError('Invalid email or password. Please try again.');
-        setIsLoading(false);
-        return;
-      }
-
-      if (checkData.hasActiveSession) {
-        // Show confirmation dialog
-        const loginTime = checkData.lastLoginAt
-          ? new Date(checkData.lastLoginAt).toLocaleString('en-US', {
-              timeZone: 'Asia/Yangon',
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            })
-          : null;
-        setLastLoginInfo(loginTime);
-        setShowSessionConfirm(true);
-        setIsLoading(false);
-        return;
-      }
-
-      // No active session — login directly
+      // The credential provider performs the only password verification. This
+      // avoids a public pre-login password oracle and duplicate bcrypt work.
       await doLogin();
     } catch {
       setError('An unexpected error occurred. Please try again.');
@@ -204,7 +172,7 @@ export default function LoginPage() {
           <button
             type="submit"
             className="btn btn-primary btn-lg"
-            disabled={isLoading || showSessionConfirm}
+            disabled={isLoading}
           >
             {isLoading ? (
               <span className="flex items-center gap-sm">

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole, handleApiError, ApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateSaleStatusSchema } from '@/lib/validations';
+import { serializePrismaData, toNumber } from '@/lib/number';
 
 export async function GET(
   _request: NextRequest,
@@ -48,7 +49,7 @@ export async function GET(
       return NextResponse.json({ error: 'Sale not found' }, { status: 404 });
     }
 
-    return NextResponse.json(sale);
+    return NextResponse.json(serializePrismaData(sale));
   } catch (error) {
     return handleApiError(error, 'Failed to fetch sale');
   }
@@ -101,11 +102,37 @@ export async function PUT(
       // Fetch sale with items for stock restore
       const existingSale = await tx.sale.findUnique({
         where: { id },
-        include: { items: true },
+        include: {
+          items: true,
+          cashDrawerMovements: {
+            where: { type: 'CASH_SALE' },
+            select: { shiftId: true },
+            take: 1,
+          },
+        },
       });
 
       if (!existingSale) {
         throw new ApiError('Sale not found', 404);
+      }
+
+      // Do not mark a card/mobile payment as refunded while the payment
+      // provider still has no confirmed reversal. This keeps inventory,
+      // customer totals, and payment state from diverging.
+      if (existingSale.paymentMethod !== 'CASH') {
+        throw new ApiError(
+          'Non-cash refunds/voids require a confirmed payment reversal integration',
+          409
+        );
+      }
+
+      const openShift = await tx.shift.findFirst({
+        where: { userId: user.id, status: 'OPEN' },
+        select: { id: true },
+        orderBy: { openedAt: 'desc' },
+      });
+      if (!openShift) {
+        throw new ApiError('Open a manager shift before refunding or voiding a cash sale', 409);
       }
 
       await tx.saleAdjustment.create({
@@ -116,8 +143,7 @@ export async function PUT(
           reason,
           amount: existingSale.totalAmount,
           paymentMethod: existingSale.paymentMethod,
-          paymentReversalStatus:
-            existingSale.paymentMethod === 'CASH' ? 'COMPLETED' : 'PENDING',
+          paymentReversalStatus: 'COMPLETED',
         },
       });
 
@@ -163,19 +189,13 @@ export async function PUT(
       }
 
       if (existingSale.paymentMethod === 'CASH') {
-        const openShift = await tx.shift.findFirst({
-          where: { userId: existingSale.userId, status: 'OPEN' },
-          select: { id: true },
-          orderBy: { openedAt: 'desc' },
-        });
-
         await tx.cashDrawerMovement.create({
           data: {
-            shiftId: openShift?.id ?? null,
+            shiftId: openShift.id,
             saleId: existingSale.id,
             userId: user.id,
             type: newStatus === 'REFUNDED' ? 'REFUND' : 'VOID',
-            amount: -existingSale.totalAmount,
+            amount: -toNumber(existingSale.totalAmount),
             reason: `${newStatus}: ${reason} (Invoice: ${existingSale.invoiceNumber})`,
           },
         });
@@ -204,7 +224,7 @@ export async function PUT(
       return finalSale;
     }, { maxWait: 10000, timeout: 15000 });
 
-    return NextResponse.json(updatedSale);
+    return NextResponse.json(serializePrismaData(updatedSale));
   } catch (error) {
     return handleApiError(error, 'Failed to update sale');
   }

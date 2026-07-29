@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requireAuth, requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
+import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
+import { updateCustomerSchema } from '@/lib/validations';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth();
+    await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;
 
@@ -37,7 +38,21 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(customer);
+    return NextResponse.json({
+      ...customer,
+      totalPurchases: Number(customer.totalPurchases),
+      sales: customer.sales.map((sale) => ({
+        ...sale,
+        totalAmount: Number(sale.totalAmount),
+        items: sale.items.map((item) => ({
+          ...item,
+          unitPrice: Number(item.unitPrice),
+          costPrice: Number(item.costPrice),
+          discount: Number(item.discount),
+          total: Number(item.total),
+        })),
+      })),
+    }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return handleApiError(error, 'Failed to fetch customer');
   }
@@ -52,13 +67,11 @@ export async function PUT(
     await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;
-    const body = await request.json();
-    const { name, phone, email, address } = body as {
-      name?: string;
-      phone?: string;
-      email?: string;
-      address?: string;
-    };
+    const parsed = updateCustomerSchema.parse(await request.json());
+    const name = parsed.name?.trim();
+    const phone = parsed.phone?.trim() || null;
+    const email = parsed.email?.trim() || null;
+    const address = parsed.address?.trim() || null;
 
     const existing = await prisma.customer.findUnique({ where: { id } });
     if (!existing) {
@@ -83,14 +96,14 @@ export async function PUT(
     const customer = await prisma.customer.update({
       where: { id },
       data: {
-        name: name?.trim() || existing.name,
-        phone: phone?.trim() || null,
-        email: email?.trim() || null,
-        address: address?.trim() || null,
+        name: name || existing.name,
+        phone,
+        email,
+        address,
       },
     });
 
-    return NextResponse.json(customer);
+    return NextResponse.json({ ...customer, totalPurchases: Number(customer.totalPurchases) });
   } catch (error) {
     return handleApiError(error, 'Failed to update customer');
   }

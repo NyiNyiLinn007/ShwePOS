@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { updateProductSchema } from '@/lib/validations';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
+import { serializePrismaData } from '@/lib/number';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -32,7 +33,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    return NextResponse.json(product);
+    return NextResponse.json(serializePrismaData(product));
   } catch (error) {
     return handleApiError(error, 'Failed to fetch product');
   }
@@ -116,7 +117,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       },
     });
 
-    return NextResponse.json(product);
+    return NextResponse.json(serializePrismaData(product));
   } catch (error) {
     return handleApiError(error, 'Failed to update product');
   }
@@ -146,7 +147,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({
       message: 'Product deactivated successfully',
-      product,
+      product: serializePrismaData(product),
     });
   } catch (error) {
     return handleApiError(error, 'Failed to delete product');

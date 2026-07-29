@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { CustomersClient } from '@/components/customers/CustomersClient';
 import { requirePageRole } from '@/lib/pageAuth';
+import { toNumber } from '@/lib/number';
 
 export default async function CustomersPage() {
   await requirePageRole('MANAGER', 'ADMIN');
@@ -33,7 +34,7 @@ export default async function CustomersPage() {
       phone: customer.phone,
       email: customer.email,
       address: customer.address,
-      totalPurchases: customer.totalPurchases,
+      totalPurchases: toNumber(customer.totalPurchases),
       loyaltyPoints: customer.loyaltyPoints,
       createdAt: customer.createdAt,
       updatedAt: customer.updatedAt,
@@ -42,7 +43,7 @@ export default async function CustomersPage() {
       recentSales: customer.sales.slice(0, 20).map((s) => ({
         id: s.id,
         invoiceNumber: s.invoiceNumber,
-        totalAmount: s.totalAmount,
+        totalAmount: toNumber(s.totalAmount),
         status: s.status,
         createdAt: s.createdAt,
       })),

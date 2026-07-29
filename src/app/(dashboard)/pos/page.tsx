@@ -1,11 +1,15 @@
 import prisma from '@/lib/prisma';
 import POSClient from '@/components/pos/POSClient';
+import { requirePageAuth } from '@/lib/pageAuth';
+import { toNumber } from '@/lib/number';
 
 export const metadata = {
   title: 'POS Terminal - ShwePOS',
 };
 
 export default async function POSPage() {
+  await requirePageAuth();
+
   const [products, categories, settings] = await Promise.all([
     prisma.product.findMany({
       where: { isActive: true },
@@ -41,7 +45,7 @@ export default async function POSPage() {
     nameMm: p.nameMm,
     sku: p.sku,
     barcode: p.barcode,
-    sellingPrice: p.sellingPrice,
+    sellingPrice: toNumber(p.sellingPrice),
     // costPrice intentionally excluded — sensitive margin data
     stockQuantity: p.stockQuantity,
     unit: p.unit,

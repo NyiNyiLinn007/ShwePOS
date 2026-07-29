@@ -7,6 +7,7 @@ import Credentials from 'next-auth/providers/credentials';
 import { compare } from 'bcryptjs';
 import { prisma } from '@/lib/prisma';
 import { authConfig } from '@/lib/auth.config';
+import { loginCredentialsSchema } from '@/lib/validations';
 import {
   consumeRateLimit,
   normalizeRateLimitPart,
@@ -27,14 +28,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         force: { label: 'Force', type: 'text' },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
+        const parsed = loginCredentialsSchema.safeParse({
+          email: credentials?.email,
+          password: credentials?.password,
+        });
+        if (!parsed.success) {
           return null;
         }
 
-        const email = normalizeRateLimitPart(credentials.email as string);
-        const password = credentials.password as string;
+        const email = normalizeRateLimitPart(parsed.data.email);
+        const password = parsed.data.password;
         const emailKey = `login:email:${email}`;
-        const emailLimit = consumeRateLimit(emailKey, {
+        const emailLimit = await consumeRateLimit(emailKey, {
           limit: LOGIN_EMAIL_LIMIT,
           windowMs: LOGIN_WINDOW_MS,
         });
@@ -67,7 +72,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           },
         });
 
-        resetRateLimit(emailKey);
+        await resetRateLimit(emailKey);
 
         return {
           id: updated.id,
