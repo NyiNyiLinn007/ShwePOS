@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 
 interface HeaderProps {
   title: string;
@@ -18,7 +19,8 @@ export default function Header({
   subtitleMm,
   children,
 }: HeaderProps) {
-  const { language, toggleLanguage } = useAppStore();
+  const { toggleLanguage } = useAppStore();
+  const { language, t } = useI18n();
   const [currentTime, setCurrentTime] = useState('');
 
   useEffect(() => {
@@ -81,7 +83,7 @@ export default function Header({
         <button
           className="btn btn-secondary btn-sm"
           onClick={toggleLanguage}
-          title={language === 'en' ? 'Switch to Myanmar' : 'Switch to English'}
+          title={language === 'en' ? t('switchToMyanmar') : t('switchToEnglish')}
         >
           {language === 'en' ? '🇲🇲 MM' : '🇬🇧 EN'}
         </button>

@@ -9,7 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 
 interface SalesDataPoint {
@@ -53,8 +53,7 @@ function CustomTooltip({
 }
 
 export default function SalesChart({ data }: SalesChartProps) {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   return (
     <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>

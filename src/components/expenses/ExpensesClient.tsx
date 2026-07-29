@@ -10,7 +10,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { EXPENSE_CATEGORIES as SHARED_EXPENSE_CATEGORIES } from '@/lib/constants';
@@ -58,9 +58,21 @@ const ITEMS_PER_PAGE = 10;
 
 const EXPENSE_CATEGORIES = SHARED_EXPENSE_CATEGORIES.map((cat) => ({
   value: cat.value,
-  en: cat.label,
-  mm: cat.labelMm,
 }));
+
+const expenseCategoryTranslationKeys: Record<string, string> = {
+  Rent: 'expenseRent',
+  Utilities: 'expenseUtilities',
+  Salary: 'expenseSalary',
+  Supplies: 'expenseSupplies',
+  Maintenance: 'expenseMaintenance',
+  Transport: 'expenseTransport',
+  Marketing: 'expenseMarketing',
+  Food: 'expenseFood',
+  Insurance: 'expenseInsurance',
+  Tax: 'expenseTax',
+  Other: 'expenseOther',
+};
 
 const CATEGORY_COLORS: Record<string, string> = {
   Rent: '#D4A843',
@@ -97,8 +109,7 @@ export function ExpensesClient({
   users,
   initialSummary,
 }: ExpensesClientProps) {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { t } = useI18n();
   const { addToast } = useToast();
 
   // State
@@ -337,9 +348,7 @@ export function ExpensesClient({
   }
 
   function getCategoryLabel(value: string): string {
-    const cat = EXPENSE_CATEGORIES.find((c) => c.value === value);
-    if (!cat) return value;
-    return language === 'mm' ? cat.mm : cat.en;
+    return t(expenseCategoryTranslationKeys[value] ?? value);
   }
 
   /* ---- Chart Tooltip ---- */
@@ -526,7 +535,7 @@ export function ExpensesClient({
               <option value="">{t('All Categories', 'အမျိုးအစားအားလုံး')}</option>
               {EXPENSE_CATEGORIES.map((cat) => (
                 <option key={cat.value} value={cat.value}>
-                  {language === 'mm' ? cat.mm : cat.en}
+                  {getCategoryLabel(cat.value)}
                 </option>
               ))}
             </select>
@@ -656,14 +665,14 @@ export function ExpensesClient({
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => openEditModal(expense)}
-                            title="Edit"
+                            title={t('edit')}
                           >
                             ✏️
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => setDeleteTarget(expense)}
-                            title="Delete"
+                            title={t('delete')}
                             style={{ color: 'var(--danger)' }}
                           >
                             🗑️
@@ -748,7 +757,7 @@ export function ExpensesClient({
                 >
                   {EXPENSE_CATEGORIES.map((cat) => (
                     <option key={cat.value} value={cat.value}>
-                      {language === 'mm' ? cat.mm : cat.en}
+                      {getCategoryLabel(cat.value)}
                     </option>
                   ))}
                 </select>

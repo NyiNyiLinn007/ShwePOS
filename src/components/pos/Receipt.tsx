@@ -2,6 +2,7 @@
 
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useI18n } from '@/lib/i18n';
 
 interface ReceiptData {
   invoiceNumber: string;
@@ -28,14 +29,9 @@ interface ReceiptProps {
   onNewSale: () => void;
 }
 
-const PAYMENT_LABELS: Record<string, string> = {
-  CASH: 'Cash',
-  CARD: 'Card',
-  MOBILE_BANKING: 'Mobile Banking',
-};
-
 export default function Receipt({ data, onNewSale }: ReceiptProps) {
   const { businessName, businessNameMm, address, phone, receiptFooter } = useSettingsStore();
+  const { t } = useI18n();
 
   const handlePrint = () => {
     window.print();
@@ -102,20 +98,20 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
           {/* Invoice Info */}
           <div style={{ marginBottom: 'var(--space-md)' }}>
             <div className="flex justify-between" style={{ marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Invoice:</span>
+              <span style={{ color: 'var(--text-muted)' }}>{t('invoiceNumber')}:</span>
               <span style={{ fontWeight: 600 }}>{data.invoiceNumber}</span>
             </div>
             <div className="flex justify-between" style={{ marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Date:</span>
+              <span style={{ color: 'var(--text-muted)' }}>{t('date')}:</span>
               <span>{formatDateTime(data.createdAt)}</span>
             </div>
             <div className="flex justify-between" style={{ marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Cashier:</span>
+              <span style={{ color: 'var(--text-muted)' }}>{t('cashier')}:</span>
               <span>{data.cashierName}</span>
             </div>
             {data.customerName && (
               <div className="flex justify-between" style={{ marginBottom: '4px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Customer:</span>
+                <span style={{ color: 'var(--text-muted)' }}>{t('customers')}:</span>
                 <span>{data.customerName}</span>
               </div>
             )}
@@ -155,7 +151,7 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
           {/* Totals */}
           <div style={{ marginBottom: 'var(--space-md)' }}>
             <div className="flex justify-between" style={{ marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Subtotal</span>
+              <span style={{ color: 'var(--text-muted)' }}>{t('subtotal')}</span>
               <span>{formatCurrency(data.subtotal)}</span>
             </div>
             {data.discountAmount > 0 && (
@@ -163,13 +159,13 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
                 className="flex justify-between"
                 style={{ marginBottom: '4px', color: 'var(--danger)' }}
               >
-                <span>Discount</span>
+                <span>{t('discount')}</span>
                 <span>−{formatCurrency(data.discountAmount)}</span>
               </div>
             )}
             {data.taxAmount > 0 && (
               <div className="flex justify-between" style={{ marginBottom: '4px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>Tax</span>
+                <span style={{ color: 'var(--text-muted)' }}>{t('tax')}</span>
                 <span>{formatCurrency(data.taxAmount)}</span>
               </div>
             )}
@@ -184,7 +180,7 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
                 marginTop: 'var(--space-sm)',
               }}
             >
-              <span>TOTAL</span>
+              <span>{t('total').toUpperCase()}</span>
               <span>{formatCurrency(data.totalAmount)}</span>
             </div>
           </div>
@@ -200,11 +196,11 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
           {/* Payment Info */}
           <div style={{ marginBottom: 'var(--space-lg)' }}>
             <div className="flex justify-between" style={{ marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Payment</span>
-              <span>{PAYMENT_LABELS[data.paymentMethod] || data.paymentMethod}</span>
+              <span style={{ color: 'var(--text-muted)' }}>{t('paymentMethod')}</span>
+              <span>{data.paymentMethod === 'CASH' ? t('cash') : data.paymentMethod === 'CARD' ? t('card') : data.paymentMethod === 'MOBILE_BANKING' ? t('mobileBanking') : data.paymentMethod}</span>
             </div>
             <div className="flex justify-between" style={{ marginBottom: '4px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Paid</span>
+              <span style={{ color: 'var(--text-muted)' }}>{t('paidAmount')}</span>
               <span>{formatCurrency(data.paidAmount)}</span>
             </div>
             {data.changeAmount > 0 && (
@@ -212,7 +208,7 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
                 className="flex justify-between"
                 style={{ fontWeight: 700, color: 'var(--success)' }}
               >
-                <span>Change</span>
+                <span>{t('changeAmount')}</span>
                 <span>{formatCurrency(data.changeAmount)}</span>
               </div>
             )}

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 
 interface Category {
@@ -48,8 +48,7 @@ interface CategoriesClientProps {
 
 export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
   const { addToast } = useToast();
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
   const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);

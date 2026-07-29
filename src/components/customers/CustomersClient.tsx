@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
 
@@ -56,8 +56,7 @@ interface CustomersClientProps {
 
 export function CustomersClient({ initialCustomers }: CustomersClientProps) {
   const { addToast } = useToast();
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   // State
   const [customers, setCustomers] = useState<CustomerData[]>(initialCustomers);
@@ -301,7 +300,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
             <input
               type="text"
               className="input input-search"
-              placeholder={t('Search by name, phone, email...', 'အမည်၊ ဖုန်၊ အီးမေးလ်ဖြင့် ရှာပါ...')}
+              placeholder={t('searchCustomerFields')}
               value={search}
               onChange={(e) => handleSearchChange(e.target.value)}
             />
@@ -334,7 +333,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                 <thead>
                   <tr>
                     <th>{t('Name', 'အမည်')}</th>
-                    <th>{t('Phone', 'ဖုန်')}</th>
+                    <th>{t('phone')}</th>
                     <th>{t('Email', 'အီးမေးလ်')}</th>
                     <th>{t('Address', 'လိပ်စာ')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Total Purchases', 'စုစုပေါင်းဝယ်ယူမှု')}</th>
@@ -354,7 +353,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                           {customer.name}
                         </div>
                         <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                          {customer.purchaseCount} {t('order', 'မှာယ်')}{language !== 'mm' && customer.purchaseCount !== 1 ? 's' : ''}
+                          {customer.purchaseCount} {t('order')}{language !== 'mm' && customer.purchaseCount !== 1 ? 's' : ''}
                         </div>
                       </td>
                       <td style={{ fontSize: 'var(--text-sm)' }}>
@@ -518,7 +517,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
 
               {/* Phone */}
               <div className="input-group">
-                <label className="input-label">{t('Phone', 'ဖုန်')}</label>
+                <label className="input-label">{t('phone')}</label>
                 <input
                   type="tel"
                   className="input"
@@ -621,7 +620,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                 </div>
                 <div>
                   <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {t('Phone', 'ဖုန်')}
+                    {t('phone')}
                   </div>
                   <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
                     {selectedCustomer.phone || '—'}
@@ -669,7 +668,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                 </div>
                 <div>
                   <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {t('Total Orders', 'စုစုပေါင်းမှာယ်ရည်')}
+                    {t('totalOrders')}
                   </div>
                   <div style={{ fontWeight: 600 }}>
                     {selectedCustomer.purchaseCount}

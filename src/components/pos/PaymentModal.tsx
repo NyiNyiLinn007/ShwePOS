@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCartStore } from '@/store/cartStore';
 import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 
 interface PaymentModalProps {
@@ -64,14 +65,18 @@ function createClientSaleId(): string {
 
 const PAYMENT_METHODS: Array<{
   id: PaymentMethod;
-  label: string;
-  labelMm: string;
   icon: string;
 }> = [
-  { id: 'CASH', label: 'Cash', labelMm: 'ငွေသား', icon: '💵' },
-  { id: 'CARD', label: 'Card', labelMm: 'ကတ်', icon: '💳' },
-  { id: 'MOBILE_BANKING', label: 'Mobile Banking', labelMm: 'မိုဘိုင်းဘလ်', icon: '📱' },
+  { id: 'CASH', icon: '💵' },
+  { id: 'CARD', icon: '💳' },
+  { id: 'MOBILE_BANKING', icon: '📱' },
 ];
+
+const paymentMethodTranslationKeys: Record<PaymentMethod, string> = {
+  CASH: 'cash',
+  CARD: 'card',
+  MOBILE_BANKING: 'mobileBanking',
+};
 
 export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift }: PaymentModalProps) {
   const router = useRouter();
@@ -81,8 +86,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
   const getTotal = useCartStore((s) => s.getTotal);
   const getItemCount = useCartStore((s) => s.getItemCount);
 
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [paidAmountStr, setPaidAmountStr] = useState('');
@@ -215,18 +219,18 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
         className="modal modal-lg"
         role="dialog"
         aria-modal="true"
-        aria-label="Payment"
+        aria-label={t('payment')}
         onClick={(e) => e.stopPropagation()}
         style={{ maxHeight: '95vh' }}
       >
         {/* Header */}
         <div className="modal-header">
-          <span className="modal-title">💰 {t('Payment', 'ငွေပေးချေမှု')}</span>
+          <span className="modal-title">💰 {t('payment')}</span>
           <button
             className="btn btn-ghost btn-icon"
             onClick={onClose}
             type="button"
-            aria-label="Close"
+            aria-label={t('close')}
           >
             ✕
           </button>
@@ -243,7 +247,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
           >
             <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-sm)' }}>
               <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)' }}>
-                {totalItems} {t('item', 'ခု')}{language !== 'mm' && totalItems !== 1 ? 's' : ''}
+                {totalItems} {t('itemUnit')}{language !== 'mm' && totalItems !== 1 ? 's' : ''}
               </span>
               <span
                 style={{
@@ -263,7 +267,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                   textAlign: 'right',
                 }}
               >
-                {t('Discount', 'လျှော့စျေး')}: −{formatCurrency(discountAmount)}
+                {t('discount')}: −{formatCurrency(discountAmount)}
               </div>
             )}
           </div>
@@ -278,7 +282,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                 color: 'var(--text-secondary)',
               }}
             >
-              {t('Payment Method', 'ငွေပေးချေရန်နည်းလမ်း')}
+              {t('paymentMethod')}
             </div>
             <div className="flex gap-sm">
               {PAYMENT_METHODS.map((method) => (
@@ -292,7 +296,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                   style={{ flex: 1, flexDirection: 'column', padding: '12px 8px' }}
                 >
                   <span style={{ fontSize: '20px' }}>{method.icon}</span>
-                  <span style={{ fontSize: 'var(--text-xs)' }}>{language === 'mm' ? method.labelMm : method.label}</span>
+                  <span style={{ fontSize: 'var(--text-xs)' }}>{t(paymentMethodTranslationKeys[method.id])}</span>
                 </button>
               ))}
             </div>
@@ -329,7 +333,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
 
               {hasOpenShift === false && (
                 <div className="shift-payment-block" role="alert">
-                  <span>Cash payments require an open cashier shift.</span>
+                  <span>{t('cashShiftRequiredPayment')}</span>
                   <button
                     className="btn btn-secondary btn-sm"
                     type="button"
@@ -338,7 +342,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                       router.push('/shifts');
                     }}
                   >
-                    Open shift
+                    {t('openShift')}
                   </button>
                 </div>
               )}
@@ -408,12 +412,12 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                   color: 'var(--text-secondary)',
                 }}
               >
-                {t('Payment Reference', 'Payment Reference')}
+              {t('paymentReference')}
               </div>
               <input
                 type="text"
                 className="input"
-                placeholder={t('Transaction ID or approval code...', 'Transaction ID or approval code...')}
+                placeholder={t('transactionCode')}
                 value={paymentReference}
                 onChange={(e) => setPaymentReference(e.target.value)}
                 maxLength={100}

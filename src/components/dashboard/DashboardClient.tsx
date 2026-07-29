@@ -1,6 +1,6 @@
 'use client';
 
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import StatCards from '@/components/dashboard/StatCards';
 import RecentSales from '@/components/dashboard/RecentSales';
 import TopProducts from '@/components/dashboard/TopProducts';
@@ -49,8 +49,7 @@ export default function DashboardClient({
   topProducts,
   salesChartData,
 }: DashboardClientProps) {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   return (
     <div className="animate-fade-in">

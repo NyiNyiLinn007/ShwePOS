@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatTime } from '@/lib/utils';
 
 interface RecentSaleItem {
@@ -25,16 +25,15 @@ const paymentMethodBadge: Record<string, string> = {
   CREDIT: 'badge-warning',
 };
 
-const paymentMethodLabel: Record<string, { en: string; mm: string }> = {
-  CASH: { en: 'Cash', mm: 'လက်ငွေ' },
-  CARD: { en: 'Card', mm: 'ကတ်' },
-  MOBILE_BANKING: { en: 'Mobile', mm: 'မိုဘိုင်း' },
-  CREDIT: { en: 'Credit', mm: 'အကြွေး' },
+const paymentMethodTranslationKeys: Record<string, string> = {
+  CASH: 'cash',
+  CARD: 'card',
+  MOBILE_BANKING: 'mobileBanking',
+  CREDIT: 'credit',
 };
 
 export default function RecentSales({ sales }: RecentSalesProps) {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { t } = useI18n();
 
   return (
     <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
@@ -67,20 +66,16 @@ export default function RecentSales({ sales }: RecentSalesProps) {
           <table className="table">
             <thead>
               <tr>
-                <th>{t('Invoice #', 'ပြေစာ #')}</th>
-                <th>{t('Customer', 'ဝယ်သူ')}</th>
-                <th style={{ textAlign: 'center' }}>{t('Items', 'အမျိုးအစား')}</th>
+                <th>{t('invoiceNumber')}</th>
+                <th>{t('customer')}</th>
+                <th style={{ textAlign: 'center' }}>{t('items')}</th>
                 <th style={{ textAlign: 'right' }}>{t('Total', 'စုစုပေါင်း')}</th>
-                <th>{t('Payment', 'ငွေပေးချေမှု')}</th>
-                <th style={{ textAlign: 'right' }}>{t('Time', 'အချိန်')}</th>
+                <th>{t('payment')}</th>
+                <th style={{ textAlign: 'right' }}>{t('time')}</th>
               </tr>
             </thead>
             <tbody>
               {sales.map((sale) => {
-                const methodInfo = paymentMethodLabel[sale.paymentMethod] ?? {
-                  en: sale.paymentMethod,
-                  mm: sale.paymentMethod,
-                };
                 const badgeClass =
                   paymentMethodBadge[sale.paymentMethod] ?? 'badge-neutral';
 
@@ -95,7 +90,7 @@ export default function RecentSales({ sales }: RecentSalesProps) {
                       </Link>
                     </td>
                     <td style={{ color: 'var(--text-secondary)' }}>
-                      {sale.customerName ?? t('Walk-in', 'ဝင်ဝယ်သူ')}
+                      {sale.customerName ?? t('walkIn')}
                     </td>
                     <td style={{ textAlign: 'center' }}>{sale.itemCount}</td>
                     <td
@@ -109,7 +104,7 @@ export default function RecentSales({ sales }: RecentSalesProps) {
                     </td>
                     <td>
                       <span className={`badge ${badgeClass}`}>
-                        {t(methodInfo.en, methodInfo.mm)}
+                        {t(paymentMethodTranslationKeys[sale.paymentMethod] ?? sale.paymentMethod)}
                       </span>
                     </td>
                     <td

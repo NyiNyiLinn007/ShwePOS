@@ -1,6 +1,6 @@
 'use client';
 
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatNumber } from '@/lib/utils';
 
 interface TopProductItem {
@@ -15,8 +15,7 @@ interface TopProductsProps {
 }
 
 export default function TopProducts({ products }: TopProductsProps) {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
   const maxRevenue = products.length > 0 ? Math.max(...products.map((p) => p.totalRevenue)) : 1;
 
   return (

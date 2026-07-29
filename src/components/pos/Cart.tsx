@@ -1,7 +1,7 @@
 'use client';
 
 import { useCartStore } from '@/store/cartStore';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 import { useState } from 'react';
 
@@ -13,8 +13,7 @@ interface CartProps {
 }
 
 export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onClose }: CartProps) {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
   const items = useCartStore((s) => s.items);
   const discount = useCartStore((s) => s.discount);
   const removeItem = useCartStore((s) => s.removeItem);
@@ -48,7 +47,7 @@ export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onC
       {/* Header */}
       <div className="pos-cart-header">
         <div className="flex items-center gap-sm">
-          <span className="pos-cart-title">🛒 {t('Cart', 'စိတ်')}</span>
+          <span className="pos-cart-title">🛒 {t('cart')}</span>
           {totalItems > 0 && (
             <span className="pos-cart-count">{totalItems}</span>
           )}
@@ -59,11 +58,11 @@ export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onC
             onClick={clearCart}
             type="button"
           >
-            ✕ {t('Clear', 'ရှင်းရန်')}
+            ✕ {t('clear')}
           </button>
         )}
         {onClose && (
-          <button className="btn btn-ghost btn-icon pos-cart-close" onClick={onClose} type="button" aria-label="Close cart">
+          <button className="btn btn-ghost btn-icon pos-cart-close" onClick={onClose} type="button" aria-label={t('close')}>
             ×
           </button>
         )}
@@ -74,7 +73,7 @@ export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onC
         {items.length === 0 ? (
           <div className="pos-cart-empty">
             <div className="pos-cart-empty-icon">🛒</div>
-            <span>{t('Cart is empty', 'စိတ်ထဲတွင်ပစ္စည်းမရှိပါ')}</span>
+            <span>{t('cartEmpty')}</span>
             <span className="mm-text" style={{ fontSize: 'var(--text-xs)' }}>
               {t('Add items to get started', 'ပစ္စည်းများထည့်ပါ')}
             </span>
@@ -92,7 +91,7 @@ export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onC
                 <button
                   onClick={() => updateQuantity(item.productId, item.quantity - 1)}
                   type="button"
-                  aria-label="Decrease quantity"
+                  aria-label={t('decreaseQuantity')}
                 >
                   −
                 </button>
@@ -100,7 +99,7 @@ export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onC
                 <button
                   onClick={() => updateQuantity(item.productId, item.quantity + 1)}
                   type="button"
-                  aria-label="Increase quantity"
+                  aria-label={t('increaseQuantity')}
                   disabled={item.quantity >= item.maxStock}
                   style={
                     item.quantity >= item.maxStock
@@ -118,7 +117,7 @@ export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onC
                 className="pos-cart-item-remove"
                 onClick={() => removeItem(item.productId)}
                 type="button"
-                aria-label={`Remove ${item.name}`}
+                aria-label={`${t('removeItem')}: ${item.name}`}
               >
                 ✕
               </button>
@@ -132,7 +131,7 @@ export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onC
         <>
           <div className="pos-cart-summary">
             <div className="pos-cart-summary-row">
-              <span style={{ color: 'var(--text-secondary)' }}>{t('Subtotal', 'စုစုပေါင်း(မလျှော့မီ)')}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>{t('subtotal')}</span>
               <span>{formatCurrency(subtotal)}</span>
             </div>
             <div className="pos-cart-summary-row">
@@ -149,7 +148,7 @@ export default function Cart({ onOpenPayment, taxRate, isMobileOpen = false, onC
                   setIsEditingDiscount(true);
                 }}
               >
-                {t('Discount', 'လျှော့စျေး')}
+                {t('discount')}
                 {isEditingDiscount ? (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                     <input

@@ -2,6 +2,7 @@
 
 import React, { useRef, useState } from 'react';
 import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDate } from '@/lib/utils';
@@ -44,9 +45,9 @@ interface UserFormData {
 /* ---------- Constants ---------- */
 
 const ROLES = [
-  { value: 'ADMIN', en: 'Admin', mm: 'အက်ဒမင်' },
-  { value: 'MANAGER', en: 'Manager', mm: 'မန်နေဂျာ' },
-  { value: 'CASHIER', en: 'Cashier', mm: 'ငွေကိုင်' },
+  { value: 'ADMIN' },
+  { value: 'MANAGER' },
+  { value: 'CASHIER' },
 ];
 
 const emptyUserForm: UserFormData = {
@@ -69,9 +70,8 @@ export function SettingsClient({
   initialSettings,
   initialUsers,
 }: SettingsClientProps) {
-  const { language } = useAppStore();
+  const { language, t } = useI18n();
   const { updateSettings, setTaxRate } = useSettingsStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
   const { addToast } = useToast();
 
   // ── Business Profile ──────────────────────────────────────
@@ -126,7 +126,7 @@ export function SettingsClient({
 
       const data = await res.json();
       if (!res.ok) {
-        addToast(data.error || 'Failed to save', 'error');
+        addToast(data.error || t('saveFailed'), 'error');
         return;
       }
       // Sync global store so Sidebar, Receipt, POS all update
@@ -139,7 +139,7 @@ export function SettingsClient({
       });
       addToast(t('Business profile saved', 'လုပ်ငန်းပရိုဖိုင်သိမ်းပြီး'), 'success');
     } catch {
-      addToast('Network error', 'error');
+      addToast(t('networkError'), 'error');
     } finally {
       setSavingProfile(false);
     }
@@ -161,14 +161,14 @@ export function SettingsClient({
 
       const data = await res.json();
       if (!res.ok) {
-        addToast(data.error || 'Failed to save', 'error');
+        addToast(data.error || t('saveFailed'), 'error');
         return;
       }
       setTaxRate(rate);
       updateSettings({ taxRate: rate, currencySymbol });
       addToast(t('Tax & currency saved', 'အခွန်နှင့်ငွေကြေးသိမ်းပြီး'), 'success');
     } catch {
-      addToast('Network error', 'error');
+      addToast(t('networkError'), 'error');
     } finally {
       setSavingTax(false);
     }
@@ -185,13 +185,13 @@ export function SettingsClient({
 
       const data = await res.json();
       if (!res.ok) {
-        addToast(data.error || 'Failed to save', 'error');
+        addToast(data.error || t('saveFailed'), 'error');
         return;
       }
       updateSettings({ receiptFooter: receiptFooter || null });
       addToast(t('Receipt settings saved', 'ပြေစာဆက်တင်သိမ်းပြီး'), 'success');
     } catch {
-      addToast('Network error', 'error');
+      addToast(t('networkError'), 'error');
     } finally {
       setSavingReceipt(false);
     }
@@ -284,7 +284,7 @@ export function SettingsClient({
       const data = await res.json();
 
       if (!res.ok) {
-        addToast(data.error || 'Failed to save user', 'error');
+        addToast(data.error || t('saveUserFailed'), 'error');
         return;
       }
 
@@ -300,7 +300,7 @@ export function SettingsClient({
 
       closeUserModal();
     } catch {
-      addToast('Network error', 'error');
+      addToast(t('networkError'), 'error');
     } finally {
       setSavingUser(false);
     }
@@ -335,7 +335,7 @@ export function SettingsClient({
       setMigrationFile(null);
       if (migrationFileInput.current) migrationFileInput.current.value = '';
     } catch {
-      addToast(t('Network error while importing data', 'Data ထည့်သွင်းရာတွင် Network error ဖြစ်နေပါသည်'), 'error');
+      addToast(t('importNetworkError'), 'error');
     } finally {
       setImportingData(false);
     }
@@ -353,7 +353,7 @@ export function SettingsClient({
       const data = await res.json();
 
       if (!res.ok) {
-        addToast(data.error || 'Failed to deactivate user', 'error');
+        addToast(data.error || t('deactivateUserFailed'), 'error');
         return;
       }
 
@@ -362,19 +362,17 @@ export function SettingsClient({
           u.id === deleteUserTarget.id ? { ...u, isActive: false } : u
         )
       );
-      addToast(t('User deactivated', 'အသုံးပြုသူပိတ်ထားပြီး'), 'success');
+      addToast(t('userDeactivated'), 'success');
       setDeleteUserTarget(null);
     } catch {
-      addToast('Network error', 'error');
+      addToast(t('networkError'), 'error');
     } finally {
       setDeletingUser(false);
     }
   }
 
   function getRoleLabel(role: string): string {
-    const r = ROLES.find((ro) => ro.value === role);
-    if (!r) return role;
-    return language === 'mm' ? r.mm : r.en;
+    return t(role.toLowerCase());
   }
 
   function getRoleBadgeClass(role: string): string {
@@ -448,7 +446,7 @@ export function SettingsClient({
               />
             </div>
             <div className="input-group">
-              <label className="input-label">{t('Phone', 'ဖုန်းနံပါတ်')}</label>
+              <label className="input-label">{t('phone')}</label>
               <input
                 type="text"
                 className="input"
@@ -672,7 +670,7 @@ export function SettingsClient({
               🎨 {t('Theme', 'အပြင်အဆင်')}
             </h3>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
-              {t('Switch between Dark and Light mode', 'Dark နှင့် Light မုဒ်ကြားပြောင်းပါ')}
+              {t('Switch between Dark and Light mode', 'အမှောင်နှင့် အလင်းမုဒ်ကြား ပြောင်းရန်')}
             </p>
           </div>
           <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
@@ -680,13 +678,13 @@ export function SettingsClient({
               className={`btn ${useAppStore.getState().theme === 'dark' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => useAppStore.getState().setTheme('dark')}
             >
-              🌙 {t('Dark Mode', 'Dark မုဒ်')}
+              🌙 {t('darkMode')}
             </button>
             <button
               className={`btn ${useAppStore.getState().theme === 'light' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => useAppStore.getState().setTheme('light')}
             >
-              ☀️ {t('Light Mode', 'Light မုဒ်')}
+              ☀️ {t('lightMode')}
             </button>
           </div>
         </div>
@@ -793,14 +791,14 @@ export function SettingsClient({
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => openEditUser(user)}
-                            title="Edit"
+                            title={t('edit')}
                           >
                             ✏️
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => setDeleteUserTarget(user)}
-                            title="Deactivate"
+                            title={t('deactivate')}
                             style={{ color: 'var(--danger)' }}
                           >
                             🗑️
@@ -819,7 +817,7 @@ export function SettingsClient({
         <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
           <div style={{ marginBottom: 'var(--space-lg)' }}>
             <h3 className="heading-4" style={{ marginBottom: 4 }}>
-              📦 {t('Data Migration', 'Data Migration')}
+              📦 {t('dataMigration')}
             </h3>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {t(
@@ -830,10 +828,10 @@ export function SettingsClient({
           </div>
 
           <div className="migration-steps" aria-label="Data migration steps">
-            <div className="migration-step is-ready"><span>1</span><strong>{t('Download template', 'Template Download')}</strong></div>
-            <div className="migration-step"><span>2</span><strong>{t('Fill Excel', 'Excel ဖြည့်ရန်')}</strong></div>
-            <div className="migration-step"><span>3</span><strong>{t('Choose file', 'ဖိုင်ရွေးရန်')}</strong></div>
-            <div className="migration-step"><span>4</span><strong>{t('Import & review', 'Import ရလဒ်ကြည့်ရန်')}</strong></div>
+            <div className="migration-step is-ready"><span>1</span><strong>{t('downloadTemplate')}</strong></div>
+            <div className="migration-step"><span>2</span><strong>{t('fillExcel')}</strong></div>
+            <div className="migration-step"><span>3</span><strong>{t('chooseFile')}</strong></div>
+            <div className="migration-step"><span>4</span><strong>{t('importReview')}</strong></div>
           </div>
 
           <div
@@ -849,13 +847,13 @@ export function SettingsClient({
               className="btn btn-secondary"
               onClick={() => downloadMigrationWorkbook('template')}
             >
-              📄 {t('Download Excel Template', 'Excel Format Download')}
+              📄 {t('downloadExcelTemplate')}
             </button>
             <button
               className="btn btn-secondary"
               onClick={() => downloadMigrationWorkbook('export')}
             >
-              ⬇️ {t('Export All Data', 'Data အားလုံး Export')}
+              ⬇️ {t('exportAllData')}
             </button>
             <input
               ref={migrationFileInput}
@@ -869,7 +867,7 @@ export function SettingsClient({
               onClick={() => migrationFileInput.current?.click()}
               disabled={importingData}
             >
-              📎 {t('Choose Excel File', 'Excel ဖိုင်ရွေးရန်')}
+              📎 {t('chooseExcelFile')}
             </button>
             <button
               className="btn btn-primary"
@@ -877,8 +875,8 @@ export function SettingsClient({
               disabled={!migrationFile || importingData}
             >
               {importingData
-                ? t('Importing...', 'Import လုပ်နေသည်...')
-                : t('Import Data', 'Data Import')}
+                ? t('importing')
+                : t('importData')}
             </button>
           </div>
 
@@ -1047,7 +1045,7 @@ export function SettingsClient({
                 >
                   {ROLES.map((role) => (
                     <option key={role.value} value={role.value}>
-                      {language === 'mm' ? role.mm : role.en}
+                      {t(role.value.toLowerCase())}
                     </option>
                   ))}
                 </select>
@@ -1055,7 +1053,7 @@ export function SettingsClient({
 
               {/* Phone */}
               <div className="input-group">
-                <label className="input-label">{t('Phone', 'ဖုန်းနံပါတ်')}</label>
+                <label className="input-label">{t('phone')}</label>
                 <input
                   type="text"
                   className="input"

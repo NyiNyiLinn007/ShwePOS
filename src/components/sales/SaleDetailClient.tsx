@@ -1,9 +1,22 @@
 'use client';
 
 import React from 'react';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 import { PAYMENT_METHODS, SALE_STATUSES } from '@/lib/constants';
+
+const paymentMethodTranslationKeys: Record<string, string> = {
+  CASH: 'cash',
+  CARD: 'card',
+  MOBILE_BANKING: 'mobileBanking',
+  CREDIT: 'credit',
+};
+
+const saleStatusTranslationKeys: Record<string, string> = {
+  COMPLETED: 'completed',
+  REFUNDED: 'refunded',
+  VOIDED: 'voided',
+};
 
 /* ---------- Types ---------- */
 
@@ -61,8 +74,7 @@ interface Sale {
 /* ---------- Component ---------- */
 
 export function SaleDetailClient({ sale }: { sale: Sale }) {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   function getStatusBadgeClass(status: string): string {
     switch (status) {
@@ -74,13 +86,14 @@ export function SaleDetailClient({ sale }: { sale: Sale }) {
   }
 
   function getStatusLabel(status: string): string {
-    const found = SALE_STATUSES.find((s) => s.value === status);
-    return found ? found.label : status;
+    return SALE_STATUSES.some((s) => s.value === status)
+      ? t(saleStatusTranslationKeys[status] ?? status)
+      : status;
   }
 
   function getPaymentLabel(method: string): string {
     const found = PAYMENT_METHODS.find((p) => p.value === method);
-    return found ? `${found.icon} ${found.label}` : method;
+    return found ? `${found.icon} ${t(paymentMethodTranslationKeys[method] ?? method)}` : method;
   }
 
   return (
@@ -100,13 +113,13 @@ export function SaleDetailClient({ sale }: { sale: Sale }) {
           icon="📅"
         />
         <InfoCard
-          label={t('Customer', 'ဖောက်သည်')}
-          value={sale.customer?.name || t('Walk-in Customer', 'ဝင်လာဖောက်သည်')}
+          label={t('customer')}
+          value={sale.customer?.name || t('walkIn')}
           sub={sale.customer?.phone || undefined}
           icon="👤"
         />
         <InfoCard
-          label={t('Cashier', 'ကောင်တာဝန်ထမ်း')}
+          label={t('cashier')}
           value={sale.user?.name || '—'}
           icon="🧑‍💼"
         />
@@ -120,7 +133,7 @@ export function SaleDetailClient({ sale }: { sale: Sale }) {
           icon="📋"
         />
         <InfoCard
-          label={t('Payment', 'ငွေပေးချေမှု')}
+          label={t('payment')}
           value={getPaymentLabel(sale.paymentMethod)}
           icon="💳"
         />
@@ -145,7 +158,7 @@ export function SaleDetailClient({ sale }: { sale: Sale }) {
             color: 'var(--text-secondary)',
           }}
         >
-          {t('Items', 'ပစ္စည်းများ')} ({sale.items?.length || 0})
+          {t('items')} ({sale.items?.length || 0})
         </div>
         <div className="table-container">
           <table className="table">
@@ -155,7 +168,7 @@ export function SaleDetailClient({ sale }: { sale: Sale }) {
                 <th>{t('Product', 'ကုန်ပစ္စည်း')}</th>
                 <th style={{ textAlign: 'center' }}>{t('Qty', 'အရေအတွက်')}</th>
                 <th style={{ textAlign: 'right' }}>{t('Unit Price', 'တစ်ခုဈေး')}</th>
-                <th style={{ textAlign: 'right' }}>{t('Discount', 'လျှော့စျေး')}</th>
+                <th style={{ textAlign: 'right' }}>{t('discount')}</th>
                 <th style={{ textAlign: 'right' }}>{t('Total', 'စုစုပေါင်း')}</th>
               </tr>
             </thead>
@@ -246,12 +259,12 @@ export function SaleDetailClient({ sale }: { sale: Sale }) {
         }}
       >
         <SummaryRow
-          label={t('Subtotal', 'စုစုပေါင်း(မလျှော့မီ)')}
+          label={t('subtotal')}
           value={formatCurrency(sale.subtotal)}
         />
         {sale.discountAmount > 0 && (
           <SummaryRow
-            label={t('Discount', 'လျှော့စျေး')}
+            label={t('discount')}
             value={`-${formatCurrency(sale.discountAmount)}`}
             danger
           />
@@ -306,7 +319,7 @@ export function SaleDetailClient({ sale }: { sale: Sale }) {
           }}
         >
           <strong style={{ color: 'var(--text-primary)' }}>
-            {t('Notes', 'မှတ်စု')}:
+            {t('notes')}:
           </strong>
           <div style={{ marginTop: 'var(--space-xs)' }}>{sale.notes}</div>
         </div>

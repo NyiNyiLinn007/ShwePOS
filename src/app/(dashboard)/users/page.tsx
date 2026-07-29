@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDate } from '@/lib/utils';
 
@@ -28,9 +28,9 @@ interface UserFormData {
 }
 
 const ROLES = [
-  { value: 'ADMIN', en: 'Admin', mm: 'အက်ဒမင်' },
-  { value: 'MANAGER', en: 'Manager', mm: 'မန်နေဂျာ' },
-  { value: 'CASHIER', en: 'Cashier', mm: 'ငွေကိုင်' },
+  { value: 'ADMIN' },
+  { value: 'MANAGER' },
+  { value: 'CASHIER' },
 ];
 
 const emptyUserForm: UserFormData = {
@@ -43,9 +43,8 @@ const emptyUserForm: UserFormData = {
 };
 
 export default function UsersPage() {
-  const { language } = useAppStore();
+  const { t } = useI18n();
   const { addToast } = useToast();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
 
   const [users, setUsers] = useState<UserRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,16 +69,14 @@ export default function UsersPage() {
         setUsers(data);
       }
     } catch {
-      addToast('Failed to load users', 'error');
+      addToast(t('failedLoadUsers'), 'error');
     } finally {
       setLoading(false);
     }
   }
 
   function getRoleLabel(role: string): string {
-    const r = ROLES.find((ro) => ro.value === role);
-    if (!r) return role;
-    return language === 'mm' ? r.mm : r.en;
+    return t(role.toLowerCase());
   }
 
   function getRoleBadgeClass(role: string): string {
@@ -173,7 +170,7 @@ export default function UsersPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        addToast(data.error || 'Failed to save user', 'error');
+        addToast(data.error || t('saveUserFailed'), 'error');
         return;
       }
 
@@ -187,7 +184,7 @@ export default function UsersPage() {
 
       closeModal();
     } catch {
-      addToast('Network error', 'error');
+      addToast(t('networkError'), 'error');
     } finally {
       setSaving(false);
     }
@@ -205,7 +202,7 @@ export default function UsersPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        addToast(data.error || 'Failed to deactivate user', 'error');
+        addToast(data.error || t('deactivateUserFailed'), 'error');
         return;
       }
 
@@ -214,10 +211,10 @@ export default function UsersPage() {
           u.id === deleteTarget.id ? { ...u, isActive: false } : u
         )
       );
-      addToast(t('User deactivated', 'အသုံးပြုသူပိတ်ထားပြီး'), 'success');
+      addToast(t('userDeactivated'), 'success');
       setDeleteTarget(null);
     } catch {
-      addToast('Network error', 'error');
+      addToast(t('networkError'), 'error');
     } finally {
       setDeleting(false);
     }
@@ -385,8 +382,8 @@ export default function UsersPage() {
                           className={`badge ${user.isActive ? 'badge-success' : 'badge-neutral'}`}
                         >
                           {user.isActive
-                            ? t('Active', 'အသုံးပြုနေဆဲ')
-                            : t('Inactive', 'ပိတ်ထားသည်')}
+                            ? t('active')
+                            : t('inactive')}
                         </span>
                       </td>
                       <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
@@ -397,14 +394,14 @@ export default function UsersPage() {
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => openEdit(user)}
-                            title="Edit"
+                            title={t('edit')}
                           >
                             ✏️
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => setDeleteTarget(user)}
-                            title="Deactivate"
+                            title={t('deactivate')}
                             style={{ color: 'var(--danger)' }}
                           >
                             🗑️
@@ -503,13 +500,13 @@ export default function UsersPage() {
                 >
                   {ROLES.map((r) => (
                     <option key={r.value} value={r.value}>
-                      {language === 'mm' ? r.mm : r.en}
+                      {t(r.value.toLowerCase())}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="input-group">
-                <label className="input-label">{t('Phone', 'ဖုန်းနံပါတ်')}</label>
+                <label className="input-label">{t('phone')}</label>
                 <input
                   type="text"
                   className="input"

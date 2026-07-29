@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/utils';
 
@@ -118,8 +119,7 @@ interface ProductsClientProps {
 
 export function ProductsClient({ initialProducts, categories }: ProductsClientProps) {
   const { addToast } = useToast();
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   // State
   const [products, setProducts] = useState<Product[]>(initialProducts);
@@ -434,7 +434,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                     <th>SKU</th>
                     <th>{t('Category', 'အမျိုးအစား')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Cost', 'ကုန်ကျစရိတ်')}</th>
-                    <th style={{ textAlign: 'right' }}>{t('Selling', 'ရောင်းစျေး')}</th>
+                    <th style={{ textAlign: 'right' }}>{t('Selling', 'ရောင်းဈေး')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Stock', 'ကုန်လက်ကျန်')}</th>
                     <th>{t('Status', 'အခြေအနေ')}</th>
                     <th style={{ width: 100 }}>{t('Actions', 'လုပ်ဆောင်ချက်')}</th>

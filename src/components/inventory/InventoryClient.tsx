@@ -2,9 +2,17 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDateTime } from '@/lib/utils';
 import { STOCK_MOVEMENT_TYPES } from '@/lib/constants';
+
+const stockMovementTranslationKeys: Record<string, string> = {
+  IN: 'stockIn',
+  OUT: 'stockOut',
+  ADJUSTMENT: 'adjustment',
+  RETURN: 'returnStock',
+};
 
 /* ---------- Types ---------- */
 
@@ -82,8 +90,7 @@ export function InventoryClient({
   initialMovements,
 }: InventoryClientProps) {
   const { addToast } = useToast();
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   // State
   const [products, setProducts] = useState<InventoryProduct[]>(initialProducts);
@@ -159,22 +166,22 @@ export function InventoryClient({
   // Stock status helpers
   function getStockStatus(product: InventoryProduct): { label: string; className: string } {
     if (product.stockQuantity <= 0) {
-      return { label: t('Out of Stock', 'ကုန်ပစ္စည်းကုန်'), className: 'badge-danger' };
+      return { label: t('outOfStock'), className: 'badge-danger' };
     }
     if (product.stockQuantity <= product.lowStockThreshold) {
-      return { label: t('Low Stock', 'ကုန်လက်ကျန်နည်း'), className: 'badge-warning' };
+      return { label: t('lowStock'), className: 'badge-warning' };
     }
-    return { label: t('In Stock', 'ကုန်လက်ကျန်ရှိ'), className: 'badge-success' };
+    return { label: t('inStock'), className: 'badge-success' };
   }
 
   function getMovementTypeBadge(type: string): { label: string; className: string; icon: string } {
-    const found = STOCK_MOVEMENT_TYPES.find((t) => t.value === type);
+    const found = STOCK_MOVEMENT_TYPES.find((movement) => movement.value === type);
     if (found) {
       let className = 'badge-primary';
       if (type === 'IN' || type === 'RETURN') className = 'badge-success';
       if (type === 'OUT') className = 'badge-danger';
       if (type === 'ADJUSTMENT') className = 'badge-warning';
-      return { label: found.label, className, icon: found.icon };
+      return { label: t(stockMovementTranslationKeys[type] ?? type), className, icon: found.icon };
     }
     return { label: type, className: 'badge-neutral', icon: '📦' };
   }
@@ -445,7 +452,7 @@ export function InventoryClient({
                   }}
                 >
                   <option value="all">{t('All Products', 'ကုန်ပစ္စည်းအားလုံး')}</option>
-                  <option value="low">⚠️ {t('Low Stock Only', 'ကုန်လက်ကျန်နည်းသည်များသာ')}</option>
+                  <option value="low">⚠️ {t('Low Stock Only', 'လက်ကျန်နည်းသောပစ္စည်းများသာ')}</option>
                   <option value="out">🚫 {t('Out of Stock Only', 'ကုန်ပစ္စည်းကုန်သည်များသာ')}</option>
                 </select>
               </div>
@@ -629,9 +636,9 @@ export function InventoryClient({
                   }}
                 >
                   <option value="">{t('All Types', 'အမျိုးအစားအားလုံး')}</option>
-                  {STOCK_MOVEMENT_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.icon} {t.label}
+                  {STOCK_MOVEMENT_TYPES.map((movement) => (
+                    <option key={movement.value} value={movement.value}>
+                      {movement.icon} {t(stockMovementTranslationKeys[movement.value] ?? movement.value)}
                     </option>
                   ))}
                 </select>
@@ -685,7 +692,7 @@ export function InventoryClient({
                 <div className="empty-state-icon">📋</div>
                 <div className="empty-state-title">{t('No stock movements found', 'ကုန်ပစ္စည်းအဝင်အထွက်မတွေ့ပါ')}</div>
                 <div className="empty-state-text">
-                  {t('Stock movements will appear here when stock is adjusted', 'ကုန်လက်ကျန်ချိန်ညှိသည့်အခါ ဤနေရာတွင်ပြပါမည်')}
+                  {t('Stock movements will appear here when stock is adjusted', 'ကုန်လက်ကျန်ချိန်ညှိသည့်အခါ ဤနေရာတွင် ပေါ်လာပါမည်')}
                 </div>
               </div>
             ) : (
@@ -941,7 +948,7 @@ export function InventoryClient({
                 <textarea
                   className={`input ${adjustErrors.reason ? 'input-error' : ''}`}
                   rows={3}
-                  placeholder={t('e.g. New shipment received, Physical count correction, etc.', 'ဥပမာ - ကုန်ပစ္စည်းအသစ်ရရှိ၊ ကုန်လက်ကျန်သပ်မှတ်ရင်းပြင်ရန် စသည်း')}
+                  placeholder={t('e.g. New shipment received, Physical count correction, etc.', 'ဥပမာ - ကုန်ပစ္စည်းအသစ်ရရှိခြင်း၊ ကုန်လက်ကျန်ရေတွက်ချက် ပြင်ဆင်ခြင်း စသည်တို့')}
                   value={adjustForm.reason}
                   onChange={(e) =>
                     handleAdjustFormChange('reason', e.target.value)

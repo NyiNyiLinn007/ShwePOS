@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
 import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settingsStore';
-import { NAV_ITEMS, SECTION_LABELS } from '@/lib/constants';
+import { NAV_ITEMS } from '@/lib/constants';
 import type { UserRole } from '@/lib/constants';
 
 interface SidebarProps {
@@ -17,7 +18,8 @@ interface SidebarProps {
 
 export default function Sidebar({ userName, userRole, userEmail }: SidebarProps) {
   const pathname = usePathname();
-  const { language, theme, sidebarCollapsed, toggleSidebar, toggleTheme, lowStockRefreshKey } = useAppStore();
+  const { theme, sidebarCollapsed, toggleSidebar, toggleTheme, lowStockRefreshKey } = useAppStore();
+  const { t } = useI18n();
   const { businessName } = useSettingsStore();
   const [lowStockCount, setLowStockCount] = useState(0);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -76,7 +78,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
         className="mobile-nav-trigger"
         type="button"
         onClick={openMobileNav}
-        aria-label="Open navigation"
+        aria-label={t('openNavigation')}
         aria-expanded={mobileOpen}
       >
         <span aria-hidden="true">☰</span>
@@ -86,7 +88,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
           className="mobile-nav-backdrop"
           type="button"
           onClick={() => setMobileOpen(false)}
-          aria-label="Close navigation"
+          aria-label={t('closeNavigation')}
         />
       )}
       <aside
@@ -103,7 +105,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
           className="btn btn-ghost btn-icon"
           onClick={toggleSidebar}
           style={{ marginLeft: sidebarCollapsed ? 0 : 'auto' }}
-          aria-label="Toggle sidebar"
+          aria-label={t('toggleSidebar')}
         >
           {sidebarCollapsed ? '▶' : '◀'}
         </button>
@@ -121,9 +123,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
             <div key={section} className="sidebar-section">
               {!sidebarCollapsed && (
                 <div className="sidebar-section-title">
-                  {language === 'mm'
-                    ? SECTION_LABELS[section].mm
-                    : SECTION_LABELS[section].en}
+                  {t(section)}
                 </div>
               )}
               {sectionItems.map((item) => {
@@ -138,12 +138,12 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
                     key={item.key}
                     href={item.href}
                     className={`sidebar-link${isActive ? ' active' : ''}`}
-                    title={sidebarCollapsed ? (language === 'mm' ? item.labelMm : item.label) : undefined}
+                    title={sidebarCollapsed ? t(item.key) : undefined}
                     onClick={() => setMobileOpen(false)}
                   >
                     <span className="sidebar-link-icon">{item.icon}</span>
                     {!sidebarCollapsed && (
-                      <span>{language === 'mm' ? item.labelMm : item.label}</span>
+                      <span>{t(item.key)}</span>
                     )}
                     {!sidebarCollapsed &&
                       item.hasBadge &&
@@ -165,7 +165,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
         <button
           className="btn btn-ghost"
           onClick={toggleTheme}
-          title={theme === 'dark' ? (language === 'mm' ? 'အလင်းမုဒ်သို့ပြောင်းရန်' : 'Switch to Light Mode') : (language === 'mm' ? 'အမှိုင်မုဒ်သို့ပြောင်းရန်' : 'Switch to Dark Mode')}
+          title={theme === 'dark' ? t('switchToLight') : t('switchToDark')}
           style={{
             width: '100%',
             justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
@@ -179,7 +179,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
             {theme === 'dark' ? '☀️' : '🌙'}
           </span>
           {!sidebarCollapsed && (
-            <span>{theme === 'dark' ? (language === 'mm' ? 'အလင်းမုဒ်' : 'Light Mode') : (language === 'mm' ? 'အမှိုင်မုဒ်' : 'Dark Mode')}</span>
+            <span>{theme === 'dark' ? t('lightMode') : t('darkMode')}</span>
           )}
         </button>
       </div>
@@ -211,7 +211,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
               <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)' }}>{userName}</div>
               <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>{userEmail}</div>
               <span className={`badge ${userRole === 'ADMIN' ? 'badge-primary' : userRole === 'MANAGER' ? 'badge-success' : 'badge-neutral'}`} style={{ marginTop: 'var(--space-xs)' }}>
-                {userRole}
+                {t(userRole.toLowerCase())}
               </span>
             </div>
             {/* Sign Out Button */}
@@ -225,7 +225,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
               }}
             >
               <span>🚪</span>
-              {language === 'mm' ? 'ထွက်မည်' : 'Sign Out'}
+              {t('signOut')}
             </button>
           </div>
         )}
@@ -243,7 +243,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
           {!sidebarCollapsed && (
             <div className="sidebar-user-info" style={{ flex: 1 }}>
               <div className="sidebar-user-name">{userName}</div>
-              <div className="sidebar-user-role">{userRole}</div>
+              <div className="sidebar-user-role">{t(userRole.toLowerCase())}</div>
             </div>
           )}
           {!sidebarCollapsed && (

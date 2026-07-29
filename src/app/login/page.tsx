@@ -3,9 +3,13 @@
 import { useState } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { toggleLanguage } = useAppStore();
+  const { language, t } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -24,13 +28,13 @@ export default function LoginPage() {
       });
 
       if (result?.error) {
-        setError('Invalid email or password. Please try again.');
+        setError(t('invalidCredentials'));
       } else if (result?.ok) {
         router.push('/');
         router.refresh();
       }
     } catch {
-      setError('An unexpected error occurred. Please try again.');
+      setError(t('unexpectedError'));
     } finally {
       setIsLoading(false);
     }
@@ -40,7 +44,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     if (!email || !password) {
-      setError('Please enter both email and password.');
+      setError(t('enterCredentials'));
       return;
     }
 
@@ -51,7 +55,7 @@ export default function LoginPage() {
       // avoids a public pre-login password oracle and duplicate bcrypt work.
       await doLogin();
     } catch {
-      setError('An unexpected error occurred. Please try again.');
+      setError(t('unexpectedError'));
       setIsLoading(false);
     }
   };
@@ -68,7 +72,16 @@ export default function LoginPage() {
         <div className="login-logo">
           <div className="login-logo-icon">S</div>
           <h1 className="text-gradient">ShwePOS</h1>
-          <p>Enterprise Point of Sale System</p>
+          <p>{t('loginSubtitle')}</p>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={toggleLanguage}
+            title={language === 'en' ? t('switchToMyanmar') : t('switchToEnglish')}
+            style={{ marginTop: 'var(--space-sm)' }}
+          >
+            {language === 'en' ? '🇲🇲 MM' : '🇬🇧 EN'}
+          </button>
         </div>
 
         {/* Error Message */}
@@ -93,12 +106,12 @@ export default function LoginPage() {
           >
             <div style={{ fontSize: '2rem', marginBottom: 'var(--space-sm)' }}>⚠️</div>
             <div style={{ fontWeight: 700, fontSize: 'var(--text-base)', marginBottom: 'var(--space-sm)', color: 'var(--warning)' }}>
-              Active Session Detected
+              {t('activeSessionDetected')}
             </div>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 'var(--space-sm)' }}>
-              ဒီ account ကို အခြား device/browser မှာ login ဝင်ထားပါတယ်။
+              {t('activeSessionLineOne')}
               <br />
-              ဆက်ဝင်ရင် အဟောင်းက auto logout ဖြစ်ပါမယ်။
+              {t('activeSessionLineTwo')}
             </p>
             {lastLoginInfo && (
               <p style={{
@@ -120,7 +133,7 @@ export default function LoginPage() {
                 style={{ flex: 1, padding: '10px' }}
                 onClick={() => setShowSessionConfirm(false)}
               >
-                ပယ်ဖျက် / Cancel
+                {t('cancelLogin')}
               </button>
               <button
                 className="btn btn-warning"
@@ -128,7 +141,7 @@ export default function LoginPage() {
                 onClick={handleConfirmLogin}
                 disabled={isLoading}
               >
-                {isLoading ? 'Signing in...' : 'ဆက်ဝင်ရန် / Continue'}
+                {isLoading ? t('signingIn') : t('continueLogin')}
               </button>
             </div>
           </div>
@@ -138,7 +151,7 @@ export default function LoginPage() {
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="input-group">
             <label className="input-label" htmlFor="email">
-              Email Address
+              {t('emailAddress')}
             </label>
             <input
               id="email"
@@ -155,13 +168,13 @@ export default function LoginPage() {
 
           <div className="input-group">
             <label className="input-label" htmlFor="password">
-              Password
+              {t('password')}
             </label>
             <input
               id="password"
               type="password"
               className="input"
-              placeholder="Enter your password"
+              placeholder={t('enterPassword')}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
@@ -180,10 +193,10 @@ export default function LoginPage() {
                   className="loading-spinner"
                   style={{ width: 18, height: 18, borderWidth: 2 }}
                 />
-                Signing in...
+                {t('signingIn')}
               </span>
             ) : (
-              'Sign In'
+              t('signIn')
             )}
           </button>
         </form>

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import { useI18n } from '@/lib/i18n';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
@@ -27,6 +28,7 @@ export function useToast(): ToastContextValue {
 }
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useI18n();
   const [toasts, setToasts] = useState<Toast[]>([]);
   const counterRef = useRef(0);
 
@@ -64,7 +66,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             <button
               className="toast-close"
               onClick={() => removeToast(toast.id)}
-              aria-label="Close"
+              aria-label={t('close')}
             >
               ✕
             </button>

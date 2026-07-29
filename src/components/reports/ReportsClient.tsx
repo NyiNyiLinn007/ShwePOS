@@ -16,7 +16,7 @@ import {
   BarChart,
   Bar,
 } from 'recharts';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 
 /* ---------- Types ---------- */
@@ -207,8 +207,7 @@ function PieTooltip({
 /* ---------- Component ---------- */
 
 export function ReportsClient() {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   const [preset, setPreset] = useState<DatePreset>('month');
   const [customStart, setCustomStart] = useState('');
@@ -398,7 +397,7 @@ export function ReportsClient() {
                   🧾
                 </div>
                 <div className="stat-content">
-                  <div className="stat-label">{t('Total Sales', 'စုစုပေါင်းအရောင်း')}</div>
+                  <div className="stat-label">{t('totalSales')}</div>
                   <div className="stat-value">{data.summary.totalSalesCount}</div>
                 </div>
               </div>

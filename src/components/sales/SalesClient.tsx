@@ -1,10 +1,23 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 import { PAYMENT_METHODS, SALE_STATUSES } from '@/lib/constants';
+
+const paymentMethodTranslationKeys: Record<string, string> = {
+  CASH: 'cash',
+  CARD: 'card',
+  MOBILE_BANKING: 'mobileBanking',
+  CREDIT: 'credit',
+};
+
+const saleStatusTranslationKeys: Record<string, string> = {
+  COMPLETED: 'completed',
+  REFUNDED: 'refunded',
+  VOIDED: 'voided',
+};
 
 /* ---------- Types ---------- */
 
@@ -69,8 +82,7 @@ interface SalesClientProps {
 
 export function SalesClient({ initialSales }: SalesClientProps) {
   const { addToast } = useToast();
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   // State
   const [sales, setSales] = useState<Sale[]>(initialSales);
@@ -161,7 +173,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
     if (!voidTarget) return;
     const reason = voidReason.trim();
     if (!reason) {
-      addToast(t('Reason is required', 'Reason is required'), 'error');
+      addToast(t('reasonRequired'), 'error');
       return;
     }
     setProcessing(true);
@@ -202,7 +214,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
   // Payment method helpers
   function getPaymentBadge(method: string): string {
     const found = PAYMENT_METHODS.find((p) => p.value === method);
-    return found ? `${found.icon} ${found.label}` : method;
+    return found ? `${found.icon} ${t(paymentMethodTranslationKeys[method] ?? method)}` : method;
   }
 
   function getStatusBadgeClass(status: string): string {
@@ -219,8 +231,9 @@ export function SalesClient({ initialSales }: SalesClientProps) {
   }
 
   function getStatusLabel(status: string): string {
-    const found = SALE_STATUSES.find((s) => s.value === status);
-    return found ? found.label : status;
+    return SALE_STATUSES.some((s) => s.value === status)
+      ? t(saleStatusTranslationKeys[status] ?? status)
+      : status;
   }
 
   /* ---- Pagination helpers ---- */
@@ -277,7 +290,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
             }}
           >
             <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: 4 }}>
-              {t('Total Sales', 'စုစုပေါင်းအရောင်း')}
+              {t('totalSales')}
             </div>
             <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700, color: 'var(--text-primary)' }}>
               {summary.totalCount}
@@ -351,7 +364,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               <option value="">{t('All Payments', 'ငွေပေးချေမှုအားလုံး')}</option>
               {PAYMENT_METHODS.map((pm) => (
                 <option key={pm.value} value={pm.value}>
-                  {pm.icon} {pm.label}
+                  {pm.icon} {t(paymentMethodTranslationKeys[pm.value] ?? pm.value)}
                 </option>
               ))}
             </select>
@@ -365,7 +378,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               <option value="">{t('All Status', 'အခြေအနေအားလုံး')}</option>
               {SALE_STATUSES.map((s) => (
                 <option key={s.value} value={s.value}>
-                  {s.label}
+                  {t(saleStatusTranslationKeys[s.value] ?? s.value)}
                 </option>
               ))}
             </select>
@@ -406,14 +419,14 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>{t('Invoice #', 'ပြေစာနံပါတ်')}</th>
+                    <th>{t('invoiceNumber')}</th>
                     <th>{t('Date & Time', 'ရက်စွဲနှင့်အချိန်')}</th>
-                    <th>{t('Customer', 'ဖောက်သည်')}</th>
-                    <th style={{ textAlign: 'center' }}>{t('Items', 'ပစ္စည်း')}</th>
-                    <th style={{ textAlign: 'right' }}>{t('Subtotal', 'စုစုပေါင်း(မလျှော့မီ)')}</th>
-                    <th style={{ textAlign: 'right' }}>{t('Discount', 'လျှော့စျေး')}</th>
+                    <th>{t('customer')}</th>
+                    <th style={{ textAlign: 'center' }}>{t('items')}</th>
+                    <th style={{ textAlign: 'right' }}>{t('subtotal')}</th>
+                    <th style={{ textAlign: 'right' }}>{t('discount')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Total', 'စုစုပေါင်း')}</th>
-                    <th>{t('Payment', 'ငွေပေးချေမှု')}</th>
+                    <th>{t('payment')}</th>
                     <th>{t('Status', 'အခြေအနေ')}</th>
                     <th style={{ width: 80 }}>{t('Actions', 'လုပ်ဆောင်ချက်')}</th>
                   </tr>
@@ -455,7 +468,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                           </div>
                         ) : (
                           <span style={{ color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }}>
-                            {t('Walk-in', 'ဝင်လာဖောက်သည်')}
+                            {t('walkIn')}
                           </span>
                         )}
                       </td>
@@ -598,15 +611,15 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                 </div>
                 <div>
                   <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {t('Customer', 'ဖောက်သည်')}
+                    {t('customer')}
                   </div>
                   <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                    {selectedSale.customer?.name || t('Walk-in Customer', 'ဝင်လာဖောက်သည်')}
+                    {selectedSale.customer?.name || t('walkIn')}
                   </div>
                 </div>
                 <div>
                   <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {t('Cashier', 'ကောင်တာဝန်ထမ်း')}
+                    {t('cashier')}
                   </div>
                   <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
                     {selectedSale.user?.name || '—'}
@@ -625,7 +638,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               {/* Items Table */}
               <div style={{ marginBottom: 'var(--space-lg)' }}>
                 <h3 style={{ fontSize: 'var(--text-sm)', fontWeight: 700, marginBottom: 'var(--space-sm)', color: 'var(--text-secondary)' }}>
-                  {t('Items', 'ပစ္စည်းများ')}
+                  {t('items')}
                 </h3>
                 <div className="table-container">
                   <table className="table">
@@ -634,7 +647,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                         <th>{t('Product', 'ကုန်ပစ္စည်း')}</th>
                         <th style={{ textAlign: 'center' }}>{t('Qty', 'အရေအတွက်')}</th>
                         <th style={{ textAlign: 'right' }}>{t('Unit Price', 'တစ်ခုဈေး')}</th>
-                        <th style={{ textAlign: 'right' }}>{t('Discount', 'လျှော့စျေး')}</th>
+                        <th style={{ textAlign: 'right' }}>{t('discount')}</th>
                         <th style={{ textAlign: 'right' }}>{t('Total', 'စုစုပေါင်း')}</th>
                       </tr>
                     </thead>
@@ -692,7 +705,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                     fontSize: 'var(--text-sm)',
                   }}
                 >
-                  <span style={{ color: 'var(--text-muted)' }}>{t('Subtotal', 'စုစုပေါင်း(မလျှော့မီ)')}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{t('subtotal')}</span>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>{formatCurrency(selectedSale.subtotal)}</span>
                 </div>
                 {selectedSale.discountAmount > 0 && (
@@ -704,7 +717,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                       fontSize: 'var(--text-sm)',
                     }}
                   >
-                    <span style={{ color: 'var(--danger)' }}>{t('Discount', 'လျှော့စျေး')}</span>
+                    <span style={{ color: 'var(--danger)' }}>{t('discount')}</span>
                     <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--danger)' }}>
                       -{formatCurrency(selectedSale.discountAmount)}
                     </span>
@@ -749,7 +762,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                   }}
                 >
                   <span style={{ color: 'var(--text-muted)' }}>
-                    {t('Payment', 'ငွေပေးချေမှု')}: {getPaymentBadge(selectedSale.paymentMethod)}
+                    {t('payment')}: {getPaymentBadge(selectedSale.paymentMethod)}
                   </span>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>
                     {t('Paid', 'ပေးငွေ')}: {formatCurrency(selectedSale.paidAmount)}
@@ -774,7 +787,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               {/* Notes */}
               {selectedSale.notes && (
                 <div style={{ marginTop: 'var(--space-md)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-                  <strong>{t('Notes', 'မှတ်စု')}:</strong> {selectedSale.notes}
+                  <strong>{t('notes')}:</strong> {selectedSale.notes}
                 </div>
               )}
             </div>
@@ -875,13 +888,13 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               </div>
               <div className="input-group" style={{ marginTop: 'var(--space-md)' }}>
                 <label className="input-label">
-                  {t('Reason', 'Reason')} *
+                  {t('reasonLabel')} *
                 </label>
                 <textarea
                   className="input"
                   value={voidReason}
                   onChange={(e) => setVoidReason(e.target.value)}
-                  placeholder={t('Enter refund or void reason...', 'Enter refund or void reason...')}
+                  placeholder={t('enterReason')}
                   rows={3}
                   maxLength={500}
                 />

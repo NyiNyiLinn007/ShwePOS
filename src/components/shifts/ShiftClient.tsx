@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
 
@@ -37,9 +37,8 @@ interface ShiftClientProps {
 }
 
 export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
-  const { language } = useAppStore();
+  const { language, t } = useI18n();
   const { addToast } = useToast();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
   const [current, setCurrent] = useState<Shift | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [openingCash, setOpeningCash] = useState('0');
@@ -57,11 +56,11 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
     try {
       const response = await fetch('/api/shifts', { cache: 'no-store' });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to load shifts');
+      if (!response.ok) throw new Error(data.error || t('loadingShift'));
       setCurrent(data.current ?? null);
       setShifts(data.shifts ?? []);
     } catch (error) {
-      addToast(error instanceof Error ? error.message : 'Failed to load shifts', 'error');
+      addToast(error instanceof Error ? error.message : t('loadingShift'), 'error');
     } finally {
       setLoading(false);
     }
@@ -98,12 +97,12 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
         body: JSON.stringify({ openingCash: amount, notes: openingNotes || null }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to open shift');
-      addToast(t('Cashier shift opened', 'Cashier Shift ဖွင့်ပြီးပါပြီ'), 'success');
+      if (!response.ok) throw new Error(data.error || t('openShift'));
+      addToast(t('shiftOpened'), 'success');
       setOpeningNotes('');
       await loadShifts();
     } catch (error) {
-      addToast(error instanceof Error ? error.message : 'Failed to open shift', 'error');
+      addToast(error instanceof Error ? error.message : t('openShift'), 'error');
     } finally {
       setSaving(false);
     }
@@ -124,13 +123,13 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
         body: JSON.stringify({ actualCash: amount, notes: closingNotes || null }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to close shift');
-      addToast(t('Cashier shift closed', 'Cashier Shift ပိတ်ပြီးပါပြီ'), 'success');
+      if (!response.ok) throw new Error(data.error || t('closeShift'));
+      addToast(t('shiftClosed'), 'success');
       setShowCloseForm(false);
       setClosingNotes('');
       await loadShifts();
     } catch (error) {
-      addToast(error instanceof Error ? error.message : 'Failed to close shift', 'error');
+      addToast(error instanceof Error ? error.message : t('closeShift'), 'error');
     } finally {
       setSaving(false);
     }
@@ -141,41 +140,41 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
       <div className="page-header">
         <div className="page-title-group">
           <h1 className={`page-title${language === 'mm' ? ' mm-text' : ''}`}>
-            {t('Cashier Shift', 'Cashier Shift')}
+            {t('cashierShift')}
           </h1>
           <p className={`page-subtitle${language === 'mm' ? ' mm-text' : ''}`}>
-            {t('Open, reconcile, and close your cash drawer safely.', 'အဖွင့်ငွေ၊ ရောင်းရငွေနှင့် အပိတ်ငွေကို စစ်ဆေးစီမံပါ။')}
+            {t('shiftSubtitle')}
           </p>
         </div>
         <div className="page-actions">
           <span className="badge badge-neutral">{userName}</span>
-          <Link className="btn btn-secondary" href="/pos">{t('Open POS', 'POS ဖွင့်ရန်')}</Link>
+          <Link className="btn btn-secondary" href="/pos">{t('openPos')}</Link>
         </div>
       </div>
 
       <div className="page-body shift-page-body">
         {loading ? (
-          <div className="loading-page"><div className="loading-spinner" /><span>Loading shift…</span></div>
+          <div className="loading-page"><div className="loading-spinner" /><span>{t('loadingShift')}</span></div>
         ) : current ? (
           <section className="glass-card shift-current-card" aria-labelledby="current-shift-title">
             <div className="shift-card-header">
               <div>
-                <span className="badge badge-success">OPEN</span>
-                <h2 id="current-shift-title" className="heading-4">{t('Current cash drawer', 'လက်ရှိ Cash Drawer')}</h2>
-                <p className="shift-muted">{t('Opened', 'ဖွင့်ချိန်')}: {formatDateTime(current.openedAt)}</p>
+                <span className="badge badge-success">{t('openStatus')}</span>
+                <h2 id="current-shift-title" className="heading-4">{t('currentCashDrawer')}</h2>
+                <p className="shift-muted">{t('opened')}: {formatDateTime(current.openedAt)}</p>
               </div>
-              <Link className="btn btn-primary" href="/pos">{t('Continue selling', 'အရောင်းဆက်လုပ်ရန်')}</Link>
+              <Link className="btn btn-primary" href="/pos">{t('continueSelling')}</Link>
             </div>
 
             <div className="shift-stat-grid">
-              <div className="shift-stat"><span>{t('Opening cash', 'အဖွင့်ငွေ')}</span><strong>{formatCurrency(current.openingCash)}</strong></div>
-              <div className="shift-stat"><span>{t('Cash sales', 'Cash အရောင်း')}</span><strong>{formatCurrency(current.summary.cashSales)}</strong></div>
-              <div className="shift-stat"><span>{t('Expected cash', 'မျှော်မှန်းငွေ')}</span><strong>{formatCurrency(current.expectedCash)}</strong></div>
-              <div className="shift-stat"><span>{t('Transactions', 'လုပ်ဆောင်ချက်')}</span><strong>{current.summary.movementCount}</strong></div>
+              <div className="shift-stat"><span>{t('openingCash')}</span><strong>{formatCurrency(current.openingCash)}</strong></div>
+              <div className="shift-stat"><span>{t('cashSales')}</span><strong>{formatCurrency(current.summary.cashSales)}</strong></div>
+              <div className="shift-stat"><span>{t('expectedCash')}</span><strong>{formatCurrency(current.expectedCash)}</strong></div>
+              <div className="shift-stat"><span>{t('transactions')}</span><strong>{current.summary.movementCount}</strong></div>
             </div>
 
             <div className="shift-reconciliation-note">
-              <span>{t('Count the cash in the drawer before closing. Expected cash includes opening cash, cash sales, refunds, paid-in and paid-out movements.', 'Shift မပိတ်ခင် Cash Drawer ထဲရှိငွေကို ရေတွက်ပါ။ မျှော်မှန်းငွေတွင် အဖွင့်ငွေ၊ Cash အရောင်း၊ Refund နှင့် ငွေဝင်/ငွေထွက်များ ပါဝင်ပါသည်။')}</span>
+              <span>{t('Count the cash in the drawer before closing. Expected cash includes opening cash, cash sales, refunds, paid-in and paid-out movements.', 'အလုပ်ချိန်မပိတ်မီ ငွေသေတ္တာအတွင်းရှိ ငွေကို ရေတွက်ပါ။ မျှော်မှန်းငွေတွင် အဖွင့်ငွေ၊ လက်ငင်းငွေအရောင်း၊ ပြန်အမ်းငွေ၊ ငွေဝင်နှင့် ငွေထုတ်များ ပါဝင်ပါသည်။')}</span>
             </div>
 
             {showCloseForm ? (
@@ -185,7 +184,7 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
                   <input id="actual-cash" className="input" type="number" min="0" step="0.01" value={actualCash} onChange={(event) => setActualCash(event.target.value)} autoFocus />
                   {variancePreview !== null && (
                     <span className={`shift-variance ${variancePreview === 0 ? 'is-even' : variancePreview > 0 ? 'is-over' : 'is-short'}`}>
-                      {variancePreview === 0 ? t('Balanced', 'ငွေကိုက်ညီ') : `${variancePreview > 0 ? '+' : ''}${formatCurrency(variancePreview)} ${variancePreview > 0 ? t('over', 'ပို') : t('short', 'လို')}`}
+                      {variancePreview === 0 ? t('balanced') : `${variancePreview > 0 ? '+' : ''}${formatCurrency(variancePreview)} ${variancePreview > 0 ? t('over') : t('short')}`}
                     </span>
                   )}
                 </div>
@@ -194,14 +193,14 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
                   <textarea id="closing-notes" className="input shift-notes" value={closingNotes} onChange={(event) => setClosingNotes(event.target.value)} maxLength={500} placeholder={t('Explain any difference…', 'ငွေကွာဟမှုရှိပါက အကြောင်းပြချက်ရေးပါ…')} />
                 </div>
                 <div className="shift-form-actions">
-                  <button className="btn btn-secondary" type="button" onClick={() => setShowCloseForm(false)} disabled={saving}>{t('Cancel', 'မလုပ်တော့ပါ')}</button>
-                  <button className="btn btn-primary" type="button" onClick={closeShift} disabled={saving}>{saving ? t('Closing…', 'ပိတ်နေသည်…') : t('Confirm close shift', 'Shift ပိတ်မည်')}</button>
+                  <button className="btn btn-secondary" type="button" onClick={() => setShowCloseForm(false)} disabled={saving}>{t('cancel')}</button>
+                  <button className="btn btn-primary" type="button" onClick={closeShift} disabled={saving}>{saving ? t('closingShift') : t('confirmCloseShift')}</button>
                 </div>
               </div>
             ) : (
               <div className="shift-card-footer">
-                <span className="shift-muted">{canCloseCurrent ? t('When your selling session ends, count the drawer and close this shift.', 'အရောင်းပြီးပါက Drawer ငွေကိုရေတွက်ပြီး Shift ပိတ်ပါ။') : t('This shift belongs to another cashier.', 'ဤ Shift သည် အခြား Cashier ၏ Shift ဖြစ်ပါသည်။')}</span>
-                {canCloseCurrent && <button className="btn btn-danger" type="button" onClick={() => setShowCloseForm(true)}>{t('Close shift', 'Shift ပိတ်ရန်')}</button>}
+                <span className="shift-muted">{canCloseCurrent ? t('When your selling session ends, count the drawer and close this shift.', 'အရောင်းပြီးပါက ငွေသေတ္တာရှိ ငွေကို ရေတွက်ပြီး ဤအလုပ်ချိန်ကို ပိတ်ပါ။') : t('This shift belongs to another cashier.', 'ဤအလုပ်ချိန်သည် အခြားငွေကိုင်၏ အလုပ်ချိန်ဖြစ်ပါသည်။')}</span>
+                {canCloseCurrent && <button className="btn btn-danger" type="button" onClick={() => setShowCloseForm(true)}>{t('closeShift')}</button>}
               </div>
             )}
           </section>
@@ -209,8 +208,8 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
           <section className="glass-card shift-open-card" aria-labelledby="open-shift-title">
             <div className="shift-open-icon" aria-hidden="true">$</div>
             <div>
-              <h2 id="open-shift-title" className="heading-4">{t('Open your cashier shift', 'Cashier Shift ဖွင့်ရန်')}</h2>
-              <p className="shift-muted">{t('A shift connects cash sales to your drawer and lets you reconcile the cash at closing.', 'Shift ဖွင့်ထားမှ Cash အရောင်းများကို သင့် Drawer နှင့် ချိတ်ဆက်ပြီး အပိတ်တွင် ငွေစာရင်းစစ်နိုင်ပါသည်။')}</p>
+              <h2 id="open-shift-title" className="heading-4">{t('openYourShift')}</h2>
+              <p className="shift-muted">{t('A shift connects cash sales to your drawer and lets you reconcile the cash at closing.', 'အလုပ်ချိန်ဖွင့်ထားခြင်းဖြင့် လက်ငင်းငွေအရောင်းများကို သင့်ငွေသေတ္တာနှင့် ချိတ်ဆက်ပြီး အပိတ်တွင် ငွေစာရင်းကိုက်ညှိနိုင်ပါသည်။')}</p>
             </div>
             <div className="shift-open-form">
               <div className="input-group">
@@ -219,9 +218,9 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
               </div>
               <div className="input-group">
                 <label className="input-label" htmlFor="opening-notes">{t('Note (optional)', 'မှတ်ချက် (ရွေးချယ်ရန်)')}</label>
-                <input id="opening-notes" className="input" value={openingNotes} onChange={(event) => setOpeningNotes(event.target.value)} maxLength={500} placeholder={t('Morning float, drawer number…', 'မနက်ခင်းအဖွင့်ငွေ၊ Drawer နံပါတ်…')} />
+                <input id="opening-notes" className="input" value={openingNotes} onChange={(event) => setOpeningNotes(event.target.value)} maxLength={500} placeholder={t('Morning float, drawer number…', 'မနက်ခင်းအဖွင့်ငွေ၊ ငွေသေတ္တာနံပါတ်…')} />
               </div>
-              <button className="btn btn-primary btn-lg" type="button" onClick={openShift} disabled={saving}>{saving ? t('Opening…', 'ဖွင့်နေသည်…') : t('Open shift', 'Shift ဖွင့်ရန်')}</button>
+              <button className="btn btn-primary btn-lg" type="button" onClick={openShift} disabled={saving}>{saving ? t('openingShift') : t('openShift')}</button>
             </div>
           </section>
         )}
@@ -229,17 +228,17 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
         <section className="glass-card shift-history-card" aria-labelledby="shift-history-title">
           <div className="shift-card-header">
             <div>
-              <h2 id="shift-history-title" className="heading-4">{t('Shift history', 'Shift မှတ်တမ်း')}</h2>
-              <p className="shift-muted">{isManager ? t('All cashier shifts', 'Cashier အားလုံး၏ Shift များ') : t('Your recent shifts', 'သင့်လတ်တလော Shift များ')}</p>
+              <h2 id="shift-history-title" className="heading-4">{t('shiftHistory')}</h2>
+              <p className="shift-muted">{isManager ? t('allCashierShifts') : t('recentShifts')}</p>
             </div>
             <span className="badge badge-neutral">{shifts.length}</span>
           </div>
           {shifts.length === 0 ? (
-            <div className="empty-state shift-empty"><div className="empty-state-icon">—</div><div className="empty-state-title">{t('No shift history yet', 'Shift မှတ်တမ်းမရှိသေးပါ')}</div></div>
+            <div className="empty-state shift-empty"><div className="empty-state-icon">—</div><div className="empty-state-title">{t('noShiftHistory')}</div></div>
           ) : (
             <div className="table-container">
               <table className="table shift-table">
-                <thead><tr><th>{t('Cashier', 'Cashier')}</th><th>{t('Opened', 'ဖွင့်ချိန်')}</th><th>{t('Closed', 'ပိတ်ချိန်')}</th><th>{t('Expected', 'မျှော်မှန်း')}</th><th>{t('Actual', 'အမှန်')}</th><th>{t('Variance', 'ကွာဟမှု')}</th><th>{t('Status', 'အခြေအနေ')}</th></tr></thead>
+                <thead><tr><th>{t('cashier')}</th><th>{t('opened')}</th><th>{t('closed')}</th><th>{t('expectedCash')}</th><th>{t('actual')}</th><th>{t('variance')}</th><th>{t('statusLabel')}</th></tr></thead>
                 <tbody>
                   {shifts.map((shift) => (
                     <tr key={shift.id}>
@@ -249,7 +248,7 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
                       <td>{formatCurrency(shift.expectedCash)}</td>
                       <td>{shift.actualCash === null ? '—' : formatCurrency(shift.actualCash)}</td>
                       <td className={shift.variance === null ? '' : shift.variance === 0 ? 'text-success' : shift.variance > 0 ? 'text-warning' : 'text-danger'}>{shift.variance === null ? '—' : formatCurrency(shift.variance)}</td>
-                      <td><span className={`badge ${shift.status === 'OPEN' ? 'badge-success' : 'badge-neutral'}`}>{shift.status}</span></td>
+                      <td><span className={`badge ${shift.status === 'OPEN' ? 'badge-success' : 'badge-neutral'}`}>{shift.status === 'OPEN' ? t('openStatus') : t('closedStatus')}</span></td>
                     </tr>
                   ))}
                 </tbody>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 
 interface StatCardsProps {
@@ -16,8 +16,7 @@ export default function StatCards({
   totalProducts,
   lowStockCount,
 }: StatCardsProps) {
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   const stats = [
     {
@@ -30,7 +29,7 @@ export default function StatCards({
     },
     {
       icon: '🛍️',
-      label: t('Total Sales', 'စုစုပေါင်းရောင်းအား'),
+      label: t('totalSales'),
       value: String(totalSales),
       change: '+8.2%',
       changeDir: 'up' as const,
@@ -46,9 +45,9 @@ export default function StatCards({
     },
     {
       icon: '⚠️',
-      label: t('Low Stock Items', 'စတော့နည်းပစ္စည်း'),
+      label: t('lowStockItems'),
       value: String(lowStockCount),
-      change: lowStockCount > 0 ? `${lowStockCount} ${t('items', 'ခု')}` : t('All good', 'ကောင်းပါသည်'),
+      change: lowStockCount > 0 ? `${lowStockCount} ${t('units')}` : t('allGood'),
       changeDir: lowStockCount > 0 ? ('down' as const) : ('up' as const),
       color: 'red',
     },

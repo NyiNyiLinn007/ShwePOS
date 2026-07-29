@@ -1,7 +1,7 @@
 'use client';
 
 import { useCartStore } from '@/store/cartStore';
-import { useAppStore } from '@/lib/store';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 import type { Product } from '@/types';
 
@@ -33,8 +33,7 @@ function getCategoryInitial(categoryName: string): string {
 
 export default function ProductGrid({ products }: ProductGridProps) {
   const addItem = useCartStore((state) => state.addItem);
-  const { language } = useAppStore();
-  const t = (en: string, mm: string) => (language === 'mm' ? mm : en);
+  const { language, t } = useI18n();
 
   const handleAddToCart = (product: ProductForGrid) => {
     if (product.stockQuantity <= 0) return;
@@ -95,12 +94,12 @@ export default function ProductGrid({ products }: ProductGridProps) {
             </div>
             <div className={`pos-product-stock${product.stockQuantity <= 10 && product.stockQuantity > 0 ? ' low' : ''}`}>
               {isOutOfStock
-                ? t('Out of Stock', 'ကုန်ပစ္စည်းကုန်')
-                : `${t('Stock', 'ကုန်လက်ကျန်')}: ${product.stockQuantity}`}
+                ? t('outOfStock')
+                : `${t('stock')}: ${product.stockQuantity}`}
             </div>
             {isOutOfStock && (
               <div className="pos-product-unavailable">
-                {t('Out of Stock', '\u1000\u102f\u1014\u103a\u1015\u1005\u1039\u1005\u100a\u103a\u1038\u1000\u102f\u1014\u103a')}
+                {t('outOfStock')}
               </div>
             )}
           </button>

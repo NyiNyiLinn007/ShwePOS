@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCartStore } from '@/store/cartStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useI18n } from '@/lib/i18n';
 import ProductGrid from '@/components/pos/ProductGrid';
 import Cart from '@/components/pos/Cart';
 import PaymentModal from '@/components/pos/PaymentModal';
@@ -81,6 +82,7 @@ export default function POSClient({
   const clearCart = useCartStore((s) => s.clearCart);
   const cartItemCount = useCartStore((s) => s.getItemCount());
   const businessName = useSettingsStore((s) => s.businessName);
+  const { t } = useI18n();
 
   // Full-screen mode: hide sidebar, remove main-content margin
   useEffect(() => {
@@ -231,19 +233,19 @@ export default function POSClient({
           <button
             className="pos-exit-btn"
             onClick={() => router.push('/')}
-            title="Exit POS"
+            title={t('exitPos')}
           >
             <span aria-hidden="true">←</span>
             <span>{businessName}</span>
           </button>
           <div className="pos-search-wrap">
-            <label className="sr-only" htmlFor="pos-product-search">Search products</label>
+            <label className="sr-only" htmlFor="pos-product-search">{t('searchProducts')}</label>
             <input
               id="pos-product-search"
               ref={searchRef}
               type="search"
               className="input input-search"
-              placeholder="Search by product, SKU or barcode"
+              placeholder={t('searchProducts')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoComplete="off"
@@ -253,7 +255,7 @@ export default function POSClient({
                 className="pos-search-clear"
                 type="button"
                 onClick={() => setSearchQuery('')}
-                aria-label="Clear product search"
+                aria-label={t('clearProductSearch')}
               >
                 ×
               </button>
@@ -271,15 +273,15 @@ export default function POSClient({
           >
             <span className="badge badge-neutral">F9 Pay</span>
           </div>
-          <div className="pos-toolbar-meta" aria-label="POS shortcuts and availability">
-            <span className="pos-key-hint"><kbd>F2</kbd> Search</span>
+          <div className="pos-toolbar-meta" aria-label={t('posShortcuts')}>
+            <span className="pos-key-hint"><kbd>F2</kbd> {t('search')}</span>
             <button
               className={`pos-stock-toggle${showOutOfStock ? ' active' : ''}`}
               type="button"
               aria-pressed={showOutOfStock}
               onClick={() => setShowOutOfStock((visible) => !visible)}
             >
-              {showOutOfStock ? 'Hide unavailable' : 'Show unavailable'}
+              {showOutOfStock ? t('hideUnavailable') : t('showUnavailable')}
             </button>
           </div>
         </div>
@@ -287,18 +289,18 @@ export default function POSClient({
         {/* Category Filters */}
         <div className={`pos-shift-banner${hasOpenShift === true ? ' is-open' : hasOpenShift === false ? ' is-closed' : ''}`}>
           <span className="pos-shift-dot" aria-hidden="true" />
-          {hasOpenShift === true && <span>Cashier shift open · Cash payments enabled</span>}
+          {hasOpenShift === true && <span>{t('cashShiftOpen')}</span>}
           {hasOpenShift === false && (
             <>
-              <span>Open a cashier shift before accepting cash</span>
-              <button type="button" onClick={() => router.push('/shifts')}>Open shift</button>
+              <span>{t('cashShiftRequired')}</span>
+              <button type="button" onClick={() => router.push('/shifts')}>{t('openShift')}</button>
             </>
           )}
-          {hasOpenShift === null && <span>Checking cashier shift…</span>}
+          {hasOpenShift === null && <span>{t('checkingShift')}</span>}
         </div>
 
         {/* Category Filters */}
-        <div className="pos-categories" role="tablist" aria-label="Product categories">
+        <div className="pos-categories" role="tablist" aria-label={t('productCategories')}>
           <button
             className={`pos-category-btn ${selectedCategory === null ? 'active' : ''}`}
             onClick={() => setSelectedCategory(null)}
@@ -306,7 +308,7 @@ export default function POSClient({
             role="tab"
             aria-selected={selectedCategory === null}
           >
-            All
+            {t('all')}
           </button>
           {initialCategories.map((cat) => (
             <button
@@ -338,7 +340,7 @@ export default function POSClient({
           className="pos-cart-backdrop"
           type="button"
           onClick={() => setShowMobileCart(false)}
-          aria-label="Close cart"
+          aria-label={t('close')}
         />
       )}
       <Cart
@@ -352,11 +354,11 @@ export default function POSClient({
         className="pos-mobile-cart-toggle"
         type="button"
         onClick={() => setShowMobileCart(true)}
-        aria-label={`Open cart${cartItemCount > 0 ? `, ${cartItemCount} items` : ''}`}
+        aria-label={`${t('openCart')}${cartItemCount > 0 ? `, ${cartItemCount} ${t('items')}` : ''}`}
       >
-        <span aria-hidden="true">Cart</span>
+        <span aria-hidden="true">{t('cart')}</span>
         {cartItemCount > 0 && <span className="pos-cart-count">{cartItemCount}</span>}
-        <strong>View order</strong>
+        <strong>{t('viewOrder')}</strong>
       </button>
 
       {/* Payment Modal */}
