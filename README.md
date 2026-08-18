@@ -56,10 +56,20 @@ npm run dev
 ## Production
 
 ```bash
-npm run build
 npm run db:migrate:deploy
+npm run build
 npm run start
 ```
+
+## Vercel + Neon
+
+The Vercel build intentionally runs `prisma generate` and `next build` only. Database migrations should be run separately with a trusted environment that has a working Neon connection:
+
+```bash
+npm run db:migrate:deploy
+```
+
+Keeping migrations outside the Vercel build prevents a temporary Neon outage, suspended endpoint, or incorrect Vercel database variable from blocking the application bundle from being built. Run the migration before sending traffic to a release that contains schema changes.
 
 ## Backup And Restore
 
