@@ -1491,6 +1491,7 @@ kbd {
 }
 
 .pos-product-card {
+  position: relative;
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
@@ -1572,6 +1573,7 @@ kbd {
   font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.05em;
+  pointer-events: none;
   text-transform: uppercase;
 }
 
