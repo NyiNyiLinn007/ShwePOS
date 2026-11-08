@@ -970,6 +970,11 @@ select.input {
   flex: 1;
   margin-left: var(--sidebar-width);
   min-height: 100vh;
+  transition: margin-left var(--transition-base);
+}
+
+.sidebar.collapsed + .main-content {
+  margin-left: var(--sidebar-collapsed);
 }
 
 .page-header {
@@ -2189,6 +2194,10 @@ kbd {
   }
 
   .main-content {
+    margin-left: 0;
+  }
+
+  .sidebar.collapsed + .main-content {
     margin-left: 0;
   }
 
