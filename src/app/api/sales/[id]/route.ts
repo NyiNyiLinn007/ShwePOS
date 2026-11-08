@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole, handleApiError, ApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateSaleStatusSchema } from '@/lib/validations';
-import { serializePrismaData, toNumber } from '@/lib/number';
+import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
+import { roundQuantity } from '@/lib/utils';
 
 export async function GET(
   _request: NextRequest,
@@ -24,9 +25,17 @@ export async function GET(
                 nameMm: true,
                 sku: true,
                 barcode: true,
+                unit: true,
               },
             },
           },
+        },
+        payments: true,
+        adjustments: {
+          include: {
+            approver: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: 'desc' },
         },
         customer: {
           select: { id: true, name: true, phone: true, email: true },
@@ -74,36 +83,14 @@ export async function PUT(
         { status: 400 }
       );
     }
-    const { status: newStatus, reason } = parsed.data;
+    const { status: requestedStatus, reason, refundMethod, items: requestedItems } = parsed.data;
 
     const updatedSale = await prisma.$transaction(async (tx) => {
-      // Optimistic lock: atomically transition COMPLETED → target status
-      // If another request already changed the status, count will be 0
-      const transitioned = await tx.sale.updateMany({
-        where: { id, status: 'COMPLETED' },
-        data: {
-          status: newStatus,
-          notes: `[${newStatus} by ${user.name}] ${reason}`,
-        },
-      });
-
-      if (transitioned.count === 0) {
-        // Either sale doesn't exist or already processed
-        const existing = await tx.sale.findUnique({ where: { id }, select: { status: true } });
-        if (!existing) {
-          throw new ApiError('Sale not found', 404);
-        }
-        throw new ApiError(
-          `Cannot ${newStatus.toLowerCase()} — sale is already ${existing.status}`,
-          409
-        );
-      }
-
-      // Fetch sale with items for stock restore
       const existingSale = await tx.sale.findUnique({
         where: { id },
         include: {
           items: true,
+          payments: true,
           cashDrawerMovements: {
             where: { type: 'CASH_SALE' },
             select: { shiftId: true },
@@ -116,87 +103,230 @@ export async function PUT(
         throw new ApiError('Sale not found', 404);
       }
 
-      // Do not mark a card/mobile payment as refunded while the payment
-      // provider still has no confirmed reversal. This keeps inventory,
-      // customer totals, and payment state from diverging.
-      if (existingSale.paymentMethod !== 'CASH') {
+      if (existingSale.status === 'REFUNDED' || existingSale.status === 'VOIDED') {
         throw new ApiError(
-          'Non-cash refunds/voids require a confirmed payment reversal integration',
+          `Cannot ${requestedStatus.toLowerCase()} — sale is already ${existingSale.status}`,
           409
         );
       }
 
-      const openShift = await tx.shift.findFirst({
-        where: { userId: user.id, status: 'OPEN' },
-        select: { id: true },
-        orderBy: { openedAt: 'desc' },
+      // Determine which items and quantities are being refunded
+      const isPartialRequest = Array.isArray(requestedItems) && requestedItems.length > 0 && requestedStatus !== 'VOIDED';
+      const refundLines: Array<{
+        saleItem: typeof existingSale.items[number];
+        refundQty: number;
+        lineRefundAmount: number;
+      }> = [];
+
+      if (isPartialRequest) {
+        const itemMap = new Map(existingSale.items.map((i) => [i.id, i]));
+        for (const reqItem of requestedItems!) {
+          const saleItem = itemMap.get(reqItem.saleItemId);
+          if (!saleItem) {
+            throw new ApiError(`Sale item not found: ${reqItem.saleItemId}`, 400);
+          }
+          const origQty = toNumber(saleItem.quantity);
+          const alreadyRefunded = toNumber(saleItem.refundedQuantity);
+          const remainingQty = roundQuantity(origQty - alreadyRefunded);
+          const reqQty = roundQuantity(reqItem.quantity);
+          if (reqQty <= 0 || reqQty > remainingQty) {
+            throw new ApiError(
+              `Invalid refund quantity (${reqQty}) for item. Remaining refundable: ${remainingQty}`,
+              400
+            );
+          }
+          const unitEffective = origQty > 0 ? toNumber(saleItem.total) / origQty : toNumber(saleItem.unitPrice);
+          const lineRefundAmount = roundMoney(unitEffective * reqQty);
+          refundLines.push({ saleItem, refundQty: reqQty, lineRefundAmount });
+        }
+      } else {
+        for (const saleItem of existingSale.items) {
+          const origQty = toNumber(saleItem.quantity);
+          const alreadyRefunded = toNumber(saleItem.refundedQuantity);
+          const remainingQty = roundQuantity(origQty - alreadyRefunded);
+          if (remainingQty > 0) {
+            const unitEffective = origQty > 0 ? toNumber(saleItem.total) / origQty : toNumber(saleItem.unitPrice);
+            const lineRefundAmount = roundMoney(unitEffective * remainingQty);
+            refundLines.push({ saleItem, refundQty: remainingQty, lineRefundAmount });
+          }
+        }
+      }
+
+      if (refundLines.length === 0) {
+        throw new ApiError('No refundable items remaining on this sale', 400);
+      }
+
+      // Check if all items in the sale will now be completely refunded
+      const refundQtyByItemId = new Map(refundLines.map((l) => [l.saleItem.id, l.refundQty]));
+      const allItemsFullyRefunded = existingSale.items.every((item) => {
+        const nextRefunded = roundQuantity(
+          toNumber(item.refundedQuantity) + (refundQtyByItemId.get(item.id) ?? 0)
+        );
+        return nextRefunded >= roundQuantity(toNumber(item.quantity));
       });
-      if (!openShift) {
-        throw new ApiError('Open a manager shift before refunding or voiding a cash sale', 409);
+
+      const finalStatus =
+        requestedStatus === 'VOIDED'
+          ? 'VOIDED'
+          : allItemsFullyRefunded
+            ? 'REFUNDED'
+            : 'PARTIALLY_REFUNDED';
+
+      // Calculate total refund amount (proportional to sale totalAmount)
+      const currentSaleSubtotal = existingSale.items.reduce((sum, i) => {
+        const rem = Math.max(0, toNumber(i.quantity) - toNumber(i.refundedQuantity));
+        const orig = toNumber(i.quantity);
+        return sum + (orig > 0 ? (toNumber(i.total) * rem) / orig : 0);
+      }, 0);
+      const rawLinesRefund = refundLines.reduce((sum, l) => sum + l.lineRefundAmount, 0);
+      const saleTotalNumber = toNumber(existingSale.totalAmount);
+      const refundAmount = allItemsFullyRefunded
+        ? saleTotalNumber
+        : currentSaleSubtotal > 0
+          ? roundMoney(Math.min(saleTotalNumber, (rawLinesRefund / currentSaleSubtotal) * saleTotalNumber))
+          : roundMoney(Math.min(saleTotalNumber, rawLinesRefund));
+
+      // Determine whether this refund affects the cash drawer
+      const isCashReversal =
+        existingSale.paymentMethod === 'CASH' ||
+        refundMethod === 'CASH' ||
+        (existingSale.paymentMethod === 'SPLIT' &&
+          existingSale.payments.some((p) => p.method === 'CASH'));
+
+      // Resolve open shift: 1) Manager's open shift, 2) Original cashier's open shift, 3) Any open shift
+      let targetShiftId: string | null = null;
+      if (isCashReversal) {
+        const openShift =
+          (await tx.shift.findFirst({
+            where: { userId: user.id, status: 'OPEN' },
+            select: { id: true },
+            orderBy: { openedAt: 'desc' },
+          })) ??
+          (await tx.shift.findFirst({
+            where: { userId: existingSale.userId, status: 'OPEN' },
+            select: { id: true },
+            orderBy: { openedAt: 'desc' },
+          })) ??
+          (await tx.shift.findFirst({
+            where: { status: 'OPEN' },
+            select: { id: true },
+            orderBy: { openedAt: 'desc' },
+          }));
+
+        if (!openShift) {
+          throw new ApiError(
+            'Open a cashier or manager shift before processing a cash refund/void',
+            409
+          );
+        }
+        targetShiftId = openShift.id;
+      }
+
+      // Optimistic status update & total adjustment
+      const updatedNotes = existingSale.notes
+        ? `${existingSale.notes} | [${finalStatus} by ${user.name}] ${reason}`
+        : `[${finalStatus} by ${user.name}] ${reason}`;
+
+      const newTotalAmount =
+        finalStatus === 'PARTIALLY_REFUNDED'
+          ? roundMoney(Math.max(0, saleTotalNumber - refundAmount))
+          : existingSale.totalAmount;
+
+      const currentDue = toNumber(existingSale.dueAmount);
+      const debtReduction = roundMoney(Math.min(currentDue, refundAmount));
+      const cashRefundOut = roundMoney(Math.max(0, refundAmount - debtReduction));
+
+      const transitioned = await tx.sale.updateMany({
+        where: { id, status: existingSale.status },
+        data: {
+          status: finalStatus,
+          totalAmount: newTotalAmount,
+          dueAmount: roundMoney(Math.max(0, currentDue - debtReduction)),
+          paymentStatus:
+            finalStatus === 'REFUNDED' || finalStatus === 'VOIDED'
+              ? 'REVERSED'
+              : existingSale.paymentStatus,
+          notes: updatedNotes.slice(0, 500),
+        },
+      });
+
+      if (transitioned.count === 0) {
+        throw new ApiError('Sale was modified by another request. Please refresh and try again.', 409);
       }
 
       await tx.saleAdjustment.create({
         data: {
           saleId: existingSale.id,
           approverUserId: user.id,
-          type: newStatus === 'REFUNDED' ? 'REFUND' : 'VOID',
+          type:
+            finalStatus === 'VOIDED'
+              ? 'VOID'
+              : finalStatus === 'PARTIALLY_REFUNDED'
+                ? 'PARTIAL_REFUND'
+                : 'REFUND',
           reason,
-          amount: existingSale.totalAmount,
-          paymentMethod: existingSale.paymentMethod,
+          amount: refundAmount,
+          paymentMethod: refundMethod === 'CASH' ? 'CASH' : existingSale.paymentMethod,
           paymentReversalStatus: 'COMPLETED',
         },
       });
 
-      // Restore stock for each item
-      for (const item of existingSale.items) {
-        // Atomic stock increment
-        await tx.product.update({
-          where: { id: item.productId },
+      // Update refundedQuantity and restore stock for each refunded line
+      for (const { saleItem, refundQty } of refundLines) {
+        await tx.saleItem.update({
+          where: { id: saleItem.id },
           data: {
-            stockQuantity: { increment: item.quantity },
+            refundedQuantity: { increment: refundQty },
           },
         });
 
-        // Get updated product for stock movement record
-        const product = await tx.product.findUnique({
-          where: { id: item.productId },
-          select: { stockQuantity: true },
+        await tx.product.update({
+          where: { id: saleItem.productId },
+          data: {
+            stockQuantity: { increment: refundQty },
+          },
         });
 
-        // Create StockMovement for the return
+        const product = await tx.product.findUnique({
+          where: { id: saleItem.productId },
+          select: { stockQuantity: true },
+        });
+        const newStock = roundQuantity(toNumber(product?.stockQuantity));
+
         await tx.stockMovement.create({
           data: {
-            productId: item.productId,
+            productId: saleItem.productId,
             userId: user.id,
             saleId: existingSale.id,
-            quantity: item.quantity,
+            quantity: refundQty,
             type: 'RETURN',
-            reason: `${newStatus}: ${reason} (Invoice: ${existingSale.invoiceNumber})`,
-            previousStock: (product?.stockQuantity ?? 0) - item.quantity,
-            newStock: product?.stockQuantity ?? 0,
+            reason: `${finalStatus}: ${reason} (Invoice: ${existingSale.invoiceNumber})`,
+            previousStock: roundQuantity(newStock - refundQty),
+            newStock,
           },
         });
       }
 
-      // Reverse customer purchase total
+      // Reverse customer purchase total and creditBalance if applicable
       if (existingSale.customerId) {
         await tx.customer.update({
           where: { id: existingSale.customerId },
           data: {
-            totalPurchases: { decrement: existingSale.totalAmount },
+            totalPurchases: { decrement: refundAmount },
+            ...(debtReduction > 0 && { creditBalance: { decrement: debtReduction } }),
           },
         });
       }
 
-      if (existingSale.paymentMethod === 'CASH') {
+      if (isCashReversal && targetShiftId && cashRefundOut > 0) {
         await tx.cashDrawerMovement.create({
           data: {
-            shiftId: openShift.id,
+            shiftId: targetShiftId,
             saleId: existingSale.id,
             userId: user.id,
-            type: newStatus === 'REFUNDED' ? 'REFUND' : 'VOID',
-            amount: -toNumber(existingSale.totalAmount),
-            reason: `${newStatus}: ${reason} (Invoice: ${existingSale.invoiceNumber})`,
+            type: finalStatus === 'VOIDED' ? 'VOID' : 'REFUND',
+            amount: -cashRefundOut,
+            reason: `${finalStatus}: ${reason} (Invoice: ${existingSale.invoiceNumber})`,
           },
         });
       }
@@ -208,10 +338,11 @@ export async function PUT(
           items: {
             include: {
               product: {
-                select: { name: true, nameMm: true, sku: true },
+                select: { id: true, name: true, nameMm: true, sku: true, unit: true },
               },
             },
           },
+          payments: true,
           customer: {
             select: { id: true, name: true, phone: true },
           },

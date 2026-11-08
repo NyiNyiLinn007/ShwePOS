@@ -4,11 +4,22 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCartStore } from '@/store/cartStore';
 import { useSettingsStore } from '@/store/settingsStore';
+import { useOfflineQueueStore } from '@/store/offlineQueueStore';
+import { useToast } from '@/contexts/ToastContext';
 import { useI18n } from '@/lib/i18n';
+import { formatCurrency, formatDateTime, formatQuantity, roundQuantity } from '@/lib/utils';
+import {
+  ChevronLeft,
+  WifiOff,
+  RefreshCw,
+  PauseCircle,
+  PlayCircle,
+  X,
+} from '@/components/ui/Icons';
 import ProductGrid from '@/components/pos/ProductGrid';
 import Cart from '@/components/pos/Cart';
-import PaymentModal from '@/components/pos/PaymentModal';
-import Receipt from '@/components/pos/Receipt';
+import PaymentModal, { type SaleResponse } from '@/components/pos/PaymentModal';
+import Receipt, { type ReceiptData } from '@/components/pos/Receipt';
 
 interface Category {
   id: string;
@@ -35,26 +46,6 @@ interface Product {
   };
 }
 
-interface ReceiptData {
-  invoiceNumber: string;
-  createdAt: string;
-  cashierName: string;
-  items: Array<{
-    name: string;
-    quantity: number;
-    unitPrice: number;
-    total: number;
-  }>;
-  subtotal: number;
-  discountAmount: number;
-  taxAmount: number;
-  totalAmount: number;
-  paymentMethod: string;
-  paidAmount: number;
-  changeAmount: number;
-  customerName?: string | null;
-}
-
 interface POSClientProps {
   initialProducts: Product[];
   initialCategories: Category[];
@@ -67,10 +58,13 @@ export default function POSClient({
   taxRate,
 }: POSClientProps) {
   const router = useRouter();
+  const { addToast } = useToast();
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const [searchQuery, setSearchQuery] = useState('');
   const [showOutOfStock, setShowOutOfStock] = useState(false);
   const [showMobileCart, setShowMobileCart] = useState(false);
+  const [showHeldBillsModal, setShowHeldBillsModal] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
 
   // Sync when server re-renders with fresh data (e.g., inventory adjustments)
   useEffect(() => { setProducts(initialProducts); }, [initialProducts]);
@@ -79,8 +73,17 @@ export default function POSClient({
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
   const [hasOpenShift, setHasOpenShift] = useState<boolean | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+
   const clearCart = useCartStore((s) => s.clearCart);
   const cartItemCount = useCartStore((s) => s.getItemCount());
+  const heldBills = useCartStore((s) => s.heldBills);
+  const resumeHeldBill = useCartStore((s) => s.resumeHeldBill);
+  const removeHeldBill = useCartStore((s) => s.removeHeldBill);
+
+  const queuedSales = useOfflineQueueStore((s) => s.queuedSales);
+  const isSyncing = useOfflineQueueStore((s) => s.isSyncing);
+  const syncAllQueuedSales = useOfflineQueueStore((s) => s.syncAllQueuedSales);
+
   const businessName = useSettingsStore((s) => s.businessName);
   const { t } = useI18n();
 
@@ -91,6 +94,36 @@ export default function POSClient({
       document.body.classList.remove('pos-fullscreen');
     };
   }, []);
+
+  // Online / Offline listener and automatic queue synchronization
+  useEffect(() => {
+    if (typeof navigator !== 'undefined') {
+      setIsOnline(navigator.onLine);
+    }
+    const handleOnline = async () => {
+      setIsOnline(true);
+      const res = await useOfflineQueueStore.getState().syncAllQueuedSales();
+      if (res.synced > 0) {
+        addToast(
+          t(`Synced ${res.synced} offline sale(s)`, `အော့ဖ်လိုင်းအရောင်း ${res.synced} ခု စာရင်းသွင်းပြီးပါပြီ`),
+          'success'
+        );
+      }
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    if (typeof navigator !== 'undefined' && navigator.onLine && useOfflineQueueStore.getState().queuedSales.length > 0) {
+      void handleOnline();
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [addToast, t]);
 
   useEffect(() => {
     let active = true;
@@ -146,12 +179,14 @@ export default function POSClient({
       if (e.key === 'Escape') {
         if (showPayment) {
           setShowPayment(false);
+        } else if (showHeldBillsModal) {
+          setShowHeldBillsModal(false);
         } else if (receiptData) {
           handleNewSale();
         }
       }
     },
-    [showPayment, receiptData]
+    [showPayment, showHeldBillsModal, receiptData]
   );
 
   useEffect(() => {
@@ -159,26 +194,7 @@ export default function POSClient({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  const handlePaymentSuccess = (saleData: {
-    invoiceNumber: string;
-    createdAt: string;
-    subtotal: number;
-    discountAmount: number;
-    taxAmount: number;
-    totalAmount: number;
-    paidAmount: number;
-    changeAmount: number;
-    paymentMethod: string;
-    items: Array<{
-      quantity: number;
-      unitPrice: number;
-      total: number;
-      product: { name: string; id?: string };
-      productId?: string;
-    }>;
-    customer: { name: string } | null;
-    user: { name: string };
-  }) => {
+  const handlePaymentSuccess = (saleData: SaleResponse) => {
     setShowPayment(false);
     setReceiptData({
       invoiceNumber: saleData.invoiceNumber,
@@ -188,7 +204,9 @@ export default function POSClient({
         name: item.product.name,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
+        discount: item.discount,
         total: item.total,
+        unit: item.product.unit,
       })),
       subtotal: saleData.subtotal,
       discountAmount: saleData.discountAmount,
@@ -196,8 +214,13 @@ export default function POSClient({
       totalAmount: saleData.totalAmount,
       paymentMethod: saleData.paymentMethod,
       paidAmount: saleData.paidAmount,
+      dueAmount: saleData.dueAmount,
       changeAmount: saleData.changeAmount,
+      pointsEarned: saleData.pointsEarned,
+      pointsRedeemed: saleData.pointsRedeemed,
       customerName: saleData.customer?.name || null,
+      isOfflineQueued: saleData.isOfflineQueued,
+      payments: saleData.payments,
     });
 
     // Update stock counts locally after sale
@@ -208,7 +231,7 @@ export default function POSClient({
         if (soldItem) {
           return {
             ...product,
-            stockQuantity: Math.max(0, product.stockQuantity - soldItem.quantity),
+            stockQuantity: roundQuantity(Math.max(0, product.stockQuantity - soldItem.quantity)),
           };
         }
         return product;
@@ -235,7 +258,7 @@ export default function POSClient({
             onClick={() => router.push('/')}
             title={t('exitPos')}
           >
-            <span aria-hidden="true">←</span>
+            <ChevronLeft size={16} strokeWidth={2} />
             <span>{businessName}</span>
           </button>
           <div className="pos-search-wrap">
@@ -257,7 +280,7 @@ export default function POSClient({
                 onClick={() => setSearchQuery('')}
                 aria-label={t('clearProductSearch')}
               >
-                ×
+                <X size={14} strokeWidth={2} />
               </button>
             )}
           </div>
@@ -271,6 +294,38 @@ export default function POSClient({
               whiteSpace: 'nowrap',
             }}
           >
+            {!isOnline && (
+              <span
+                className="badge badge-danger"
+                title="Offline mode active — sales will queue locally"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                <WifiOff size={12} strokeWidth={2} /> Offline
+              </span>
+            )}
+            {queuedSales.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => void syncAllQueuedSales()}
+                disabled={isSyncing || !isOnline}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                <RefreshCw size={13} strokeWidth={1.75} />
+                {isSyncing ? 'Syncing...' : `Queued (${queuedSales.length})`}
+              </button>
+            )}
+            {heldBills.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowHeldBillsModal(true)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                <PauseCircle size={13} strokeWidth={1.75} />
+                {t('Held', 'ဆိုင်းငံ့')} ({heldBills.length})
+              </button>
+            )}
             <span className="badge badge-neutral">F9 Pay</span>
           </div>
           <div className="pos-toolbar-meta" aria-label={t('posShortcuts')}>
@@ -286,7 +341,7 @@ export default function POSClient({
           </div>
         </div>
 
-        {/* Category Filters */}
+        {/* Shift Banner */}
         <div className={`pos-shift-banner${hasOpenShift === true ? ' is-open' : hasOpenShift === false ? ' is-closed' : ''}`}>
           <span className="pos-shift-dot" aria-hidden="true" />
           {hasOpenShift === true && <span>{t('cashShiftOpen')}</span>}
@@ -345,6 +400,7 @@ export default function POSClient({
       )}
       <Cart
         onOpenPayment={() => setShowPayment(true)}
+        onOpenHeldBills={() => setShowHeldBillsModal(true)}
         taxRate={taxRate}
         isMobileOpen={showMobileCart}
         onClose={() => setShowMobileCart(false)}
@@ -357,9 +413,87 @@ export default function POSClient({
         aria-label={`${t('openCart')}${cartItemCount > 0 ? `, ${cartItemCount} ${t('items')}` : ''}`}
       >
         <span aria-hidden="true">{t('cart')}</span>
-        {cartItemCount > 0 && <span className="pos-cart-count">{cartItemCount}</span>}
+        {cartItemCount > 0 && <span className="pos-cart-count">{formatQuantity(cartItemCount)}</span>}
         <strong>{t('viewOrder')}</strong>
       </button>
+
+      {/* Held Bills Modal */}
+      {showHeldBillsModal && (
+        <div className="modal-backdrop" onClick={() => setShowHeldBillsModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <span className="modal-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <PauseCircle size={18} strokeWidth={1.75} />
+                {t('Held Bills', 'ဆိုင်းငံ့ထားသော ဘောင်ချာများ')} ({heldBills.length})
+              </span>
+              <button
+                className="btn btn-ghost btn-icon"
+                type="button"
+                onClick={() => setShowHeldBillsModal(false)}
+              >
+                <X size={16} strokeWidth={1.75} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              {heldBills.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-state-title">{t('No held bills', 'ဆိုင်းငံ့ဘောင်ချာ မရှိပါ')}</div>
+                </div>
+              ) : (
+                heldBills.map((bill) => {
+                  const billSubtotal = bill.items.reduce(
+                    (s, i) => s + Math.round(i.unitPrice * i.quantity) - (i.discount || 0),
+                    0
+                  );
+                  return (
+                    <div
+                      key={bill.id}
+                      style={{
+                        border: '1px solid var(--border-default)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: 'var(--space-md)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 'var(--space-md)',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 700 }}>{bill.label}</div>
+                        <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                          {formatDateTime(bill.createdAt)} · {bill.items.length} {t('items')} · {formatCurrency(billSubtotal)}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 'var(--space-xs)' }}>
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-sm"
+                          onClick={() => {
+                            resumeHeldBill(bill.id);
+                            setShowHeldBillsModal(false);
+                          }}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <PlayCircle size={14} strokeWidth={1.75} />
+                          {t('Resume', 'ပြန်ယူမည်')}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger btn-sm"
+                          onClick={() => removeHeldBill(bill.id)}
+                          aria-label={t('delete')}
+                        >
+                          <X size={14} strokeWidth={1.75} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Payment Modal */}
       {showPayment && (

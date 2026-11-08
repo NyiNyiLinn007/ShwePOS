@@ -3,6 +3,12 @@ import prisma from '@/lib/prisma';
 import { requireAuth, handleApiError, ApiError, validateCsrf } from '@/lib/apiAuth';
 import { createSaleSchema } from '@/lib/validations';
 import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
+import {
+  getMyanmarDateCompact,
+  isFractionalUnit,
+  parseMyanmarDateBoundary,
+  roundQuantity,
+} from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -26,14 +32,13 @@ export async function GET(request: NextRequest) {
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) {
-        const start = new Date(startDate);
-        if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Invalid startDate' }, { status: 400 });
+        const start = parseMyanmarDateBoundary(startDate, false);
+        if (!start) return NextResponse.json({ error: 'Invalid startDate' }, { status: 400 });
         (where.createdAt as Record<string, unknown>).gte = start;
       }
       if (endDate) {
-        const end = new Date(endDate);
-        if (Number.isNaN(end.getTime())) return NextResponse.json({ error: 'Invalid endDate' }, { status: 400 });
-        end.setHours(23, 59, 59, 999);
+        const end = parseMyanmarDateBoundary(endDate, true);
+        if (!end) return NextResponse.json({ error: 'Invalid endDate' }, { status: 400 });
         (where.createdAt as Record<string, unknown>).lte = end;
       }
     }
@@ -53,10 +58,11 @@ export async function GET(request: NextRequest) {
           items: {
             include: {
               product: {
-                select: { name: true, nameMm: true, sku: true },
+                select: { name: true, nameMm: true, sku: true, unit: true },
               },
             },
           },
+          payments: true,
           customer: {
             select: { id: true, name: true, phone: true },
           },
@@ -88,8 +94,9 @@ export async function GET(request: NextRequest) {
 const MAX_INVOICE_RETRIES = 3;
 
 const saleResponseInclude = {
-  items: { include: { product: { select: { name: true, nameMm: true, sku: true } } } },
-  customer: { select: { id: true, name: true, phone: true } },
+  items: { include: { product: { select: { name: true, nameMm: true, sku: true, unit: true } } } },
+  payments: true,
+  customer: { select: { id: true, name: true, phone: true, loyaltyPoints: true, creditBalance: true } },
   user: { select: { id: true, name: true } },
 } as const;
 
@@ -131,29 +138,17 @@ export async function POST(request: NextRequest) {
       customerId,
       paymentMethod,
       paidAmount,
+      payments: inputPayments,
+      pointsRedeemed,
       cartDiscount,
       clientSaleId,
       paymentReference,
       notes,
     } = parsed.data;
 
-    // Fix 6: CREDIT sales not yet supported
-    if (paymentMethod === 'CREDIT') {
-      return NextResponse.json(
-        { error: 'Credit sales are not yet supported' },
-        { status: 400 }
-      );
-    }
-
     const cleanPaymentReference = paymentReference?.trim() || null;
-    if (paymentMethod !== 'CASH' && !cleanPaymentReference) {
-      return NextResponse.json(
-        { error: 'Payment reference is required for non-cash payments' },
-        { status: 400 }
-      );
-    }
 
-    // Fix 5: Idempotency — return existing sale if same clientSaleId
+    // Idempotency — return existing sale if same clientSaleId
     if (clientSaleId) {
       const existingSale = await findExistingSaleByClientSaleId(clientSaleId);
       if (existingSale) {
@@ -166,12 +161,8 @@ export async function POST(request: NextRequest) {
     for (let attempt = 0; attempt < MAX_INVOICE_RETRIES; attempt++) {
       try {
         const sale = await prisma.$transaction(async (tx) => {
-          // 1. Generate atomic invoice number
-          const today = new Date();
-          const dateStr =
-            today.getFullYear().toString() +
-            (today.getMonth() + 1).toString().padStart(2, '0') +
-            today.getDate().toString().padStart(2, '0');
+          // 1. Generate atomic invoice number in Myanmar timezone (UTC+6:30)
+          const dateStr = getMyanmarDateCompact();
 
           const counter = await tx.invoiceCounter.upsert({
             where: { date: dateStr },
@@ -180,12 +171,12 @@ export async function POST(request: NextRequest) {
           });
           const invoiceNumber = `INV-${dateStr}-${counter.counter.toString().padStart(4, '0')}`;
 
-          // 2. Fetch all products from DB (server-authoritative prices)
+          // 2. Fetch all products from DB (server-authoritative prices & units)
           const productIds = items.map((i) => i.productId);
           const products = await tx.product.findMany({
             where: { id: { in: productIds } },
             select: {
-              id: true, name: true, nameMm: true, sku: true,
+              id: true, name: true, nameMm: true, sku: true, unit: true,
               sellingPrice: true, costPrice: true,
               stockQuantity: true, isActive: true,
             },
@@ -193,14 +184,63 @@ export async function POST(request: NextRequest) {
 
           const productMap = new Map(products.map((p) => [p.id, p]));
 
-          // 3. Fetch settings for tax rate
+          // 3. Fetch settings for tax rate & loyalty configuration
           const settings = await tx.settings.findUnique({
             where: { id: 'default' },
-            select: { taxRate: true },
           });
           const taxRate = settings?.taxRate ?? 0;
+          const loyaltyEnabled = settings?.loyaltyEnabled ?? true;
+          const loyaltyEarnRate = Math.max(1, toNumber(settings?.loyaltyEarnRate ?? 1000));
+          const loyaltyRedeemRate = Math.max(0, toNumber(settings?.loyaltyRedeemRate ?? 10));
 
-          // 4. Validate items and compute server-side totals
+          // 4. Validate customer if provided (or required by CREDIT / loyalty points)
+          let customerRecord: {
+            id: string;
+            name: string;
+            loyaltyPoints: number;
+            creditBalance: number;
+            creditLimit: number | null;
+          } | null = null;
+
+          if (customerId) {
+            const cust = await tx.customer.findUnique({
+              where: { id: customerId },
+              select: {
+                id: true,
+                name: true,
+                loyaltyPoints: true,
+                creditBalance: true,
+                creditLimit: true,
+              },
+            });
+            if (!cust) {
+              throw new ApiError('Customer not found', 400);
+            }
+            customerRecord = {
+              id: cust.id,
+              name: cust.name,
+              loyaltyPoints: cust.loyaltyPoints,
+              creditBalance: toNumber(cust.creditBalance),
+              creditLimit: cust.creditLimit !== null ? toNumber(cust.creditLimit) : null,
+            };
+          }
+
+          if (pointsRedeemed > 0) {
+            if (!customerRecord) {
+              throw new ApiError('Customer is required to redeem loyalty points', 400);
+            }
+            if (!loyaltyEnabled) {
+              throw new ApiError('Loyalty points program is currently disabled', 400);
+            }
+            if (pointsRedeemed > customerRecord.loyaltyPoints) {
+              throw new ApiError(
+                `Insufficient loyalty points. Available: ${customerRecord.loyaltyPoints}`,
+                400
+              );
+            }
+          }
+
+          // 5. Validate items and compute server-side totals
           let subtotal = 0;
           let totalDiscount = 0;
           const stockDeductions = new Map<string, number>();
@@ -222,21 +262,29 @@ export async function POST(request: NextRequest) {
               throw new ApiError(`Product is inactive: ${product.name}`, 400);
             }
 
+            const qty = roundQuantity(item.quantity);
+            if (!isFractionalUnit(product.unit) && !Number.isInteger(qty)) {
+              throw new ApiError(
+                `Fractional quantity (${qty}) is not allowed for unit '${product.unit}' on ${product.name}`,
+                400
+              );
+            }
+
             const sellingPrice = toNumber(product.sellingPrice);
             const costPrice = toNumber(product.costPrice);
-            const itemSubtotal = roundMoney(sellingPrice * item.quantity);
-            const itemDiscount = Math.min(item.discount || 0, itemSubtotal); // Cap discount at item total
+            const itemSubtotal = roundMoney(sellingPrice * qty);
+            const itemDiscount = roundMoney(Math.min(item.discount || 0, itemSubtotal));
             if (itemDiscount < 0) {
               throw new ApiError('Discount cannot be negative', 400);
             }
             const itemTotal = roundMoney(itemSubtotal - itemDiscount);
 
-            subtotal += itemSubtotal;
-            totalDiscount += itemDiscount;
+            subtotal = roundMoney(subtotal + itemSubtotal);
+            totalDiscount = roundMoney(totalDiscount + itemDiscount);
 
             saleItemsData.push({
               productId: item.productId,
-              quantity: item.quantity,
+              quantity: qty,
               unitPrice: sellingPrice,
               costPrice,
               discount: itemDiscount,
@@ -244,60 +292,157 @@ export async function POST(request: NextRequest) {
             });
             stockDeductions.set(
               item.productId,
-              (stockDeductions.get(item.productId) ?? 0) + item.quantity
+              roundQuantity((stockDeductions.get(item.productId) ?? 0) + qty)
             );
           }
 
-          // 5. Compute tax and grand total (Fix 1: include cartDiscount)
+          // 6. Compute cart discount, loyalty discount, tax, and grand total
           const totalItemDiscount = totalDiscount;
-          const maxCartDiscount = Math.max(0, subtotal - totalItemDiscount);
-          const cartDiscountAmount = Math.min(cartDiscount || 0, maxCartDiscount);
-          const effectiveDiscount = totalItemDiscount + cartDiscountAmount;
-          const discountedSubtotal = Math.max(0, subtotal - effectiveDiscount);
+          const maxRemainingAfterItem = Math.max(0, subtotal - totalItemDiscount);
+          const cartDiscountAmount = roundMoney(Math.min(cartDiscount || 0, maxRemainingAfterItem));
+          const maxRemainingAfterCart = Math.max(0, maxRemainingAfterItem - cartDiscountAmount);
+          const loyaltyDiscountAmount =
+            pointsRedeemed > 0
+              ? roundMoney(Math.min(pointsRedeemed * loyaltyRedeemRate, maxRemainingAfterCart))
+              : 0;
+          const effectiveDiscount = roundMoney(
+            totalItemDiscount + cartDiscountAmount + loyaltyDiscountAmount
+          );
+          const discountedSubtotal = roundMoney(Math.max(0, subtotal - effectiveDiscount));
           const taxAmount = roundMoney(discountedSubtotal * (taxRate / 100));
           const totalAmount = roundMoney(discountedSubtotal + taxAmount);
 
-          // 6. Validate payment
-          let finalPaid = paidAmount;
+          // 7. Normalize and validate payment legs (CASH, CARD, MOBILE_BANKING, CREDIT, SPLIT)
+          const normalizedLegs: Array<{
+            method: 'CASH' | 'CARD' | 'MOBILE_BANKING' | 'CREDIT';
+            amount: number;
+            reference: string | null;
+          }> = [];
+
+          let finalPaid = 0;
+          let dueAmount = 0;
           let changeAmount = 0;
 
-          if (paymentMethod === 'CASH') {
+          if (paymentMethod === 'SPLIT') {
+            if (!inputPayments || inputPayments.length === 0) {
+              throw new ApiError('Split payment requires payment legs', 400);
+            }
+            let nonCreditSum = 0;
+            let creditSum = 0;
+            let cashSum = 0;
+
+            for (const leg of inputPayments) {
+              const amt = roundMoney(leg.amount);
+              const ref = leg.reference?.trim() || null;
+              if ((leg.method === 'CARD' || leg.method === 'MOBILE_BANKING') && !ref) {
+                throw new ApiError(
+                  `Payment reference is required for ${leg.method} leg`,
+                  400
+                );
+              }
+              if (leg.method === 'CREDIT') {
+                creditSum = roundMoney(creditSum + amt);
+              } else {
+                nonCreditSum = roundMoney(nonCreditSum + amt);
+                if (leg.method === 'CASH') {
+                  cashSum = roundMoney(cashSum + amt);
+                }
+              }
+              normalizedLegs.push({ method: leg.method, amount: amt, reference: ref });
+            }
+
+            const totalCovered = roundMoney(nonCreditSum + creditSum);
+            if (totalCovered < totalAmount) {
+              throw new ApiError(
+                `Split payments (${totalCovered}) do not cover total (${totalAmount})`,
+                400
+              );
+            }
+            const excess = roundMoney(totalCovered - totalAmount);
+            if (excess > cashSum) {
+              throw new ApiError('Non-cash split payment legs cannot exceed the sale total', 400);
+            }
+            changeAmount = excess;
+            finalPaid = nonCreditSum;
+            dueAmount = creditSum;
+          } else if (paymentMethod === 'CREDIT') {
+            if (!customerRecord) {
+              throw new ApiError('Customer is required for credit sales', 400);
+            }
+            const upfrontCash = roundMoney(Math.min(paidAmount || 0, totalAmount));
+            finalPaid = upfrontCash;
+            dueAmount = roundMoney(totalAmount - upfrontCash);
+            changeAmount = 0;
+            if (upfrontCash > 0) {
+              normalizedLegs.push({ method: 'CASH', amount: upfrontCash, reference: null });
+            }
+            if (dueAmount > 0) {
+              normalizedLegs.push({ method: 'CREDIT', amount: dueAmount, reference: cleanPaymentReference });
+            }
+          } else if (paymentMethod === 'CASH') {
             if (paidAmount < totalAmount) {
               throw new ApiError(
                 `Insufficient payment. Total: ${totalAmount}, Paid: ${paidAmount}`,
                 400
               );
             }
-            changeAmount = paidAmount - totalAmount;
+            finalPaid = roundMoney(paidAmount);
+            changeAmount = roundMoney(paidAmount - totalAmount);
+            dueAmount = 0;
+            normalizedLegs.push({ method: 'CASH', amount: totalAmount, reference: null });
           } else {
-            // Non-cash: paid = total, no change
+            // CARD or MOBILE_BANKING
+            if (!cleanPaymentReference) {
+              throw new ApiError('Payment reference is required for non-cash payments', 400);
+            }
             finalPaid = totalAmount;
             changeAmount = 0;
-          }
-
-          const openShift = paymentMethod === 'CASH'
-            ? await tx.shift.findFirst({
-                where: { userId: user.id, status: 'OPEN' },
-                select: { id: true },
-                orderBy: { openedAt: 'desc' },
-              })
-            : null;
-          if (paymentMethod === 'CASH' && !openShift) {
-            throw new ApiError('Open a cashier shift before recording a cash sale', 409);
-          }
-
-          // 7. Validate customer if provided
-          if (customerId) {
-            const customer = await tx.customer.findUnique({
-              where: { id: customerId },
-              select: { id: true },
+            dueAmount = 0;
+            normalizedLegs.push({
+              method: paymentMethod,
+              amount: totalAmount,
+              reference: cleanPaymentReference,
             });
-            if (!customer) {
-              throw new ApiError('Customer not found', 400);
+          }
+
+          if (dueAmount > 0) {
+            if (!customerRecord) {
+              throw new ApiError('Customer is required when recording credit balance', 400);
+            }
+            if (
+              customerRecord.creditLimit !== null &&
+              roundMoney(customerRecord.creditBalance + dueAmount) > customerRecord.creditLimit
+            ) {
+              throw new ApiError(
+                `Credit limit exceeded. Limit: ${customerRecord.creditLimit}, Current balance: ${customerRecord.creditBalance}, New credit: ${dueAmount}`,
+                400
+              );
             }
           }
 
-          // 8. Atomic stock update — prevent overselling (Fix 2: use saleItemsData directly)
+          // Calculate net cash entering the drawer
+          const grossCashLegs = normalizedLegs
+            .filter((l) => l.method === 'CASH')
+            .reduce((sum, l) => roundMoney(sum + l.amount), 0);
+          const netCashCollected =
+            paymentMethod === 'SPLIT'
+              ? roundMoney(Math.max(0, grossCashLegs - changeAmount))
+              : grossCashLegs;
+
+          const openShift =
+            netCashCollected > 0
+              ? await tx.shift.findFirst({
+                  where: { userId: user.id, status: 'OPEN' },
+                  select: { id: true },
+                  orderBy: { openedAt: 'desc' },
+                })
+              : null;
+
+          if (netCashCollected > 0 && !openShift) {
+            throw new ApiError('Open a cashier shift before recording a cash sale', 409);
+          }
+
+          // 8. Atomic stock update — prevent overselling
           const stockMovementsData: Array<{
             productId: string;
             quantity: number;
@@ -317,12 +462,12 @@ export async function POST(request: NextRequest) {
             });
             if (result.count === 0) {
               const currentProduct =
-                await tx.product.findUnique({
+                (await tx.product.findUnique({
                   where: { id: productId },
                   select: { name: true, stockQuantity: true },
-                }) ?? productMap.get(productId);
+                })) ?? productMap.get(productId);
               throw new ApiError(
-                `Insufficient stock for ${currentProduct?.name ?? 'product'}. Available: ${currentProduct?.stockQuantity ?? 0}`,
+                `Insufficient stock for ${currentProduct?.name ?? 'product'}. Available: ${toNumber(currentProduct?.stockQuantity)}`,
                 409
               );
             }
@@ -331,16 +476,24 @@ export async function POST(request: NextRequest) {
               where: { id: productId },
               select: { stockQuantity: true },
             });
-            const newStock = updatedProduct?.stockQuantity ?? 0;
+            const newStock = roundQuantity(toNumber(updatedProduct?.stockQuantity));
             stockMovementsData.push({
               productId,
               quantity,
-              previousStock: newStock + quantity,
+              previousStock: roundQuantity(newStock + quantity),
               newStock,
             });
           }
 
-          // 9. Create the sale
+          const pointsEarned =
+            customerRecord && loyaltyEnabled
+              ? Math.floor(Math.max(0, totalAmount - dueAmount) / loyaltyEarnRate)
+              : 0;
+
+          const paymentStatus =
+            dueAmount > 0 ? (finalPaid > 0 ? 'PARTIAL' : 'PENDING') : 'PAID';
+
+          // 9. Create the sale and payment legs
           const newSale = await tx.sale.create({
             data: {
               invoiceNumber,
@@ -352,9 +505,12 @@ export async function POST(request: NextRequest) {
               taxAmount,
               totalAmount,
               paidAmount: finalPaid,
+              dueAmount,
               changeAmount,
+              pointsEarned,
+              pointsRedeemed,
               paymentMethod,
-              paymentStatus: 'PAID',
+              paymentStatus,
               paymentReference: cleanPaymentReference,
               paymentProviderResponse: null,
               notes: notes || null,
@@ -369,11 +525,25 @@ export async function POST(request: NextRequest) {
                   total: item.total,
                 })),
               },
+              payments: {
+                create: normalizedLegs.map((leg) => ({
+                  customerId: customerId || null,
+                  userId: user.id,
+                  shiftId: leg.method === 'CASH' ? openShift?.id ?? null : null,
+                  method: leg.method,
+                  amount:
+                    leg.method === 'CASH' && paymentMethod === 'SPLIT'
+                      ? roundMoney(Math.max(0, leg.amount - changeAmount))
+                      : leg.amount,
+                  reference: leg.reference,
+                  type: 'CHECKOUT',
+                })),
+              },
             },
             include: saleResponseInclude,
           });
 
-          // 10. Create StockMovement records per product using actual updated stock.
+          // 10. Create StockMovement records per product using actual updated stock
           for (const movement of stockMovementsData) {
             await tx.stockMovement.create({
               data: {
@@ -389,24 +559,27 @@ export async function POST(request: NextRequest) {
             });
           }
 
-          // 11. Update customer total purchases
-          if (customerId) {
+          // 11. Update customer total purchases, credit balance, and loyalty points
+          if (customerRecord) {
+            const netPointsDelta = pointsEarned - pointsRedeemed;
             await tx.customer.update({
-              where: { id: customerId },
+              where: { id: customerRecord.id },
               data: {
                 totalPurchases: { increment: totalAmount },
+                ...(dueAmount > 0 && { creditBalance: { increment: dueAmount } }),
+                ...(netPointsDelta !== 0 && { loyaltyPoints: { increment: netPointsDelta } }),
               },
             });
           }
 
-          if (paymentMethod === 'CASH') {
+          if (netCashCollected > 0 && openShift) {
             await tx.cashDrawerMovement.create({
               data: {
-                shiftId: openShift!.id,
+                shiftId: openShift.id,
                 saleId: newSale.id,
                 userId: user.id,
                 type: 'CASH_SALE',
-                amount: totalAmount,
+                amount: netCashCollected,
                 reason: `Sale: ${invoiceNumber}`,
               },
             });

@@ -3,10 +3,11 @@ export type UserRole = 'ADMIN' | 'MANAGER' | 'CASHIER';
 
 /** Payment methods accepted by ShwePOS. */
 export const PAYMENT_METHODS = [
-  { value: 'CASH', icon: '💵' },
-  { value: 'CARD', icon: '💳' },
-  { value: 'MOBILE_BANKING', icon: '📱' },
-  { value: 'CREDIT', icon: '📋' },
+  { value: 'CASH', icon: '' },
+  { value: 'CARD', icon: '' },
+  { value: 'MOBILE_BANKING', icon: '' },
+  { value: 'CREDIT', icon: '' },
+  { value: 'SPLIT', icon: '' },
 ] as const;
 
 /** Product measurement units. */
@@ -32,10 +33,10 @@ export const USER_ROLES = [
 
 /** Stock movement types. */
 export const STOCK_MOVEMENT_TYPES = [
-  { value: 'IN', icon: '📥' },
-  { value: 'OUT', icon: '📤' },
-  { value: 'ADJUSTMENT', icon: '🔄' },
-  { value: 'RETURN', icon: '↩️' },
+  { value: 'IN', icon: '' },
+  { value: 'OUT', icon: '' },
+  { value: 'ADJUSTMENT', icon: '' },
+  { value: 'RETURN', icon: '' },
 ] as const;
 
 /** Expense categories. */
@@ -72,6 +73,7 @@ export const EXPENSE_CATEGORIES = [
 /** Sale statuses. */
 export const SALE_STATUSES = [
   { value: 'COMPLETED' },
+  { value: 'PARTIALLY_REFUNDED' },
   { value: 'REFUNDED' },
   { value: 'VOIDED' },
 ] as const;

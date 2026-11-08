@@ -2,9 +2,25 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
+import { useSettingsStore } from '@/store/settingsStore';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDate, formatQuantity, isFractionalUnit } from '@/lib/utils';
+import {
+  ProductMonogram,
+  Plus,
+  Package,
+  AlertTriangle,
+  Clock,
+  Calendar,
+  Barcode,
+  Pencil,
+  Trash2,
+  Upload,
+  Printer,
+  X,
+  Info,
+} from '@/components/ui/Icons';
 
 /* ---------- Types ---------- */
 
@@ -26,6 +42,8 @@ interface Product {
   stockQuantity: number;
   lowStockThreshold: number;
   unit: string;
+  batchNumber?: string | null;
+  expiryDate?: string | Date | null;
   imageUrl: string | null;
   isActive: boolean;
   createdAt: string | Date;
@@ -52,6 +70,8 @@ interface ProductFormData {
   stockQuantity: string;
   lowStockThreshold: string;
   unit: string;
+  batchNumber: string;
+  expiryDate: string;
   imageUrl: string;
   isActive: boolean;
 }
@@ -63,7 +83,9 @@ const ITEMS_PER_PAGE = 10;
 const UNITS = [
   { value: 'pcs', label: 'Pieces (pcs)' },
   { value: 'kg', label: 'Kilogram (kg)' },
+  { value: 'g', label: 'Gram (g)' },
   { value: 'liter', label: 'Liter (L)' },
+  { value: 'ml', label: 'Milliliter (ml)' },
   { value: 'pack', label: 'Pack' },
   { value: 'box', label: 'Box' },
   { value: 'dozen', label: 'Dozen' },
@@ -81,9 +103,80 @@ const emptyForm: ProductFormData = {
   stockQuantity: '0',
   lowStockThreshold: '10',
   unit: 'pcs',
+  batchNumber: '',
+  expiryDate: '',
   imageUrl: '',
   isActive: true,
 };
+
+const CODE128_PATTERNS = [
+  '212222','222122','222221','121223','121322','131222','122213','122312','132212','221213',
+  '221312','231212','112232','122132','122231','113222','123122','123221','223211','221132',
+  '221231','213212','223112','312131','311222','321122','321221','312212','322112','322211',
+  '212123','212321','232121','111323','131123','131321','112313','132113','132311','211313',
+  '231113','231311','112133','112331','132131','113123','113321','133121','313121','211331',
+  '231131','213113','213311','213131','311123','311321','331121','312113','312311','332111',
+  '314111','221411','431111','111224','111422','121124','121421','141122','141221','112214',
+  '112412','122114','122411','142112','142211','241211','221114','413111','241112','134111',
+  '111242','121142','121241','114212','124112','124211','411212','421112','421211','212141',
+  '214121','412121','111143','111341','131141','114113','114311','411113','411311','113141',
+  '114131','311141','411131','211412','211214','211232','2331112',
+];
+
+function buildCode128Bars(rawText: string): { x: number; w: number }[] {
+  const clean = rawText.replace(/[^\x20-\x7E]/g, '') || '000000';
+  const codes: number[] = [104]; // Start B
+  let checksum = 104;
+  for (let i = 0; i < clean.length; i++) {
+    const val = clean.charCodeAt(i) - 32;
+    codes.push(val);
+    checksum += val * (i + 1);
+  }
+  codes.push(checksum % 103);
+  codes.push(106); // Stop
+
+  const bars: { x: number; w: number }[] = [];
+  let cursor = 10; // Quiet zone
+  for (const code of codes) {
+    const pattern = CODE128_PATTERNS[code] || CODE128_PATTERNS[0];
+    for (let i = 0; i < pattern.length; i++) {
+      const width = Number(pattern[i]);
+      if (i % 2 === 0) {
+        bars.push({ x: cursor, w: width });
+      }
+      cursor += width;
+    }
+  }
+  return bars;
+}
+
+function resizeImageToDataUrl(file: File, maxSize = 320): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read image'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Invalid image file'));
+      img.onload = () => {
+        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+        const width = Math.max(1, Math.round(img.width * scale));
+        const height = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Canvas context unavailable'));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = String(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function generateSKU(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -92,22 +185,6 @@ function generateSKU(): string {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
-}
-
-function getProductEmoji(categoryName?: string): string {
-  const emojiMap: Record<string, string> = {
-    food: '🍜', drinks: '🥤', beverages: '🥤', snacks: '🍿',
-    dairy: '🥛', electronics: '📱', clothing: '👕', household: '🏠',
-    beauty: '💄', health: '💊', stationery: '📝', toys: '🧸',
-    grocery: '🛒', fruits: '🍎', vegetables: '🥬', meat: '🥩',
-    seafood: '🐟', bakery: '🍞', frozen: '🧊', cleaning: '🧹',
-  };
-  if (!categoryName) return '📦';
-  const lower = categoryName.toLowerCase();
-  for (const [key, emoji] of Object.entries(emojiMap)) {
-    if (lower.includes(key)) return emoji;
-  }
-  return '📦';
 }
 
 /* ---------- Component ---------- */
@@ -120,6 +197,7 @@ interface ProductsClientProps {
 export function ProductsClient({ initialProducts, categories }: ProductsClientProps) {
   const { addToast } = useToast();
   const { language, t } = useI18n();
+  const businessName = useSettingsStore((s) => s.businessName);
 
   // State
   const [products, setProducts] = useState<Product[]>(initialProducts);
@@ -135,6 +213,10 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // Barcode Label Print State
+  const [labelTarget, setLabelTarget] = useState<Product | null>(null);
+  const [labelCount, setLabelCount] = useState(4);
 
   // Filtered & paginated products
   const filteredProducts = useMemo(() => {
@@ -187,6 +269,9 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
 
   function openEditModal(product: Product) {
     setEditingProduct(product);
+    const expStr = product.expiryDate
+      ? new Date(product.expiryDate).toISOString().slice(0, 10)
+      : '';
     setFormData({
       name: product.name,
       nameMm: product.nameMm || '',
@@ -198,6 +283,8 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
       stockQuantity: String(product.stockQuantity),
       lowStockThreshold: String(product.lowStockThreshold),
       unit: product.unit,
+      batchNumber: product.batchNumber || '',
+      expiryDate: expStr,
       imageUrl: product.imageUrl || '',
       isActive: product.isActive,
     });
@@ -234,14 +321,19 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
     if (isNaN(cost) || cost < 0) errors.costPrice = 'Invalid cost price';
     if (isNaN(selling) || selling < 0) errors.sellingPrice = 'Invalid selling price';
 
+    const fractional = isFractionalUnit(formData.unit);
     const stock = Number(formData.stockQuantity);
-    if (isNaN(stock) || stock < 0 || !Number.isInteger(stock)) {
-      errors.stockQuantity = 'Stock must be a non-negative integer';
+    if (isNaN(stock) || stock < 0 || (!fractional && !Number.isInteger(stock))) {
+      errors.stockQuantity = fractional
+        ? 'Stock must be a non-negative number'
+        : 'Stock must be a non-negative integer';
     }
 
     const threshold = Number(formData.lowStockThreshold);
-    if (isNaN(threshold) || threshold < 0 || !Number.isInteger(threshold)) {
-      errors.lowStockThreshold = 'Threshold must be a non-negative integer';
+    if (isNaN(threshold) || threshold < 0 || (!fractional && !Number.isInteger(threshold))) {
+      errors.lowStockThreshold = fractional
+        ? 'Threshold must be a non-negative number'
+        : 'Threshold must be a non-negative integer';
     }
 
     setFormErrors(errors);
@@ -264,6 +356,8 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
         stockQuantity: Number(formData.stockQuantity),
         lowStockThreshold: Number(formData.lowStockThreshold),
         unit: formData.unit,
+        batchNumber: formData.batchNumber.trim() || null,
+        expiryDate: formData.expiryDate ? formData.expiryDate : null,
         imageUrl: formData.imageUrl.trim() || null,
         isActive: formData.isActive,
       };
@@ -366,8 +460,12 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
           <p className="page-subtitle mm-text">{t('Product Management', 'ကုန်ပစ္စည်းစီမံခန့်ခွဲမှု')}</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-primary" onClick={openAddModal}>
-            <span>＋</span>
+          <button
+            className="btn btn-primary"
+            onClick={openAddModal}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Plus size={16} strokeWidth={2} />
             {t('Add Product', 'ကုန်ပစ္စည်းထည့်ရန်')}
           </button>
         </div>
@@ -410,7 +508,9 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
         {/* Products Table */}
         {filteredProducts.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">📦</div>
+            <div className="empty-state-icon">
+              <Package size={28} strokeWidth={1.5} />
+            </div>
             <div className="empty-state-title">{t('No products found', 'ကုန်ပစ္စည်းမတွေ့ပါ')}</div>
             <div className="empty-state-text">
               {search || categoryFilter
@@ -418,8 +518,13 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                 : t('Create your first product to get started', 'စတင်ရန် ပထမကုန်ပစ္စည်းကိုဖန်တီးပါ')}
             </div>
             {!search && !categoryFilter && (
-              <button className="btn btn-primary" onClick={openAddModal}>
-                <span>＋</span> {t('Add Product', 'ကုန်ပစ္စည်းထည့်ရန်')}
+              <button
+                className="btn btn-primary"
+                onClick={openAddModal}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Plus size={16} strokeWidth={2} />
+                {t('Add Product', 'ကုန်ပစ္စည်းထည့်ရန်')}
               </button>
             )}
           </div>
@@ -450,22 +555,20 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
 
                     return (
                       <tr key={product.id}>
-                        {/* Image / Emoji */}
+                        {/* Image / Monogram */}
                         <td>
-                          <div
-                            style={{
-                              width: 40,
-                              height: 40,
-                              borderRadius: 'var(--radius-md)',
-                              background: 'var(--bg-tertiary)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 20,
-                              overflow: 'hidden',
-                            }}
-                          >
-                            {product.imageUrl ? (
+                          {product.imageUrl ? (
+                            <div
+                              style={{
+                                width: 38,
+                                height: 38,
+                                borderRadius: 'var(--radius-sm)',
+                                background: 'var(--bg-tertiary)',
+                                border: '1px solid var(--border-subtle)',
+                                overflow: 'hidden',
+                              }}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={product.imageUrl}
                                 alt={product.name}
@@ -475,10 +578,10 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                                   objectFit: 'cover',
                                 }}
                               />
-                            ) : (
-                              getProductEmoji(product.category?.name)
-                            )}
-                          </div>
+                            </div>
+                          ) : (
+                            <ProductMonogram name={product.name} size={38} />
+                          )}
                         </td>
 
                         {/* Name */}
@@ -498,6 +601,39 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                                 {product.nameMm}
                               </div>
                             )}
+                            <div className="flex gap-xs" style={{ marginTop: 2, flexWrap: 'wrap' }}>
+                              {product.batchNumber && (
+                                <span className="badge badge-neutral" style={{ fontSize: '10px' }}>
+                                  Batch: {product.batchNumber}
+                                </span>
+                              )}
+                              {product.expiryDate && (() => {
+                                const exp = new Date(product.expiryDate);
+                                const diffDays = Math.ceil((exp.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                                if (diffDays < 0) {
+                                  return (
+                                    <span className="badge badge-danger" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                      <AlertTriangle size={10} strokeWidth={2} />
+                                      {t('Expired', 'သက်တမ်းကုန်')} ({formatDate(exp)})
+                                    </span>
+                                  );
+                                }
+                                if (diffDays <= 30) {
+                                  return (
+                                    <span className="badge badge-warning" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                      <Clock size={10} strokeWidth={2} />
+                                      {t('Exp', 'သက်တမ်း')}: {formatDate(exp)} ({diffDays}d)
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="badge badge-neutral" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                    <Calendar size={10} strokeWidth={2} />
+                                    {formatDate(exp)}
+                                  </span>
+                                );
+                              })()}
+                            </div>
                           </div>
                         </td>
 
@@ -550,7 +686,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                               fontSize: 'var(--text-sm)',
                             }}
                           >
-                            {product.stockQuantity}
+                            {formatQuantity(product.stockQuantity, product.unit)}
                           </span>
                           <span
                             style={{
@@ -579,10 +715,20 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                           <div className="table-actions">
                             <button
                               className="btn btn-ghost btn-sm"
+                              onClick={() => {
+                                setLabelTarget(product);
+                                setLabelCount(4);
+                              }}
+                              title={t('Print Barcode Labels', 'ဘားကုဒ်စတစ်ကာ ထုတ်ရန်')}
+                            >
+                              <Barcode size={15} strokeWidth={1.75} />
+                            </button>
+                            <button
+                              className="btn btn-ghost btn-sm"
                               onClick={() => openEditModal(product)}
                               title={t('Edit product', 'ကုန်ပစ္စည်းပြင်ဆင်ရန်')}
                             >
-                              ✏️
+                              <Pencil size={15} strokeWidth={1.75} />
                             </button>
                             <button
                               className="btn btn-ghost btn-sm"
@@ -590,7 +736,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                               title={t('Delete product', 'ကုန်ပစ္စည်းဖျက်ရန်')}
                               style={{ color: 'var(--danger)' }}
                             >
-                              🗑️
+                              <Trash2 size={15} strokeWidth={1.75} />
                             </button>
                           </div>
                         </td>
@@ -658,7 +804,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                 {editingProduct ? t('Edit Product', 'ကုန်ပစ္စည်းပြင်ဆင်ရန်') : t('Add Product', 'ကုန်ပစ္စည်းထည့်ရန်')}
               </h2>
               <button className="btn btn-ghost btn-icon" onClick={closeModal}>
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -831,11 +977,11 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
 
                 {/* Stock Quantity */}
                 <div className="input-group">
-                  <label className="input-label">Stock Quantity</label>
+                  <label className="input-label">Stock Quantity ({formData.unit})</label>
                   <input
                     type="number"
                     min="0"
-                    step="1"
+                    step={isFractionalUnit(formData.unit) ? '0.01' : '1'}
                     className={`input ${formErrors.stockQuantity ? 'input-error' : ''}`}
                     placeholder="0"
                     value={formData.stockQuantity}
@@ -856,7 +1002,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                   <input
                     type="number"
                     min="0"
-                    step="1"
+                    step={isFractionalUnit(formData.unit) ? '0.01' : '1'}
                     className={`input ${formErrors.lowStockThreshold ? 'input-error' : ''}`}
                     placeholder="10"
                     value={formData.lowStockThreshold}
@@ -871,16 +1017,89 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                   )}
                 </div>
 
-                {/* Image URL - full width */}
-                <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-                  <label className="input-label">{t('Image URL', 'ပုံလင့်ခ်')}</label>
+                {/* Batch Number */}
+                <div className="input-group">
+                  <label className="input-label">{t('Batch Number', 'အသုတ်နံပါတ် (Batch No.)')}</label>
                   <input
                     type="text"
                     className="input"
-                    placeholder="https://example.com/image.jpg (optional)"
-                    value={formData.imageUrl}
-                    onChange={(e) => handleFormChange('imageUrl', e.target.value)}
+                    placeholder="Optional batch / lot number"
+                    value={formData.batchNumber}
+                    onChange={(e) => handleFormChange('batchNumber', e.target.value)}
                   />
+                </div>
+
+                {/* Expiry Date */}
+                <div className="input-group">
+                  <label className="input-label">{t('Expiry Date', 'သက်တမ်းကုန်ဆုံးရက်')}</label>
+                  <input
+                    type="date"
+                    className="input"
+                    value={formData.expiryDate}
+                    onChange={(e) => handleFormChange('expiryDate', e.target.value)}
+                  />
+                </div>
+
+                {/* Image Upload & URL - full width */}
+                <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="input-label">{t('Product Image (Upload or URL)', 'ကုန်ပစ္စည်းပုံ (ပုံတင်ရန် သို့မဟုတ် လင့်ခ်)')}</label>
+                  <div className="flex gap-sm" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                    {formData.imageUrl && (
+                      <div
+                        style={{
+                          width: 48,
+                          height: 48,
+                          borderRadius: 'var(--radius-md)',
+                          overflow: 'hidden',
+                          border: '1px solid var(--border-color)',
+                          flexShrink: 0,
+                        }}
+                      >
+                        <img
+                          src={formData.imageUrl}
+                          alt="Preview"
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      </div>
+                    )}
+                    <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <Upload size={14} strokeWidth={1.75} />
+                      {t('Upload Photo', 'ပုံရွေးရန်')}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            const dataUrl = await resizeImageToDataUrl(file, 320);
+                            handleFormChange('imageUrl', dataUrl);
+                          } catch {
+                            addToast(t('Failed to process image', 'ပုံဖတ်မရပါ'), 'error');
+                          }
+                        }}
+                      />
+                    </label>
+                    <input
+                      type="text"
+                      className="input"
+                      style={{ flex: 1, minWidth: 180 }}
+                      placeholder="https://example.com/image.jpg (optional)"
+                      value={formData.imageUrl.startsWith('data:') ? '' : formData.imageUrl}
+                      onChange={(e) => handleFormChange('imageUrl', e.target.value)}
+                    />
+                    {formData.imageUrl && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => handleFormChange('imageUrl', '')}
+                        style={{ color: 'var(--danger)' }}
+                      >
+                        <X size={14} strokeWidth={1.75} />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Active Toggle - full width */}
@@ -990,7 +1209,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                 className="btn btn-ghost btn-icon"
                 onClick={() => setDeleteTarget(null)}
               >
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -1015,9 +1234,15 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                   borderRadius: 'var(--radius-md)',
                   fontSize: 'var(--text-sm)',
                   color: 'var(--info)',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
                 }}
               >
-                ℹ {t('The product will be set to inactive rather than permanently deleted to preserve sales history.', 'အရောင်းမှတ်တမ်းကိုထိန်းသိမ်းရန် ကုန်ပစ္စည်းကိုအပြီးတိုင်ဖျက်မည်မဟုတ်ဘဲ ရပ်ဆိုင်းထားမည်ဖြစ်ပါသည်။')}
+                <Info size={16} strokeWidth={1.75} style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>
+                  {t('The product will be set to inactive rather than permanently deleted to preserve sales history.', 'အရောင်းမှတ်တမ်းကိုထိန်းသိမ်းရန် ကုန်ပစ္စည်းကိုအပြီးတိုင်ဖျက်မည်မဟုတ်ဘဲ ရပ်ဆိုင်းထားမည်ဖြစ်ပါသည်။')}
+                </span>
               </div>
             </div>
             <div className="modal-footer">
@@ -1034,6 +1259,122 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                 disabled={deleting}
               >
                 {deleting ? t('Deactivating...', 'ရပ်ဆိုင်းနေသည်...') : t('Deactivate', 'ရပ်ဆိုင်းရန်')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Barcode Label Print Modal */}
+      {labelTarget && (
+        <div className="modal-backdrop" onClick={() => setLabelTarget(null)}>
+          <div
+            className="modal modal-lg"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 640 }}
+          >
+            <div className="modal-header no-print">
+              <h2 className="modal-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <Barcode size={18} strokeWidth={1.75} />
+                {t('Print Barcode Labels', 'ဘားကုဒ်စတစ်ကာ ထုတ်ရန်')} — {labelTarget.name}
+              </h2>
+              <button className="btn btn-ghost btn-icon" onClick={() => setLabelTarget(null)}>
+                <X size={16} strokeWidth={1.75} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="flex gap-md no-print" style={{ marginBottom: 'var(--space-md)', alignItems: 'center' }}>
+                <label className="input-label" style={{ margin: 0 }}>
+                  {t('Number of Stickers:', 'ထုတ်မည့် စတစ်ကာအရေအတွက် -')}
+                </label>
+                {[1, 2, 4, 8, 12, 24].map((cnt) => (
+                  <button
+                    key={cnt}
+                    type="button"
+                    className={`btn btn-sm ${labelCount === cnt ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setLabelCount(cnt)}
+                  >
+                    {cnt}
+                  </button>
+                ))}
+              </div>
+
+              {/* Printable Label Grid */}
+              <div
+                className="barcode-print-grid"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                  gap: '12px',
+                  padding: '12px',
+                  background: '#fff',
+                  color: '#000',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-color)',
+                }}
+              >
+                {Array.from({ length: labelCount }).map((_, idx) => {
+                  const codeVal = labelTarget.barcode || labelTarget.sku;
+                  const bars = buildCode128Bars(codeVal);
+                  const totalWidth = bars.length > 0 ? bars[bars.length - 1].x + bars[bars.length - 1].w + 10 : 120;
+                  return (
+                    <div
+                      key={idx}
+                      className="barcode-sticker"
+                      style={{
+                        border: '1px dashed #ccc',
+                        borderRadius: '4px',
+                        padding: '8px',
+                        textAlign: 'center',
+                        background: '#fff',
+                        color: '#000',
+                      }}
+                    >
+                      <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        {businessName || 'ShwePOS'}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          marginBottom: 4,
+                        }}
+                      >
+                        {language === 'mm' && labelTarget.nameMm ? labelTarget.nameMm : labelTarget.name}
+                      </div>
+                      <svg
+                        viewBox={`0 0 ${totalWidth} 42`}
+                        style={{ width: '100%', height: '42px', display: 'block', margin: '0 auto' }}
+                      >
+                        {bars.map((b, bIdx) => (
+                          <rect key={bIdx} x={b.x} y={2} width={b.w} height={38} fill="#000" />
+                        ))}
+                      </svg>
+                      <div style={{ fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', marginTop: 2 }}>
+                        {codeVal}
+                      </div>
+                      <div style={{ fontSize: '13px', fontWeight: 800, marginTop: 2 }}>
+                        {formatCurrency(labelTarget.sellingPrice)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="modal-footer no-print">
+              <button className="btn btn-secondary" onClick={() => setLabelTarget(null)}>
+                {t('Close', 'ပိတ်ရန်')}
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={() => window.print()}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Printer size={15} strokeWidth={1.75} />
+                {t('Print Labels', 'စတစ်ကာ ပရင့်ထုတ်ရန်')}
               </button>
             </div>
           </div>

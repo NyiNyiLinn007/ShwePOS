@@ -41,6 +41,8 @@ export interface Product {
   lowStockThreshold: number;
   unit: string;
   imageUrl: string | null;
+  batchNumber?: string | null;
+  expiryDate?: string | Date | null;
   isActive: boolean;
   createdAt: string | Date;
   updatedAt: string | Date;
@@ -54,10 +56,26 @@ export interface Customer {
   email: string | null;
   address: string | null;
   totalPurchases: number;
+  creditBalance?: number;
+  creditLimit?: number | null;
   loyaltyPoints: number;
   createdAt: string | Date;
   updatedAt: string | Date;
   sales?: Sale[];
+}
+
+export interface SalePayment {
+  id: string;
+  saleId: string | null;
+  customerId: string | null;
+  userId: string;
+  shiftId: string | null;
+  method: 'CASH' | 'CARD' | 'MOBILE_BANKING' | 'CREDIT';
+  amount: number;
+  reference: string | null;
+  type: 'CHECKOUT' | 'DEBT_REPAYMENT';
+  notes: string | null;
+  createdAt: string | Date;
 }
 
 export interface Sale {
@@ -70,14 +88,18 @@ export interface Sale {
   taxAmount: number;
   totalAmount: number;
   paidAmount: number;
+  dueAmount?: number;
   changeAmount: number;
-  paymentMethod: 'CASH' | 'CARD' | 'MOBILE_BANKING' | 'CREDIT';
-  status: 'COMPLETED' | 'REFUNDED' | 'VOIDED';
+  pointsEarned?: number;
+  pointsRedeemed?: number;
+  paymentMethod: 'CASH' | 'CARD' | 'MOBILE_BANKING' | 'CREDIT' | 'SPLIT';
+  status: 'COMPLETED' | 'PARTIALLY_REFUNDED' | 'REFUNDED' | 'VOIDED';
   notes: string | null;
   createdAt: string | Date;
   customer?: Customer | null;
   user?: SafeUser;
   items?: SaleItem[];
+  payments?: SalePayment[];
 }
 
 export interface SaleItem {
@@ -85,6 +107,7 @@ export interface SaleItem {
   saleId: string;
   productId: string;
   quantity: number;
+  refundedQuantity?: number;
   unitPrice: number;
   discount: number;
   total: number;
@@ -127,6 +150,9 @@ export interface Settings {
   currencySymbol: string;
   logo: string | null;
   receiptFooter: string | null;
+  loyaltyEnabled?: boolean;
+  loyaltyEarnRate?: number;
+  loyaltyRedeemRate?: number;
 }
 
 // ── Cart Types (POS) ──────────────────────────────────────────────────────
@@ -140,6 +166,7 @@ export interface CartItem {
   unitPrice: number;
   costPrice?: number;
   quantity: number;
+  discount?: number;
   maxStock: number;
   unit: string;
   imageUrl: string | null;

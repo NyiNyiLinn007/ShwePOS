@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireAuth, requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateSettingsSchema } from '@/lib/validations';
+import { serializePrismaData } from '@/lib/number';
 
 export async function GET() {
   try {
@@ -23,7 +24,7 @@ export async function GET() {
       });
     }
 
-    return NextResponse.json(settings);
+    return NextResponse.json(serializePrismaData(settings));
   } catch (error) {
     return handleApiError(error, 'Failed to fetch settings');
   }
@@ -46,6 +47,9 @@ export async function PUT(request: NextRequest) {
       currencySymbol,
       logo,
       receiptFooter,
+      loyaltyEnabled,
+      loyaltyEarnRate,
+      loyaltyRedeemRate,
     } = parsed;
 
     const settings = await prisma.settings.upsert({
@@ -60,6 +64,9 @@ export async function PUT(request: NextRequest) {
         ...(currencySymbol !== undefined && { currencySymbol }),
         ...(logo !== undefined && { logo: logo || null }),
         ...(receiptFooter !== undefined && { receiptFooter: receiptFooter || null }),
+        ...(loyaltyEnabled !== undefined && { loyaltyEnabled }),
+        ...(loyaltyEarnRate !== undefined && { loyaltyEarnRate }),
+        ...(loyaltyRedeemRate !== undefined && { loyaltyRedeemRate }),
       },
       create: {
         id: 'default',
@@ -72,10 +79,13 @@ export async function PUT(request: NextRequest) {
         currencySymbol: currencySymbol || 'K',
         logo: logo || null,
         receiptFooter: receiptFooter || null,
+        loyaltyEnabled: loyaltyEnabled ?? true,
+        loyaltyEarnRate: loyaltyEarnRate ?? 1000,
+        loyaltyRedeemRate: loyaltyRedeemRate ?? 10,
       },
     });
 
-    return NextResponse.json(settings);
+    return NextResponse.json(serializePrismaData(settings));
   } catch (error) {
     return handleApiError(error, 'Failed to update settings');
   }

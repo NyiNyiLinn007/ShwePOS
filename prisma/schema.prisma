@@ -22,6 +22,7 @@ model User {
 
   sales          Sale[]
   saleAdjustments SaleAdjustment[]
+  salePayments   SalePayment[]
   stockMovements StockMovement[]
   shifts         Shift[]
   cashDrawerMovements CashDrawerMovement[]
@@ -42,21 +43,23 @@ model Category {
 }
 
 model Product {
-  id                String   @id @default(cuid())
+  id                String    @id @default(cuid())
   name              String
   nameMm            String?
-  sku               String   @unique
-  barcode           String?  @unique
+  sku               String    @unique
+  barcode           String?   @unique
   categoryId        String
-  costPrice         Decimal  @default(0) @db.Decimal(18, 2)
-  sellingPrice      Decimal  @default(0) @db.Decimal(18, 2)
-  stockQuantity     Int      @default(0)
-  lowStockThreshold Int      @default(10)
-  unit              String   @default("pcs") // pcs, kg, liter, pack, box
+  costPrice         Decimal   @default(0) @db.Decimal(18, 2)
+  sellingPrice      Decimal   @default(0) @db.Decimal(18, 2)
+  stockQuantity     Decimal   @default(0) @db.Decimal(18, 3)
+  lowStockThreshold Decimal   @default(10) @db.Decimal(18, 3)
+  unit              String    @default("pcs") // pcs, kg, g, liter, ml, pack, box, bottle, dozen, set
   imageUrl          String?
-  isActive          Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  batchNumber       String?
+  expiryDate        DateTime?
+  isActive          Boolean   @default(true)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   category       Category        @relation(fields: [categoryId], references: [id])
   saleItems      SaleItem[]
@@ -70,11 +73,14 @@ model Customer {
   email          String?
   address        String?
   totalPurchases Decimal  @default(0) @db.Decimal(18, 2)
+  creditBalance  Decimal  @default(0) @db.Decimal(18, 2)
+  creditLimit    Decimal? @db.Decimal(18, 2)
   loyaltyPoints  Int      @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  sales Sale[]
+  sales        Sale[]
+  salePayments SalePayment[]
 }
 
 model Sale {
@@ -88,28 +94,56 @@ model Sale {
   taxAmount     Decimal  @default(0) @db.Decimal(18, 2)
   totalAmount   Decimal  @default(0) @db.Decimal(18, 2)
   paidAmount    Decimal  @default(0) @db.Decimal(18, 2)
+  dueAmount     Decimal  @default(0) @db.Decimal(18, 2)
   changeAmount  Decimal  @default(0) @db.Decimal(18, 2)
-  paymentMethod String   @default("CASH") // CASH, CARD, MOBILE_BANKING, CREDIT
-  paymentStatus  String   @default("PAID") // PAID, PENDING, FAILED, REVERSED
+  pointsEarned  Int      @default(0)
+  pointsRedeemed Int     @default(0)
+  paymentMethod String   @default("CASH") // CASH, CARD, MOBILE_BANKING, CREDIT, SPLIT
+  paymentStatus  String   @default("PAID") // PAID, PARTIAL, PENDING, FAILED, REVERSED
   paymentReference String?
   paymentProviderResponse String?
-  status        String   @default("COMPLETED") // COMPLETED, REFUNDED, VOIDED
+  status        String   @default("COMPLETED") // COMPLETED, PARTIALLY_REFUNDED, REFUNDED, VOIDED
   notes         String?
   createdAt     DateTime @default(now())
 
   customer       Customer?       @relation(fields: [customerId], references: [id])
   user           User            @relation(fields: [userId], references: [id])
   items          SaleItem[]
+  payments       SalePayment[]
   stockMovements StockMovement[]
   adjustments    SaleAdjustment[]
   cashDrawerMovements CashDrawerMovement[]
+}
+
+model SalePayment {
+  id         String   @id @default(cuid())
+  saleId     String?
+  customerId String?
+  userId     String
+  shiftId    String?
+  method     String   // CASH, CARD, MOBILE_BANKING, CREDIT
+  amount     Decimal  @db.Decimal(18, 2)
+  reference  String?
+  type       String   @default("CHECKOUT") // CHECKOUT, DEBT_REPAYMENT
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  sale     Sale?     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  user     User      @relation(fields: [userId], references: [id])
+  shift    Shift?    @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@index([saleId])
+  @@index([customerId])
+  @@index([userId])
+  @@index([shiftId])
 }
 
 model SaleAdjustment {
   id                    String   @id @default(cuid())
   saleId                String
   approverUserId        String
-  type                  String   // REFUND, VOID
+  type                  String   // REFUND, PARTIAL_REFUND, VOID
   reason                String
   amount                Decimal  @default(0) @db.Decimal(18, 2)
   paymentMethod         String
@@ -124,14 +158,15 @@ model SaleAdjustment {
 }
 
 model SaleItem {
-  id        String @id @default(cuid())
-  saleId    String
-  productId String
-  quantity  Int    @default(1)
-  unitPrice Decimal  @default(0) @db.Decimal(18, 2)
-  costPrice Decimal  @default(0) @db.Decimal(18, 2) // Historical cost at time of sale
-  discount  Decimal  @default(0) @db.Decimal(18, 2)
-  total     Decimal  @default(0) @db.Decimal(18, 2)
+  id               String  @id @default(cuid())
+  saleId           String
+  productId        String
+  quantity         Decimal @default(1) @db.Decimal(18, 3)
+  refundedQuantity Decimal @default(0) @db.Decimal(18, 3)
+  unitPrice        Decimal @default(0) @db.Decimal(18, 2)
+  costPrice        Decimal @default(0) @db.Decimal(18, 2) // Historical cost at time of sale
+  discount         Decimal @default(0) @db.Decimal(18, 2)
+  total            Decimal @default(0) @db.Decimal(18, 2)
 
   sale    Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
@@ -142,11 +177,11 @@ model StockMovement {
   productId     String
   userId        String
   saleId        String?  // Link to sale for OUT/RETURN movements
-  quantity      Int
+  quantity      Decimal  @db.Decimal(18, 3)
   type          String   // IN, OUT, ADJUSTMENT, RETURN
   reason        String?
-  previousStock Int
-  newStock      Int
+  previousStock Decimal  @db.Decimal(18, 3)
+  newStock      Decimal  @db.Decimal(18, 3)
   createdAt     DateTime @default(now())
 
   product Product @relation(fields: [productId], references: [id])
@@ -182,6 +217,7 @@ model Shift {
 
   user User @relation(fields: [userId], references: [id])
   cashDrawerMovements CashDrawerMovement[]
+  salePayments        SalePayment[]
 
   @@index([userId, status])
 }
@@ -210,16 +246,19 @@ model CashDrawerMovement {
 }
 
 model Settings {
-  id            String  @id @default("default")
-  businessName  String  @default("ShwePOS")
-  businessNameMm String? @default("ရွှေPOS")
-  address       String?
-  phone         String?
-  email         String?
-  taxRate       Float   @default(0)
-  currencySymbol String @default("K")
-  logo          String?
-  receiptFooter String?
+  id                String  @id @default("default")
+  businessName      String  @default("ShwePOS")
+  businessNameMm    String? @default("ရွှေPOS")
+  address           String?
+  phone             String?
+  email             String?
+  taxRate           Float   @default(0)
+  currencySymbol    String  @default("K")
+  logo              String?
+  receiptFooter     String?
+  loyaltyEnabled    Boolean @default(true)
+  loyaltyEarnRate   Decimal @default(1000) @db.Decimal(18, 2)
+  loyaltyRedeemRate Decimal @default(10) @db.Decimal(18, 2)
 }
 
 model InvoiceCounter {

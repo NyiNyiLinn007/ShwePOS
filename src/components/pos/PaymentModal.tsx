@@ -3,9 +3,19 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCartStore } from '@/store/cartStore';
+import { useSettingsStore } from '@/store/settingsStore';
+import { useOfflineQueueStore } from '@/store/offlineQueueStore';
 import { useAppStore } from '@/lib/store';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatQuantity, generateInvoiceNumber } from '@/lib/utils';
+import {
+  PaymentMethodIcon,
+  Banknote,
+  X,
+  AlertTriangle,
+  Star,
+  CheckCircle2,
+} from '@/components/ui/Icons';
 
 interface PaymentModalProps {
   onClose: () => void;
@@ -14,7 +24,7 @@ interface PaymentModalProps {
   hasOpenShift?: boolean | null;
 }
 
-interface SaleResponse {
+export interface SaleResponse {
   id: string;
   invoiceNumber: string;
   createdAt: string;
@@ -23,19 +33,30 @@ interface SaleResponse {
   taxAmount: number;
   totalAmount: number;
   paidAmount: number;
+  dueAmount?: number;
   changeAmount: number;
+  pointsEarned?: number;
+  pointsRedeemed?: number;
   paymentMethod: string;
   notes: string | null;
+  isOfflineQueued?: boolean;
   items: Array<{
     id: string;
     quantity: number;
     unitPrice: number;
+    discount?: number;
     total: number;
     product: {
       name: string;
       nameMm: string | null;
       sku: string;
+      unit?: string;
     };
+  }>;
+  payments?: Array<{
+    method: string;
+    amount: number;
+    reference?: string | null;
   }>;
   customer: {
     id: string;
@@ -48,7 +69,23 @@ interface SaleResponse {
   };
 }
 
-type PaymentMethod = 'CASH' | 'CARD' | 'MOBILE_BANKING';
+type PaymentMethod = 'CASH' | 'CARD' | 'MOBILE_BANKING' | 'CREDIT' | 'SPLIT';
+type SingleMethod = 'CASH' | 'CARD' | 'MOBILE_BANKING' | 'CREDIT';
+
+interface SplitLeg {
+  method: SingleMethod;
+  amountStr: string;
+  reference: string;
+}
+
+interface CustomerSearchResult {
+  id: string;
+  name: string;
+  phone: string | null;
+  loyaltyPoints?: number;
+  creditBalance?: number;
+  creditLimit?: number | null;
+}
 
 function createClientSaleId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -65,52 +102,97 @@ function createClientSaleId(): string {
 
 const PAYMENT_METHODS: Array<{
   id: PaymentMethod;
-  icon: string;
+  labelEn: string;
+  labelMm: string;
 }> = [
-  { id: 'CASH', icon: '💵' },
-  { id: 'CARD', icon: '💳' },
-  { id: 'MOBILE_BANKING', icon: '📱' },
+  { id: 'CASH', labelEn: 'Cash', labelMm: 'ငွေသား' },
+  { id: 'CARD', labelEn: 'Card', labelMm: 'ကတ်' },
+  { id: 'MOBILE_BANKING', labelEn: 'Mobile', labelMm: 'မိုဘိုင်းဘဏ်' },
+  { id: 'CREDIT', labelEn: 'Credit', labelMm: 'အကြွေး' },
+  { id: 'SPLIT', labelEn: 'Split', labelMm: 'ပေါင်းစပ်' },
 ];
-
-const paymentMethodTranslationKeys: Record<PaymentMethod, string> = {
-  CASH: 'cash',
-  CARD: 'card',
-  MOBILE_BANKING: 'mobileBanking',
-};
 
 export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift }: PaymentModalProps) {
   const router = useRouter();
   const items = useCartStore((s) => s.items);
-  const discount = useCartStore((s) => s.discount);
   const getSubtotal = useCartStore((s) => s.getSubtotal);
+  const getItemDiscountTotal = useCartStore((s) => s.getItemDiscountTotal);
+  const getCartDiscountAmount = useCartStore((s) => s.getCartDiscountAmount);
   const getTotal = useCartStore((s) => s.getTotal);
   const getItemCount = useCartStore((s) => s.getItemCount);
+
+  const loyaltyEnabled = useSettingsStore((s) => s.loyaltyEnabled);
+  const loyaltyRedeemRate = useSettingsStore((s) => s.loyaltyRedeemRate);
+  const enqueueSale = useOfflineQueueStore((s) => s.enqueueSale);
 
   const { language, t } = useI18n();
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('CASH');
   const [paidAmountStr, setPaidAmountStr] = useState('');
   const [paymentReference, setPaymentReference] = useState('');
+  const [splitLegs, setSplitLegs] = useState<SplitLeg[]>([
+    { method: 'CASH', amountStr: '', reference: '' },
+    { method: 'MOBILE_BANKING', amountStr: '', reference: '' },
+  ]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
-  const [customerId, setCustomerId] = useState<string | null>(null);
-  const [customerName, setCustomerName] = useState<string | null>(null);
+
+  // Customer selection & quick creation
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchResult | null>(null);
   const [customerSearch, setCustomerSearch] = useState('');
-  const [customerResults, setCustomerResults] = useState<
-    Array<{ id: string; name: string; phone: string | null }>
-  >([]);
+  const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
   const [showCustomerSearch, setShowCustomerSearch] = useState(false);
+  const [showQuickCreateCustomer, setShowQuickCreateCustomer] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState('');
+  const [newCustomerPhone, setNewCustomerPhone] = useState('');
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
+
+  // Loyalty points redemption
+  const [pointsToRedeem, setPointsToRedeem] = useState(0);
+
   const [clientSaleId] = useState(createClientSaleId);
 
   const subtotal = getSubtotal();
-  const afterDiscount = getTotal(); // This is subtotal - discount
-  const discountAmount = Math.round(subtotal * (discount / 100));
-  const taxAmount = Math.round(afterDiscount * (taxRate / 100));
-  const grandTotal = afterDiscount + taxAmount;
+  const itemDiscountTotal = getItemDiscountTotal();
+  const cartDiscountAmount = getCartDiscountAmount();
+  const afterCartDiscount = getTotal();
+  const maxRedeemablePoints =
+    selectedCustomer?.loyaltyPoints && loyaltyRedeemRate > 0
+      ? Math.min(
+          selectedCustomer.loyaltyPoints,
+          Math.floor(afterCartDiscount / loyaltyRedeemRate)
+        )
+      : 0;
+  const safePointsRedeemed = Math.max(0, Math.min(pointsToRedeem, maxRedeemablePoints));
+  const loyaltyDiscountAmount = Math.round(safePointsRedeemed * loyaltyRedeemRate);
+  const discountAmount = itemDiscountTotal + cartDiscountAmount + loyaltyDiscountAmount;
+  const taxableAmount = Math.max(0, afterCartDiscount - loyaltyDiscountAmount);
+  const taxAmount = Math.round(taxableAmount * (taxRate / 100));
+  const grandTotal = taxableAmount + taxAmount;
   const totalItems = getItemCount();
+
   const paidAmount = parseFloat(paidAmountStr) || 0;
-  const changeAmount = Math.max(0, paidAmount - grandTotal);
+  const splitTotal = splitLegs.reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0);
+  const splitCashTotal = splitLegs
+    .filter((l) => l.method === 'CASH')
+    .reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0);
+
+  const changeAmount =
+    paymentMethod === 'CASH'
+      ? Math.max(0, paidAmount - grandTotal)
+      : paymentMethod === 'SPLIT'
+        ? Math.max(0, splitTotal - grandTotal)
+        : 0;
+
+  const creditDueAmount =
+    paymentMethod === 'CREDIT'
+      ? Math.max(0, grandTotal - Math.min(paidAmount, grandTotal))
+      : paymentMethod === 'SPLIT'
+        ? splitLegs
+            .filter((l) => l.method === 'CREDIT')
+            .reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0)
+        : 0;
 
   const roundUpAmounts = [
     grandTotal,
@@ -121,54 +203,113 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
     Math.ceil(grandTotal / 10000) * 10000,
   ];
 
-  // Remove duplicates and amounts less than total
   const quickAmounts = [...new Set(roundUpAmounts)]
     .filter((a) => a >= grandTotal)
     .slice(0, 5);
 
-  const searchCustomers = useCallback(
-    async (query: string) => {
-      if (query.length < 2) {
-        setCustomerResults([]);
-        return;
+  const searchCustomers = useCallback(async (query: string) => {
+    if (query.length < 2) {
+      setCustomerResults([]);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/customers?search=${encodeURIComponent(query)}&limit=5`);
+      if (res.ok) {
+        const data = await res.json();
+        setCustomerResults(data.customers || data || []);
       }
-      try {
-        const res = await fetch(`/api/customers?search=${encodeURIComponent(query)}&limit=5`);
-        if (res.ok) {
-          const data = await res.json();
-          setCustomerResults(data.customers || data || []);
-        }
-      } catch {
-        // Silently fail customer search
-      }
-    },
-    []
-  );
+    } catch {
+      // Silently fail customer search
+    }
+  }, []);
 
   const handleCustomerSearchChange = (value: string) => {
     setCustomerSearch(value);
     setShowCustomerSearch(true);
     if (value.length === 0) {
-      setCustomerId(null);
-      setCustomerName(null);
+      setSelectedCustomer(null);
+      setPointsToRedeem(0);
       setCustomerResults([]);
       return;
     }
-    searchCustomers(value);
+    void searchCustomers(value);
   };
 
-  const selectCustomer = (customer: { id: string; name: string }) => {
-    setCustomerId(customer.id);
-    setCustomerName(customer.name);
+  const selectCustomer = (customer: CustomerSearchResult) => {
+    setSelectedCustomer(customer);
+    setPointsToRedeem(0);
     setCustomerSearch(customer.name);
     setShowCustomerSearch(false);
     setCustomerResults([]);
   };
 
-  const canProcess =
-    paymentMethod === 'CASH'
-      ? paidAmount >= grandTotal && hasOpenShift !== false
-      : paymentReference.trim().length > 0;
+  const handleQuickCreateCustomer = async () => {
+    if (!newCustomerName.trim()) {
+      setError(t('Customer name is required', 'ဖောက်သည်အမည် လိုအပ်ပါသည်'));
+      return;
+    }
+    setCreatingCustomer(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newCustomerName.trim(),
+          phone: newCustomerPhone.trim() || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to create customer');
+      }
+      selectCustomer({
+        id: data.id,
+        name: data.name,
+        phone: data.phone,
+        loyaltyPoints: data.loyaltyPoints ?? 0,
+        creditBalance: data.creditBalance ?? 0,
+        creditLimit: data.creditLimit ?? null,
+      });
+      setShowQuickCreateCustomer(false);
+      setNewCustomerName('');
+      setNewCustomerPhone('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create customer');
+    } finally {
+      setCreatingCustomer(false);
+    }
+  };
+
+  const requiresOpenShift =
+    (paymentMethod === 'CASH' && grandTotal > 0) ||
+    (paymentMethod === 'CREDIT' && paidAmount > 0) ||
+    (paymentMethod === 'SPLIT' && splitCashTotal > 0);
+
+  const canProcess = (() => {
+    if (requiresOpenShift && hasOpenShift === false) return false;
+    if (paymentMethod === 'CASH') return paidAmount >= grandTotal;
+    if (paymentMethod === 'CARD' || paymentMethod === 'MOBILE_BANKING') {
+      return paymentReference.trim().length > 0;
+    }
+    if (paymentMethod === 'CREDIT') {
+      return Boolean(selectedCustomer) && paidAmount <= grandTotal;
+    }
+    if (paymentMethod === 'SPLIT') {
+      const validLegs = splitLegs.filter((l) => (parseFloat(l.amountStr) || 0) > 0);
+      if (validLegs.length === 0) return false;
+      for (const leg of validLegs) {
+        if ((leg.method === 'CARD' || leg.method === 'MOBILE_BANKING') && !leg.reference.trim()) {
+          return false;
+        }
+        if (leg.method === 'CREDIT' && !selectedCustomer) {
+          return false;
+        }
+      }
+      return splitTotal >= grandTotal && splitTotal - grandTotal <= splitCashTotal;
+    }
+    return false;
+  })();
 
   const handleProcess = async () => {
     if (!canProcess || isProcessing) return;
@@ -176,26 +317,49 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
     setIsProcessing(true);
     setError(null);
 
-    const finalPaidAmount = paymentMethod === 'CASH' ? paidAmount : grandTotal;
+    const finalPaidAmount =
+      paymentMethod === 'CASH'
+        ? paidAmount
+        : paymentMethod === 'CREDIT'
+          ? Math.min(paidAmount, grandTotal)
+          : paymentMethod === 'SPLIT'
+            ? splitTotal - creditDueAmount
+            : grandTotal;
+
+    const payload = {
+      items: items.map((item) => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        discount: item.discount || 0,
+      })),
+      customerId: selectedCustomer?.id || null,
+      cartDiscount: cartDiscountAmount,
+      pointsRedeemed: safePointsRedeemed,
+      clientSaleId,
+      paymentReference:
+        paymentMethod === 'CARD' || paymentMethod === 'MOBILE_BANKING' || paymentMethod === 'CREDIT'
+          ? paymentReference.trim() || null
+          : null,
+      paidAmount: finalPaidAmount,
+      paymentMethod,
+      payments:
+        paymentMethod === 'SPLIT'
+          ? splitLegs
+              .filter((l) => (parseFloat(l.amountStr) || 0) > 0)
+              .map((l) => ({
+                method: l.method,
+                amount: parseFloat(l.amountStr) || 0,
+                reference: l.reference.trim() || null,
+              }))
+          : undefined,
+      notes: notes || null,
+    };
 
     try {
       const res = await fetch('/api/sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          items: items.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            discount: 0,
-          })),
-          customerId: customerId || null,
-          cartDiscount: discountAmount,
-          clientSaleId,
-          paymentReference: paymentMethod === 'CASH' ? null : paymentReference.trim(),
-          paidAmount: finalPaidAmount,
-          paymentMethod,
-          notes: notes || null,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -207,6 +371,78 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
       useAppStore.getState().triggerLowStockRefresh();
       onSuccess(saleData);
     } catch (err) {
+      // Offline queue fallback when browser is offline or fetch fails due to network disconnect
+      const isNetworkFailure =
+        (typeof navigator !== 'undefined' && !navigator.onLine) ||
+        err instanceof TypeError;
+
+      if (isNetworkFailure) {
+        const offlineInvoice = generateInvoiceNumber();
+        const nowIso = new Date().toISOString();
+        const offlineItems = items.map((i, idx) => ({
+          id: `offline-item-${idx}`,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          discount: i.discount || 0,
+          total: Math.max(0, Math.round(i.unitPrice * i.quantity) - (i.discount || 0)),
+          product: {
+            name: i.name,
+            nameMm: i.nameMm,
+            sku: i.sku,
+            unit: i.unit,
+          },
+        }));
+
+        enqueueSale({
+          clientSaleId,
+          queuedAt: nowIso,
+          payload,
+          previewReceipt: {
+            invoiceNumber: offlineInvoice,
+            createdAt: nowIso,
+            cashierName: 'Offline Cashier',
+            items: offlineItems.map((oi) => ({
+              name: oi.product.name,
+              quantity: oi.quantity,
+              unitPrice: oi.unitPrice,
+              discount: oi.discount,
+              total: oi.total,
+            })),
+            subtotal,
+            discountAmount,
+            taxAmount,
+            totalAmount: grandTotal,
+            paymentMethod,
+            paidAmount: finalPaidAmount,
+            dueAmount: creditDueAmount,
+            changeAmount,
+            customerName: selectedCustomer?.name || null,
+          },
+        });
+
+        onSuccess({
+          id: clientSaleId,
+          invoiceNumber: offlineInvoice,
+          createdAt: nowIso,
+          subtotal,
+          discountAmount,
+          taxAmount,
+          totalAmount: grandTotal,
+          paidAmount: finalPaidAmount,
+          dueAmount: creditDueAmount,
+          changeAmount,
+          paymentMethod,
+          notes: notes || null,
+          isOfflineQueued: true,
+          items: offlineItems,
+          customer: selectedCustomer
+            ? { id: selectedCustomer.id, name: selectedCustomer.name, phone: selectedCustomer.phone }
+            : null,
+          user: { id: 'offline', name: 'Offline Cashier' },
+        });
+        return;
+      }
+
       setError(err instanceof Error ? err.message : t('Payment failed', 'ငွေပေးချေမှုမအောင်မြင်ပါ'));
     } finally {
       setIsProcessing(false);
@@ -225,18 +461,21 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
       >
         {/* Header */}
         <div className="modal-header">
-          <span className="modal-title">💰 {t('payment')}</span>
+          <span className="modal-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <Banknote size={18} strokeWidth={1.75} />
+            {t('payment')}
+          </span>
           <button
             className="btn btn-ghost btn-icon"
             onClick={onClose}
             type="button"
             aria-label={t('close')}
           >
-            ✕
+            <X size={16} strokeWidth={1.75} />
           </button>
         </div>
 
-        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-lg)' }}>
+        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
           {/* Order Summary */}
           <div
             style={{
@@ -245,9 +484,9 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
               padding: 'var(--space-md)',
             }}
           >
-            <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-sm)' }}>
+            <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-xs)' }}>
               <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--text-sm)' }}>
-                {totalItems} {t('itemUnit')}{language !== 'mm' && totalItems !== 1 ? 's' : ''}
+                {formatQuantity(totalItems)} {t('itemUnit')}{language !== 'mm' && totalItems !== 1 ? 's' : ''}
               </span>
               <span
                 style={{
@@ -278,13 +517,13 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
               style={{
                 fontSize: 'var(--text-sm)',
                 fontWeight: 600,
-                marginBottom: 'var(--space-sm)',
+                marginBottom: 'var(--space-xs)',
                 color: 'var(--text-secondary)',
               }}
             >
               {t('paymentMethod')}
             </div>
-            <div className="flex gap-sm">
+            <div className="flex gap-xs" style={{ flexWrap: 'wrap' }}>
               {PAYMENT_METHODS.map((method) => (
                 <button
                   key={method.id}
@@ -293,14 +532,33 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                   }`}
                   onClick={() => setPaymentMethod(method.id)}
                   type="button"
-                  style={{ flex: 1, flexDirection: 'column', padding: '12px 8px' }}
+                  style={{ flex: '1 1 80px', flexDirection: 'column', padding: '10px 6px', gap: 4 }}
                 >
-                  <span style={{ fontSize: '20px' }}>{method.icon}</span>
-                  <span style={{ fontSize: 'var(--text-xs)' }}>{t(paymentMethodTranslationKeys[method.id])}</span>
+                  <PaymentMethodIcon method={method.id} size={18} />
+                  <span style={{ fontSize: 'var(--text-xs)' }}>
+                    {language === 'mm' ? method.labelMm : method.labelEn}
+                  </span>
                 </button>
               ))}
             </div>
           </div>
+
+          {/* Shift Warning if Cash is used */}
+          {requiresOpenShift && hasOpenShift === false && (
+            <div className="shift-payment-block" role="alert">
+              <span>{t('cashShiftRequiredPayment')}</span>
+              <button
+                className="btn btn-secondary btn-sm"
+                type="button"
+                onClick={() => {
+                  onClose();
+                  router.push('/shifts');
+                }}
+              >
+                {t('openShift')}
+              </button>
+            </div>
+          )}
 
           {/* Cash Amount */}
           {paymentMethod === 'CASH' && (
@@ -309,7 +567,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                 style={{
                   fontSize: 'var(--text-sm)',
                   fontWeight: 600,
-                  marginBottom: 'var(--space-sm)',
+                  marginBottom: 'var(--space-xs)',
                   color: 'var(--text-secondary)',
                 }}
               >
@@ -327,25 +585,9 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                   fontSize: 'var(--text-xl)',
                   fontWeight: 700,
                   textAlign: 'right',
-                  padding: '14px',
+                  padding: '12px',
                 }}
               />
-
-              {hasOpenShift === false && (
-                <div className="shift-payment-block" role="alert">
-                  <span>{t('cashShiftRequiredPayment')}</span>
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    type="button"
-                    onClick={() => {
-                      onClose();
-                      router.push('/shifts');
-                    }}
-                  >
-                    {t('openShift')}
-                  </button>
-                </div>
-              )}
 
               {/* Quick Cash Buttons */}
               <div
@@ -363,7 +605,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                     type="button"
                     style={{ flex: '1 1 auto', minWidth: '80px' }}
                   >
-                    {amount === grandTotal ? `💯 ${t('Exact', 'အတိအကျ')}` : formatCurrency(amount)}
+                    {amount === grandTotal ? t('Exact', 'အတိအကျ') : formatCurrency(amount)}
                   </button>
                 ))}
               </div>
@@ -372,29 +614,17 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
               {paidAmount >= grandTotal && paidAmount > 0 && (
                 <div
                   style={{
-                    marginTop: 'var(--space-md)',
-                    padding: 'var(--space-md)',
+                    marginTop: 'var(--space-sm)',
+                    padding: 'var(--space-sm) var(--space-md)',
                     background: 'var(--success-light)',
                     borderRadius: 'var(--radius-md)',
                     textAlign: 'center',
                   }}
                 >
-                  <div
-                    style={{
-                      fontSize: 'var(--text-xs)',
-                      color: 'var(--text-secondary)',
-                      marginBottom: '4px',
-                    }}
-                  >
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
                     {t('Change', 'ပြန်အမ်းငွေ')}
                   </div>
-                  <div
-                    style={{
-                      fontSize: 'var(--text-2xl)',
-                      fontWeight: 800,
-                      color: 'var(--success)',
-                    }}
-                  >
+                  <div style={{ fontSize: 'var(--text-xl)', fontWeight: 800, color: 'var(--success)' }}>
                     {formatCurrency(changeAmount)}
                   </div>
                 </div>
@@ -402,17 +632,18 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
             </div>
           )}
 
-          {paymentMethod !== 'CASH' && (
+          {/* Card / Mobile Banking Reference */}
+          {(paymentMethod === 'CARD' || paymentMethod === 'MOBILE_BANKING') && (
             <div>
               <div
                 style={{
                   fontSize: 'var(--text-sm)',
                   fontWeight: 600,
-                  marginBottom: 'var(--space-sm)',
+                  marginBottom: 'var(--space-xs)',
                   color: 'var(--text-secondary)',
                 }}
               >
-              {t('paymentReference')}
+                {t('paymentReference')} *
               </div>
               <input
                 type="text"
@@ -421,35 +652,219 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                 value={paymentReference}
                 onChange={(e) => setPaymentReference(e.target.value)}
                 maxLength={100}
+                autoFocus
               />
             </div>
           )}
 
-          {/* Customer (Optional) */}
-          <div style={{ position: 'relative' }}>
+          {/* Credit (အကြွေး) Mode */}
+          {paymentMethod === 'CREDIT' && (
             <div
               style={{
-                fontSize: 'var(--text-sm)',
-                fontWeight: 600,
-                marginBottom: 'var(--space-sm)',
-                color: 'var(--text-secondary)',
+                padding: 'var(--space-md)',
+                background: 'var(--bg-secondary)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-default)',
               }}
             >
-              {t('Customer (Optional)', 'ဖောက်သည် (ရွေးချယ်)')}
+              {!selectedCustomer && (
+                <div style={{ color: 'var(--warning)', fontSize: 'var(--text-xs)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <AlertTriangle size={14} strokeWidth={1.75} />
+                  {t('Please select or create a customer below for credit sales.', 'အကြွေးရောင်းချရန် အောက်တွင် ဖောက်သည်ရွေးချယ်ပါ။')}
+                </div>
+              )}
+              <div className="input-group" style={{ marginBottom: 8 }}>
+                <label className="input-label">
+                  {t('Upfront Cash Paid (Optional)', 'လက်ငင်းပေးချေငွေ (ရှိပါက)')}
+                </label>
+                <input
+                  type="number"
+                  className="input"
+                  min={0}
+                  max={grandTotal}
+                  placeholder="0"
+                  value={paidAmountStr}
+                  onChange={(e) => setPaidAmountStr(e.target.value)}
+                />
+              </div>
+              <div className="flex justify-between" style={{ fontSize: 'var(--text-sm)', fontWeight: 700, color: 'var(--danger)' }}>
+                <span>{t('Remaining Credit Due', 'အကြွေးမှတ်မည့်ပမာဏ')}:</span>
+                <span>{formatCurrency(creditDueAmount)}</span>
+              </div>
             </div>
-            <input
-              type="text"
-              className="input input-search"
-              placeholder={t('Search customer...', 'ဖောက်သည်ရှာပါ...')}
-              value={customerSearch}
-              onChange={(e) => handleCustomerSearchChange(e.target.value)}
-              onFocus={() => {
-                if (customerResults.length > 0) setShowCustomerSearch(true);
+          )}
+
+          {/* Split Payment Mode */}
+          {paymentMethod === 'SPLIT' && (
+            <div
+              style={{
+                padding: 'var(--space-md)',
+                background: 'var(--bg-secondary)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-default)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 'var(--space-sm)',
               }}
-              onBlur={() => {
-                setTimeout(() => setShowCustomerSearch(false), 200);
-              }}
-            />
+            >
+              <div className="flex justify-between items-center">
+                <span style={{ fontSize: 'var(--text-xs)', fontWeight: 700 }}>
+                  {t('Split Payment Legs', 'ပေါင်းစပ်ပေးချေမှု စာရင်း')}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() =>
+                    setSplitLegs([...splitLegs, { method: 'CASH', amountStr: '', reference: '' }])
+                  }
+                >
+                  + {t('Add Leg', 'ထပ်တိုးရန်')}
+                </button>
+              </div>
+              {splitLegs.map((leg, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <select
+                    className="input"
+                    style={{ width: 130, fontSize: 12 }}
+                    value={leg.method}
+                    onChange={(e) => {
+                      const next = [...splitLegs];
+                      next[idx] = { ...leg, method: e.target.value as SingleMethod };
+                      setSplitLegs(next);
+                    }}
+                  >
+                    <option value="CASH">{t('cash')}</option>
+                    <option value="MOBILE_BANKING">{t('mobileBanking')}</option>
+                    <option value="CARD">{t('card')}</option>
+                    <option value="CREDIT">{t('Credit', 'အကြွေး')}</option>
+                  </select>
+                  <input
+                    type="number"
+                    className="input"
+                    style={{ width: 120, fontSize: 12 }}
+                    placeholder={t('amount')}
+                    min={0}
+                    value={leg.amountStr}
+                    onChange={(e) => {
+                      const next = [...splitLegs];
+                      next[idx] = { ...leg, amountStr: e.target.value };
+                      setSplitLegs(next);
+                    }}
+                  />
+                  {(leg.method === 'CARD' || leg.method === 'MOBILE_BANKING') && (
+                    <input
+                      type="text"
+                      className="input"
+                      style={{ flex: 1, minWidth: 110, fontSize: 12 }}
+                      placeholder={t('Ref code *', 'လွှဲနံပါတ် *')}
+                      value={leg.reference}
+                      onChange={(e) => {
+                        const next = [...splitLegs];
+                        next[idx] = { ...leg, reference: e.target.value };
+                        setSplitLegs(next);
+                      }}
+                    />
+                  )}
+                  {splitLegs.length > 2 && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setSplitLegs(splitLegs.filter((_, i) => i !== idx))}
+                    >
+                      <X size={14} strokeWidth={1.75} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className="flex justify-between" style={{ fontSize: 'var(--text-xs)', paddingTop: 4 }}>
+                <span>
+                  {t('Covered', 'ပေးချေပြီး')}: {formatCurrency(splitTotal)} / {formatCurrency(grandTotal)}
+                </span>
+                {splitTotal < grandTotal ? (
+                  <span style={{ color: 'var(--danger)', fontWeight: 700 }}>
+                    {t('Remaining', 'လိုငွေ')}: {formatCurrency(grandTotal - splitTotal)}
+                  </span>
+                ) : changeAmount > 0 ? (
+                  <span style={{ color: 'var(--success)', fontWeight: 700 }}>
+                    {t('Change', 'ပြန်အမ်းငွေ')}: {formatCurrency(changeAmount)}
+                  </span>
+                ) : (
+                  <span style={{ color: 'var(--success)', fontWeight: 700 }}>✓ Balanced</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Customer Search & Quick Create */}
+          <div style={{ position: 'relative' }}>
+            <div className="flex justify-between items-center" style={{ marginBottom: 'var(--space-xs)' }}>
+              <span style={{ fontSize: 'var(--text-sm)', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                {t('Customer', 'ဖောက်သည်')} {paymentMethod === 'CREDIT' ? '*' : `(${t('Optional', 'ရွေးချယ်')})`}
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                style={{ padding: '2px 8px', fontSize: 11 }}
+                onClick={() => setShowQuickCreateCustomer(!showQuickCreateCustomer)}
+              >
+                {showQuickCreateCustomer ? t('cancel') : `+ ${t('New Customer', 'ဖောက်သည်အသစ်')}`}
+              </button>
+            </div>
+
+            {showQuickCreateCustomer ? (
+              <div
+                style={{
+                  padding: 'var(--space-sm)',
+                  background: 'var(--bg-secondary)',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-default)',
+                  display: 'flex',
+                  gap: 6,
+                  flexWrap: 'wrap',
+                  marginBottom: 6,
+                }}
+              >
+                <input
+                  type="text"
+                  className="input"
+                  style={{ flex: 1, minWidth: 140, fontSize: 12 }}
+                  placeholder={`${t('name')} *`}
+                  value={newCustomerName}
+                  onChange={(e) => setNewCustomerName(e.target.value)}
+                />
+                <input
+                  type="text"
+                  className="input"
+                  style={{ flex: 1, minWidth: 120, fontSize: 12 }}
+                  placeholder={t('phone')}
+                  value={newCustomerPhone}
+                  onChange={(e) => setNewCustomerPhone(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={handleQuickCreateCustomer}
+                  disabled={creatingCustomer}
+                >
+                  {creatingCustomer ? '...' : t('save')}
+                </button>
+              </div>
+            ) : (
+              <input
+                type="text"
+                className="input input-search"
+                placeholder={t('Search customer by name or phone...', 'ဖောက်သည်အမည် သို့မဟုတ် ဖုန်းဖြင့် ရှာပါ...')}
+                value={customerSearch}
+                onChange={(e) => handleCustomerSearchChange(e.target.value)}
+                onFocus={() => {
+                  if (customerResults.length > 0) setShowCustomerSearch(true);
+                }}
+                onBlur={() => {
+                  setTimeout(() => setShowCustomerSearch(false), 200);
+                }}
+              />
+            )}
+
             {showCustomerSearch && customerResults.length > 0 && (
               <div
                 style={{
@@ -484,25 +899,67 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                     onClick={() => selectCustomer(c)}
                     type="button"
                   >
-                    <div style={{ fontWeight: 600 }}>{c.name}</div>
+                    <div className="flex justify-between">
+                      <span style={{ fontWeight: 600 }}>{c.name}</span>
+                      {(c.loyaltyPoints ?? 0) > 0 && (
+                        <span className="badge badge-neutral" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <Star size={11} strokeWidth={1.75} /> {c.loyaltyPoints} pts
+                        </span>
+                      )}
+                    </div>
                     {c.phone && (
                       <div style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>
                         {c.phone}
+                        {(c.creditBalance ?? 0) > 0
+                          ? ` · ${t('Debt', 'ကြွေးကျန်')}: ${formatCurrency(c.creditBalance ?? 0)}`
+                          : ''}
                       </div>
                     )}
                   </button>
                 ))}
               </div>
             )}
-            {customerId && (
+
+            {selectedCustomer && (
               <div
                 style={{
-                  marginTop: '4px',
+                  marginTop: '6px',
+                  padding: '6px 10px',
+                  background: 'var(--bg-secondary)',
+                  borderRadius: 'var(--radius-sm)',
                   fontSize: 'var(--text-xs)',
-                  color: 'var(--success)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: 6,
                 }}
               >
-                ✓ {t('Selected', 'ရွေးချယ်ပြီး')}: {customerName}
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ color: 'var(--success)', fontWeight: 600 }}>
+                    ✓ {selectedCustomer.name}
+                  </span>
+                  <span style={{ color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <Star size={11} strokeWidth={1.75} /> {selectedCustomer.loyaltyPoints ?? 0} pts
+                    {(selectedCustomer.creditBalance ?? 0) > 0 &&
+                      ` · ${t('Debt', 'ကြွေးကျန်')}: ${formatCurrency(selectedCustomer.creditBalance ?? 0)}`}
+                  </span>
+                </div>
+                {loyaltyEnabled && maxRedeemablePoints > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <span>{t('Redeem pts', 'ပွိုင့်သုံးရန်')}:</span>
+                    <input
+                      type="number"
+                      className="input"
+                      style={{ width: 68, padding: '2px 6px', fontSize: 11 }}
+                      min={0}
+                      max={maxRedeemablePoints}
+                      value={pointsToRedeem || ''}
+                      onChange={(e) => setPointsToRedeem(Number(e.target.value) || 0)}
+                      placeholder="0"
+                    />
+                  </div>
+                )}
                 <button
                   type="button"
                   style={{
@@ -510,16 +967,17 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                     border: 'none',
                     color: 'var(--text-muted)',
                     cursor: 'pointer',
-                    marginLeft: '8px',
                     fontSize: 'var(--text-xs)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
                   }}
                   onClick={() => {
-                    setCustomerId(null);
-                    setCustomerName(null);
+                    setSelectedCustomer(null);
+                    setPointsToRedeem(0);
                     setCustomerSearch('');
                   }}
                 >
-                  ✕
+                  <X size={14} strokeWidth={1.75} />
                 </button>
               </div>
             )}
@@ -531,7 +989,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
               style={{
                 fontSize: 'var(--text-sm)',
                 fontWeight: 600,
-                marginBottom: 'var(--space-sm)',
+                marginBottom: 'var(--space-xs)',
                 color: 'var(--text-secondary)',
               }}
             >
@@ -571,6 +1029,10 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
               flex: 1,
               opacity: !canProcess || isProcessing ? 0.6 : 1,
               cursor: !canProcess || isProcessing ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
             }}
           >
             {isProcessing ? (
@@ -579,7 +1041,10 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                 {t('Processing...', 'ဆောင်ရွက်နေသည်...')}
               </span>
             ) : (
-              <>✅ {t('Complete Payment', 'ငွေပေးချေမှုပြီးရန်')} ({formatCurrency(grandTotal)})</>
+              <>
+                <CheckCircle2 size={18} strokeWidth={1.75} />
+                {t('Complete Payment', 'ငွေပေးချေမှုပြီးရန်')} ({formatCurrency(grandTotal)})
+              </>
             )}
           </button>
         </div>

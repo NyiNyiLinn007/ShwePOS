@@ -25,10 +25,12 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
               nameMm: true,
               sku: true,
               barcode: true,
+              unit: true,
             },
           },
         },
       },
+      payments: true,
       customer: {
         select: { id: true, name: true, phone: true, email: true },
       },
@@ -50,7 +52,7 @@ export default async function SaleDetailPage({ params }: SaleDetailPageProps) {
     <>
       <SaleDetailHeader invoiceNumber={sale.invoiceNumber} />
 
-      <SaleDetailClient sale={serializePrismaData(sale)} />
+      <SaleDetailClient sale={serializePrismaData(sale)} userRole={session.user.role} />
     </>
   );
 }

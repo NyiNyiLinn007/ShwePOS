@@ -6,6 +6,25 @@ import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDate } from '@/lib/utils';
+import {
+  Settings,
+  DollarSign,
+  Star,
+  Receipt,
+  Sun,
+  Moon,
+  Users,
+  User,
+  Plus,
+  Pencil,
+  Trash2,
+  Package,
+  Download,
+  Upload,
+  FileSpreadsheet,
+  Info,
+  X,
+} from '@/components/ui/Icons';
 
 /* ---------- Types ---------- */
 
@@ -20,6 +39,9 @@ interface Settings {
   currencySymbol: string;
   logo: string | null;
   receiptFooter: string | null;
+  loyaltyEnabled?: boolean;
+  loyaltyEarnRate?: number;
+  loyaltyRedeemRate?: number;
 }
 
 interface UserRecord {
@@ -80,12 +102,19 @@ export function SettingsClient({
   const [address, setAddress] = useState(initialSettings.address || '');
   const [phone, setPhone] = useState(initialSettings.phone || '');
   const [email, setEmail] = useState(initialSettings.email || '');
+  const [logo, setLogo] = useState(initialSettings.logo || '');
   const [savingProfile, setSavingProfile] = useState(false);
 
   // ── Tax & Currency ────────────────────────────────────────
   const [taxRate, setTaxRateLocal] = useState(String(initialSettings.taxRate));
   const [currencySymbol, setCurrencySymbol] = useState(initialSettings.currencySymbol);
   const [savingTax, setSavingTax] = useState(false);
+
+  // ── Loyalty Program ───────────────────────────────────────
+  const [loyaltyEnabled, setLoyaltyEnabled] = useState(initialSettings.loyaltyEnabled ?? true);
+  const [loyaltyEarnRate, setLoyaltyEarnRate] = useState(String(initialSettings.loyaltyEarnRate ?? 1000));
+  const [loyaltyRedeemRate, setLoyaltyRedeemRate] = useState(String(initialSettings.loyaltyRedeemRate ?? 10));
+  const [savingLoyalty, setSavingLoyalty] = useState(false);
 
   // ── Receipt ───────────────────────────────────────────────
   const [receiptFooter, setReceiptFooter] = useState(initialSettings.receiptFooter || '');
@@ -121,6 +150,7 @@ export function SettingsClient({
           address: address || null,
           phone: phone || null,
           email: email || null,
+          logo: logo || null,
         }),
       });
 
@@ -136,12 +166,49 @@ export function SettingsClient({
         address: address || null,
         phone: phone || null,
         email: email || null,
+        logo: logo || null,
       });
       addToast(t('Business profile saved', 'လုပ်ငန်းပရိုဖိုင်သိမ်းပြီး'), 'success');
     } catch {
       addToast(t('networkError'), 'error');
     } finally {
       setSavingProfile(false);
+    }
+  }
+
+  async function saveLoyalty() {
+    const earn = Number(loyaltyEarnRate);
+    const redeem = Number(loyaltyRedeemRate);
+    if (isNaN(earn) || earn <= 0 || isNaN(redeem) || redeem <= 0) {
+      addToast(t('Rates must be positive numbers', 'ပွိုင့်နှုန်းထားများ အပြုကိန်းဖြစ်ရပါမည်'), 'error');
+      return;
+    }
+    setSavingLoyalty(true);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          loyaltyEnabled,
+          loyaltyEarnRate: earn,
+          loyaltyRedeemRate: redeem,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        addToast(data.error || t('saveFailed'), 'error');
+        return;
+      }
+      updateSettings({
+        loyaltyEnabled,
+        loyaltyEarnRate: earn,
+        loyaltyRedeemRate: redeem,
+      });
+      addToast(t('Loyalty settings saved', 'ပွိုင့်ဆက်တင်များ သိမ်းပြီးပါပြီ'), 'success');
+    } catch {
+      addToast(t('networkError'), 'error');
+    } finally {
+      setSavingLoyalty(false);
     }
   }
 
@@ -397,8 +464,9 @@ export function SettingsClient({
         {/* Section 1: Business Profile */}
         <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
           <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <h3 className="heading-4" style={{ marginBottom: 4 }}>
-              🏢 {t('Business Profile', 'လုပ်ငန်းပရိုဖိုင်')}
+            <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <Settings size={18} strokeWidth={1.75} />
+              {t('Business Profile', 'လုပ်ငန်းပရိုဖိုင်')}
             </h3>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {t('Basic information about your business', 'သင့်လုပ်ငန်းအခြေခံအချက်အလက်')}
@@ -465,6 +533,59 @@ export function SettingsClient({
                 placeholder="shop@example.com"
               />
             </div>
+            <div className="input-group" style={{ gridColumn: '1 / -1' }}>
+              <label className="input-label">{t('Shop Logo', 'ဆိုင်လိုဂို')}</label>
+              <div className="flex gap-sm" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                {logo && (
+                  <img
+                    src={logo}
+                    alt="Logo"
+                    style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 6, border: '1px solid var(--border-color)', background: '#fff' }}
+                  />
+                )}
+                <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Upload size={14} strokeWidth={1.75} />
+                  {t('Upload Logo', 'လိုဂိုတင်ရန်')}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const img = new Image();
+                        img.onload = () => {
+                          const scale = Math.min(1, 200 / Math.max(img.width, img.height));
+                          const canvas = document.createElement('canvas');
+                          canvas.width = Math.max(1, Math.round(img.width * scale));
+                          canvas.height = Math.max(1, Math.round(img.height * scale));
+                          const ctx = canvas.getContext('2d');
+                          if (ctx) {
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                            setLogo(canvas.toDataURL('image/png', 0.9));
+                          }
+                        };
+                        img.src = String(reader.result);
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+                {logo && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setLogo('')}
+                    style={{ color: 'var(--danger)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <X size={14} strokeWidth={1.75} />
+                    {t('Remove', 'ဖယ်ရှားရန်')}
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
           <div style={{ marginTop: 'var(--space-lg)', display: 'flex', justifyContent: 'flex-end' }}>
             <button
@@ -480,8 +601,9 @@ export function SettingsClient({
         {/* Section 2: Tax & Currency */}
         <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
           <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <h3 className="heading-4" style={{ marginBottom: 4 }}>
-              💲 {t('Tax & Currency', 'အခွန်နှင့်ငွေကြေး')}
+            <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <DollarSign size={18} strokeWidth={1.75} />
+              {t('Tax & Currency', 'အခွန်နှင့်ငွေကြေး')}
             </h3>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {t('Configure tax and currency settings', 'အခွန်နှင့်ငွေကြေးဆက်တင်များ')}
@@ -529,11 +651,83 @@ export function SettingsClient({
           </div>
         </div>
 
+        {/* Section 2b: Loyalty Program */}
+        <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
+          <div style={{ marginBottom: 'var(--space-lg)' }}>
+            <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <Star size={18} strokeWidth={1.75} />
+              {t('Loyalty Points Program', 'ဖောက်သည် ပွိုင့်အစီအစဉ်')}
+            </h3>
+            <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+              {t('Configure points earning and redemption rates', 'ဝယ်ယူမှုအလိုက် ပွိုင့်ရရှိနှုန်းနှင့် ပြန်လည်အသုံးပြုနှုန်း သတ်မှတ်ပါ')}
+            </p>
+          </div>
+          <div className="input-group" style={{ marginBottom: 'var(--space-md)' }}>
+            <label className="input-label" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={loyaltyEnabled}
+                onChange={(e) => setLoyaltyEnabled(e.target.checked)}
+                style={{ width: 18, height: 18, accentColor: 'var(--primary)' }}
+              />
+              {t('Enable Loyalty Points Program', 'ပွိုင့်အစီအစဉ် ဖွင့်ထားမည်')}
+            </label>
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: 'var(--space-md)',
+            }}
+          >
+            <div className="input-group">
+              <label className="input-label">
+                {t('Spend Amount per 1 Point (MMK)', '၁ ပွိုင့်ရရှိရန် ဝယ်ယူရမည့်ပမာဏ (ကျပ်)')}
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="100"
+                className="input"
+                value={loyaltyEarnRate}
+                onChange={(e) => setLoyaltyEarnRate(e.target.value)}
+                disabled={!loyaltyEnabled}
+                style={{ fontFamily: 'var(--font-mono)' }}
+              />
+            </div>
+            <div className="input-group">
+              <label className="input-label">
+                {t('Discount Value of 1 Point (MMK)', '၁ ပွိုင့်၏ လျှော့ဈေးတန်ဖိုး (ကျပ်)')}
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                className="input"
+                value={loyaltyRedeemRate}
+                onChange={(e) => setLoyaltyRedeemRate(e.target.value)}
+                disabled={!loyaltyEnabled}
+                style={{ fontFamily: 'var(--font-mono)' }}
+              />
+            </div>
+          </div>
+          <div style={{ marginTop: 'var(--space-lg)', display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              className="btn btn-primary"
+              onClick={saveLoyalty}
+              disabled={savingLoyalty}
+            >
+              {savingLoyalty ? t('Saving...', 'သိမ်းနေသည်...') : t('Save', 'သိမ်းရန်')}
+            </button>
+          </div>
+        </div>
+
         {/* Section 3: Receipt */}
         <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
           <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <h3 className="heading-4" style={{ marginBottom: 4 }}>
-              🧾 {t('Receipt Settings', 'ပြေစာဆက်တင်များ')}
+            <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <Receipt size={18} strokeWidth={1.75} />
+              {t('Receipt Settings', 'ပြေစာဆက်တင်များ')}
             </h3>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {t('Customize your receipt footer text', 'သင့်ပြေစာအောက်ခြေစာသားစိတ်ကြိုက်ပြင်ပါ')}
@@ -629,7 +823,7 @@ export function SettingsClient({
         <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
           <div style={{ marginBottom: 'var(--space-lg)' }}>
             <h3 className="heading-4" style={{ marginBottom: 4 }}>
-              🌐 {t('Language', 'ဘာသာစကား')}
+              {t('Language', 'ဘာသာစကား')}
             </h3>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {t('Switch between English and Myanmar', 'အင်္ဂလိပ်နှင့်မြန်မာကြားပြောင်းပါ')}
@@ -640,13 +834,13 @@ export function SettingsClient({
               className={`btn ${language === 'en' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => useAppStore.getState().setLanguage('en')}
             >
-              🇬🇧 English
+              English
             </button>
             <button
               className={`btn ${language === 'mm' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => useAppStore.getState().setLanguage('mm')}
             >
-              🇲🇲 မြန်မာ
+              မြန်မာ
             </button>
           </div>
           <div
@@ -667,7 +861,7 @@ export function SettingsClient({
         <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
           <div style={{ marginBottom: 'var(--space-lg)' }}>
             <h3 className="heading-4" style={{ marginBottom: 4 }}>
-              🎨 {t('Theme', 'အပြင်အဆင်')}
+              {t('Theme', 'အပြင်အဆင်')}
             </h3>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {t('Switch between Dark and Light mode', 'အမှောင်နှင့် အလင်းမုဒ်ကြား ပြောင်းရန်')}
@@ -677,14 +871,18 @@ export function SettingsClient({
             <button
               className={`btn ${useAppStore.getState().theme === 'dark' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => useAppStore.getState().setTheme('dark')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
-              🌙 {t('darkMode')}
+              <Moon size={15} strokeWidth={1.75} />
+              {t('darkMode')}
             </button>
             <button
               className={`btn ${useAppStore.getState().theme === 'light' ? 'btn-primary' : 'btn-secondary'}`}
               onClick={() => useAppStore.getState().setTheme('light')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
-              ☀️ {t('lightMode')}
+              <Sun size={15} strokeWidth={1.75} />
+              {t('lightMode')}
             </button>
           </div>
         </div>
@@ -700,21 +898,29 @@ export function SettingsClient({
             }}
           >
             <div>
-              <h3 className="heading-4" style={{ marginBottom: 4 }}>
-                👥 {t('User Management', 'အသုံးပြုသူစီမံခန့်ခွဲရေး')}
+              <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <Users size={18} strokeWidth={1.75} />
+                {t('User Management', 'အသုံးပြုသူစီမံခန့်ခွဲရေး')}
               </h3>
               <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
                 {t('Manage system users and roles', 'အသုံးပြုသူနှင့်ရာထူးများစီမံပါ')}
               </p>
             </div>
-            <button className="btn btn-primary btn-sm" onClick={openAddUser}>
-              <span>＋</span> {t('Add User', 'အသုံးပြုသူထည့်ရန်')}
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={openAddUser}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <Plus size={15} strokeWidth={2} />
+              {t('Add User', 'အသုံးပြုသူထည့်ရန်')}
             </button>
           </div>
 
           {users.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-state-icon">👤</div>
+              <div className="empty-state-icon">
+                <User size={28} strokeWidth={1.5} />
+              </div>
               <div className="empty-state-title">
                 {t('No users found', 'အသုံးပြုသူမတွေ့ပါ')}
               </div>
@@ -793,7 +999,7 @@ export function SettingsClient({
                             onClick={() => openEditUser(user)}
                             title={t('edit')}
                           >
-                            ✏️
+                            <Pencil size={15} strokeWidth={1.75} />
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
@@ -801,7 +1007,7 @@ export function SettingsClient({
                             title={t('deactivate')}
                             style={{ color: 'var(--danger)' }}
                           >
-                            🗑️
+                            <Trash2 size={15} strokeWidth={1.75} />
                           </button>
                         </div>
                       </td>
@@ -816,8 +1022,9 @@ export function SettingsClient({
         {/* Section 6: Data Migration */}
         <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
           <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <h3 className="heading-4" style={{ marginBottom: 4 }}>
-              📦 {t('dataMigration')}
+            <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <Package size={18} strokeWidth={1.75} />
+              {t('dataMigration')}
             </h3>
             <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
               {t(
@@ -846,14 +1053,18 @@ export function SettingsClient({
             <button
               className="btn btn-secondary"
               onClick={() => downloadMigrationWorkbook('template')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
-              📄 {t('downloadExcelTemplate')}
+              <FileSpreadsheet size={15} strokeWidth={1.75} />
+              {t('downloadExcelTemplate')}
             </button>
             <button
               className="btn btn-secondary"
               onClick={() => downloadMigrationWorkbook('export')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
-              ⬇️ {t('exportAllData')}
+              <Download size={15} strokeWidth={1.75} />
+              {t('exportAllData')}
             </button>
             <input
               ref={migrationFileInput}
@@ -866,8 +1077,10 @@ export function SettingsClient({
               className="btn btn-secondary"
               onClick={() => migrationFileInput.current?.click()}
               disabled={importingData}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
-              📎 {t('chooseExcelFile')}
+              <Upload size={15} strokeWidth={1.75} />
+              {t('chooseExcelFile')}
             </button>
             <button
               className="btn btn-primary"
@@ -912,8 +1125,9 @@ export function SettingsClient({
         {/* Section 7: About */}
         <div className="glass-card">
           <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <h3 className="heading-4" style={{ marginBottom: 4 }}>
-              ℹ️ {t('About', 'အကြောင်း')}
+            <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <Info size={18} strokeWidth={1.75} />
+              {t('About', 'အကြောင်း')}
             </h3>
           </div>
           <div
@@ -974,7 +1188,7 @@ export function SettingsClient({
                   : t('Add User', 'အသုံးပြုသူထည့်ရန်')}
               </h2>
               <button className="btn btn-ghost btn-icon" onClick={closeUserModal}>
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -1116,7 +1330,7 @@ export function SettingsClient({
                 className="btn btn-ghost btn-icon"
                 onClick={() => setDeleteUserTarget(null)}
               >
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">

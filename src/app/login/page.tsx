@@ -80,7 +80,7 @@ export default function LoginPage() {
             title={language === 'en' ? t('switchToMyanmar') : t('switchToEnglish')}
             style={{ marginTop: 'var(--space-sm)' }}
           >
-            {language === 'en' ? '🇲🇲 MM' : '🇬🇧 EN'}
+            {language === 'en' ? 'MM (မြန်မာ)' : 'EN (English)'}
           </button>
         </div>
 

@@ -6,14 +6,12 @@ export async function GET() {
   try {
     await requireRole('MANAGER', 'ADMIN');
 
-    const products = await prisma.product.findMany({
-      where: { isActive: true },
-      select: { stockQuantity: true, lowStockThreshold: true },
-    });
-
-    const count = products.filter(
-      (p) => p.stockQuantity <= p.lowStockThreshold
-    ).length;
+    const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT COUNT(*)::int AS "count"
+      FROM "Product"
+      WHERE "isActive" = true AND "stockQuantity" <= "lowStockThreshold"
+    `;
+    const count = rows[0]?.count ?? 0;
 
     return NextResponse.json({ count });
   } catch (error) {

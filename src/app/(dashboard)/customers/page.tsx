@@ -24,7 +24,7 @@ export default async function CustomersPage() {
 
   const customersWithStats = customers.map((customer) => {
     const completedSales = customer.sales.filter(
-      (s) => s.status === 'COMPLETED'
+      (s) => s.status === 'COMPLETED' || s.status === 'PARTIALLY_REFUNDED'
     );
     const lastSale = customer.sales[0] || null;
 
@@ -35,6 +35,8 @@ export default async function CustomersPage() {
       email: customer.email,
       address: customer.address,
       totalPurchases: toNumber(customer.totalPurchases),
+      creditBalance: toNumber(customer.creditBalance),
+      creditLimit: customer.creditLimit !== null ? toNumber(customer.creditLimit) : null,
       loyaltyPoints: customer.loyaltyPoints,
       createdAt: customer.createdAt,
       updatedAt: customer.updatedAt,

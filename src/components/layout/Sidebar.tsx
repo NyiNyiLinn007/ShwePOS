@@ -9,6 +9,15 @@ import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settingsStore';
 import { NAV_ITEMS } from '@/lib/constants';
 import type { UserRole } from '@/lib/constants';
+import {
+  NavIcon,
+  Menu,
+  ChevronLeft,
+  ChevronRight,
+  Sun,
+  Moon,
+  LogOut,
+} from '@/components/ui/Icons';
 
 interface SidebarProps {
   userName: string;
@@ -18,7 +27,15 @@ interface SidebarProps {
 
 export default function Sidebar({ userName, userRole, userEmail }: SidebarProps) {
   const pathname = usePathname();
-  const { theme, sidebarCollapsed, toggleSidebar, toggleTheme, lowStockRefreshKey } = useAppStore();
+  const {
+    theme,
+    language,
+    sidebarCollapsed,
+    toggleSidebar,
+    toggleTheme,
+    toggleLanguage,
+    lowStockRefreshKey,
+  } = useAppStore();
   const { t } = useI18n();
   const { businessName } = useSettingsStore();
   const [lowStockCount, setLowStockCount] = useState(0);
@@ -62,7 +79,6 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
   };
 
   const handleLogout = async () => {
-    // Invalidate the current session before removing the browser cookie.
     try { await fetch('/api/auth/signout-cleanup', { method: 'POST' }); } catch { /* ignore */ }
     await signOut({ callbackUrl: '/login' });
   };
@@ -81,7 +97,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
         aria-label={t('openNavigation')}
         aria-expanded={mobileOpen}
       >
-        <span aria-hidden="true">☰</span>
+        <Menu size={20} strokeWidth={1.75} />
       </button>
       {mobileOpen && (
         <button
@@ -95,183 +111,177 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
         className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}`}
         style={sidebarCollapsed ? { width: 'var(--sidebar-collapsed)' } : undefined}
       >
-      {/* Logo */}
-      <div className="sidebar-logo">
-        <div className="sidebar-logo-icon">{businessName.charAt(0).toUpperCase()}</div>
-        {!sidebarCollapsed && (
-          <span className="sidebar-logo-text text-gradient">{businessName}</span>
-        )}
-        <button
-          className="btn btn-ghost btn-icon"
-          onClick={toggleSidebar}
-          style={{ marginLeft: sidebarCollapsed ? 0 : 'auto' }}
-          aria-label={t('toggleSidebar')}
-        >
-          {sidebarCollapsed ? '▶' : '◀'}
-        </button>
-      </div>
+        {/* Logo */}
+        <div className="sidebar-logo">
+          <div className="sidebar-logo-icon">{businessName.charAt(0).toUpperCase()}</div>
+          {!sidebarCollapsed && (
+            <span className="sidebar-logo-text">{businessName}</span>
+          )}
+          <button
+            className="btn btn-ghost btn-icon"
+            onClick={toggleSidebar}
+            style={{ marginLeft: sidebarCollapsed ? 0 : 'auto' }}
+            aria-label={t('toggleSidebar')}
+          >
+            {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
+        </div>
 
-      {/* Navigation */}
-      <nav className="sidebar-nav">
-        {sections.map((section) => {
-          const sectionItems = filteredItems.filter(
-            (item) => item.section === section
-          );
-          if (sectionItems.length === 0) return null;
+        {/* Navigation */}
+        <nav className="sidebar-nav">
+          {sections.map((section) => {
+            const sectionItems = filteredItems.filter(
+              (item) => item.section === section
+            );
+            if (sectionItems.length === 0) return null;
 
-          return (
-            <div key={section} className="sidebar-section">
-              {!sidebarCollapsed && (
-                <div className="sidebar-section-title">
-                  {t(section)}
-                </div>
-              )}
-              {sectionItems.map((item) => {
-                const isActive =
-                  item.href === '/'
-                    ? pathname === '/'
-                    : pathname === item.href ||
-                      pathname.startsWith(item.href + '/');
+            return (
+              <div key={section} className="sidebar-section">
+                {!sidebarCollapsed && (
+                  <div className="sidebar-section-title">
+                    {t(section)}
+                  </div>
+                )}
+                {sectionItems.map((item) => {
+                  const isActive =
+                    item.href === '/'
+                      ? pathname === '/'
+                      : pathname === item.href ||
+                        pathname.startsWith(item.href + '/');
 
-                return (
-                  <Link
-                    key={item.key}
-                    href={item.href}
-                    className={`sidebar-link${isActive ? ' active' : ''}`}
-                    title={sidebarCollapsed ? t(item.key) : undefined}
-                    onClick={() => setMobileOpen(false)}
-                  >
-                    <span className="sidebar-link-icon">{item.icon}</span>
-                    {!sidebarCollapsed && (
-                      <span>{t(item.key)}</span>
-                    )}
-                    {!sidebarCollapsed &&
-                      item.hasBadge &&
-                      lowStockCount > 0 && (
-                        <span className="sidebar-link-badge">
-                          {lowStockCount}
-                        </span>
+                  return (
+                    <Link
+                      key={item.key}
+                      href={item.href}
+                      className={`sidebar-link${isActive ? ' active' : ''}`}
+                      title={sidebarCollapsed ? t(item.key) : undefined}
+                      onClick={() => setMobileOpen(false)}
+                    >
+                      <span className="sidebar-link-icon">
+                        <NavIcon navKey={item.key} size={17} />
+                      </span>
+                      {!sidebarCollapsed && (
+                        <span>{t(item.key)}</span>
                       )}
-                  </Link>
-                );
-              })}
-            </div>
-          );
-        })}
-      </nav>
+                      {!sidebarCollapsed &&
+                        item.hasBadge &&
+                        lowStockCount > 0 && (
+                          <span className="sidebar-link-badge">
+                            {lowStockCount}
+                          </span>
+                        )}
+                    </Link>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </nav>
 
-      {/* Theme Toggle */}
-      <div style={{ padding: '0 var(--space-md)', marginBottom: 'var(--space-sm)' }}>
-        <button
-          className="btn btn-ghost"
-          onClick={toggleTheme}
-          title={theme === 'dark' ? t('switchToLight') : t('switchToDark')}
+        {/* Theme & Language Bar */}
+        <div
           style={{
-            width: '100%',
-            justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-            padding: '10px var(--space-md)',
-            borderRadius: 'var(--radius-md)',
-            gap: 'var(--space-md)',
-            fontSize: 'var(--text-sm)',
+            padding: '0 10px',
+            marginBottom: 'var(--space-sm)',
+            display: 'flex',
+            flexDirection: sidebarCollapsed ? 'column' : 'row',
+            gap: 4,
           }}
         >
-          <span style={{ fontSize: '18px', width: 20, textAlign: 'center' }}>
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </span>
-          {!sidebarCollapsed && (
-            <span>{theme === 'dark' ? t('lightMode') : t('darkMode')}</span>
-          )}
-        </button>
-      </div>
-
-      {/* Footer */}
-      <div className="sidebar-footer" style={{ position: 'relative' }}>
-        {/* User Menu Popover */}
-        {showUserMenu && (
-          <div
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={toggleTheme}
+            title={theme === 'dark' ? t('switchToLight') : t('switchToDark')}
             style={{
-              position: 'absolute',
-              bottom: '100%',
-              left: sidebarCollapsed ? '50%' : 'var(--space-md)',
-              right: sidebarCollapsed ? 'auto' : 'var(--space-md)',
-              transform: sidebarCollapsed ? 'translateX(-50%)' : 'none',
-              minWidth: sidebarCollapsed ? '200px' : 'auto',
-              background: 'var(--bg-primary)',
-              border: '1px solid var(--border-default)',
-              borderRadius: 'var(--radius-lg)',
-              boxShadow: 'var(--shadow-lg)',
-              padding: 'var(--space-md)',
-              marginBottom: 'var(--space-sm)',
-              zIndex: 'var(--z-dropdown)',
-              animation: 'slideUp 0.15s ease',
+              flex: 1,
+              justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
+              padding: '7px 10px',
+              borderRadius: 'var(--radius-md)',
+              gap: 8,
             }}
           >
-            {/* User Info */}
-            <div style={{ marginBottom: 'var(--space-md)', paddingBottom: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)' }}>
-              <div style={{ fontWeight: 700, fontSize: 'var(--text-sm)' }}>{userName}</div>
-              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>{userEmail}</div>
-              <span className={`badge ${userRole === 'ADMIN' ? 'badge-primary' : userRole === 'MANAGER' ? 'badge-success' : 'badge-neutral'}`} style={{ marginTop: 'var(--space-xs)' }}>
-                {t(userRole.toLowerCase())}
-              </span>
-            </div>
-            {/* Sign Out Button */}
-            <button
-              className="btn btn-danger"
-              onClick={handleLogout}
-              style={{
-                width: '100%',
-                justifyContent: 'center',
-                gap: 'var(--space-sm)',
-              }}
-            >
-              <span>🚪</span>
-              {t('signOut')}
-            </button>
-          </div>
-        )}
-
-        {/* Clickable User Area */}
-        <div
-          className="sidebar-user"
-          onClick={() => setShowUserMenu(!showUserMenu)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter') setShowUserMenu(!showUserMenu); }}
-          style={{ cursor: 'pointer' }}
-        >
-          <div className="sidebar-user-avatar">{getInitials(userName)}</div>
-          {!sidebarCollapsed && (
-            <div className="sidebar-user-info" style={{ flex: 1 }}>
-              <div className="sidebar-user-name">{userName}</div>
-              <div className="sidebar-user-role">{t(userRole.toLowerCase())}</div>
-            </div>
-          )}
-          {!sidebarCollapsed && (
-            <span
-              style={{
-                fontSize: '12px',
-                color: 'var(--text-muted)',
-                transition: 'transform 0.2s ease',
-                transform: showUserMenu ? 'rotate(180deg)' : 'rotate(0deg)',
-              }}
-            >
-              ▲
-            </span>
-          )}
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            {!sidebarCollapsed && (
+              <span>{theme === 'dark' ? t('lightMode') : t('darkMode')}</span>
+            )}
+          </button>
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={toggleLanguage}
+            title={language === 'en' ? t('switchToMyanmar') : t('switchToEnglish')}
+            style={{
+              padding: '6px 10px',
+              fontWeight: 600,
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            {language === 'en' ? 'MM' : 'EN'}
+          </button>
         </div>
-      </div>
 
-      {/* Backdrop to close menu */}
-      {showUserMenu && (
-        <div
-          onClick={() => setShowUserMenu(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            zIndex: 'calc(var(--z-dropdown) - 1)',
-          }}
-        />
-      )}
+        {/* Footer */}
+        <div className="sidebar-footer" style={{ position: 'relative' }}>
+          {/* User Menu Popover */}
+          {showUserMenu && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: '100%',
+                left: sidebarCollapsed ? '50%' : '10px',
+                right: sidebarCollapsed ? 'auto' : '10px',
+                transform: sidebarCollapsed ? 'translateX(-50%)' : 'none',
+                minWidth: sidebarCollapsed ? '200px' : 'auto',
+                background: 'var(--bg-primary)',
+                border: '1px solid var(--border-default)',
+                borderRadius: 'var(--radius-lg)',
+                boxShadow: 'var(--shadow-lg)',
+                padding: 'var(--space-md)',
+                marginBottom: 'var(--space-sm)',
+                zIndex: 'var(--z-dropdown)',
+              }}
+            >
+              {/* User Info */}
+              <div style={{ marginBottom: 'var(--space-md)', paddingBottom: 'var(--space-sm)', borderBottom: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>{userName}</div>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 2 }}>{userEmail}</div>
+                <span className={`badge ${userRole === 'ADMIN' ? 'badge-primary' : userRole === 'MANAGER' ? 'badge-success' : 'badge-neutral'}`} style={{ marginTop: 6 }}>
+                  {t(userRole.toLowerCase())}
+                </span>
+              </div>
+              {/* Sign Out Button */}
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={handleLogout}
+                style={{
+                  width: '100%',
+                  justifyContent: 'center',
+                  gap: 6,
+                }}
+              >
+                <LogOut size={14} />
+                {t('signOut')}
+              </button>
+            </div>
+          )}
+
+          {/* Clickable User Area */}
+          <div
+            className="sidebar-user"
+            onClick={() => setShowUserMenu(!showUserMenu)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter') setShowUserMenu(!showUserMenu); }}
+            style={{ cursor: 'pointer' }}
+          >
+            <div className="sidebar-user-avatar">{getInitials(userName)}</div>
+            {!sidebarCollapsed && (
+              <div className="sidebar-user-info" style={{ flex: 1 }}>
+                <div className="sidebar-user-name">{userName}</div>
+                <div className="sidebar-user-role">{t(userRole.toLowerCase())}</div>
+              </div>
+            )}
+          </div>
+        </div>
       </aside>
     </>
   );

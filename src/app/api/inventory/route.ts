@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { inventoryMovementSchema } from '@/lib/validations';
+import { serializePrismaData, toNumber } from '@/lib/number';
+import { parseMyanmarDateBoundary, roundQuantity } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,12 +30,12 @@ export async function GET(request: NextRequest) {
     if (startDate || endDate) {
       where.createdAt = {};
       if (startDate) {
-        (where.createdAt as Record<string, unknown>).gte = new Date(startDate);
+        const start = parseMyanmarDateBoundary(startDate, false);
+        if (start) (where.createdAt as Record<string, unknown>).gte = start;
       }
       if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        (where.createdAt as Record<string, unknown>).lte = end;
+        const end = parseMyanmarDateBoundary(endDate, true);
+        if (end) (where.createdAt as Record<string, unknown>).lte = end;
       }
     }
 
@@ -56,7 +58,7 @@ export async function GET(request: NextRequest) {
     ]);
 
     return NextResponse.json({
-      movements,
+      movements: serializePrismaData(movements),
       pagination: {
         page,
         limit,
@@ -76,7 +78,12 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const parsed = inventoryMovementSchema.parse(body);
-    const { productId, quantity, type, reason } = parsed;
+    const { productId, quantity: rawQuantity, type, reason } = parsed;
+    const quantity = roundQuantity(rawQuantity);
+
+    if ((type === 'IN' || type === 'OUT' || type === 'RETURN') && quantity <= 0) {
+      return NextResponse.json({ error: 'Quantity must be greater than zero' }, { status: 400 });
+    }
 
     const movement = await prisma.$transaction(async (tx) => {
       const product = await tx.product.findUnique({
@@ -87,13 +94,13 @@ export async function POST(request: NextRequest) {
         throw new Error('Product not found');
       }
 
-      const previousStock = product.stockQuantity;
+      const previousStock = roundQuantity(toNumber(product.stockQuantity));
       let newStock: number;
 
       switch (type) {
         case 'IN':
         case 'RETURN': {
-          newStock = previousStock + quantity;
+          newStock = roundQuantity(previousStock + quantity);
           await tx.product.update({
             where: { id: productId },
             data: { stockQuantity: { increment: quantity } },
@@ -110,11 +117,11 @@ export async function POST(request: NextRequest) {
               `Insufficient stock. Current: ${previousStock}, Requested: ${quantity}`
             );
           }
-          newStock = previousStock - quantity;
+          newStock = roundQuantity(previousStock - quantity);
           break;
         }
         case 'ADJUSTMENT': {
-          newStock = quantity;
+          newStock = roundQuantity(quantity);
           await tx.product.update({
             where: { id: productId },
             data: { stockQuantity: newStock },
@@ -148,7 +155,7 @@ export async function POST(request: NextRequest) {
       return created;
     });
 
-    return NextResponse.json(movement, { status: 201 });
+    return NextResponse.json(serializePrismaData(movement), { status: 201 });
   } catch (error) {
     return handleApiError(error, 'Failed to create stock movement');
   }

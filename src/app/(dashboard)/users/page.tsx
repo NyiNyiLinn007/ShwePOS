@@ -4,6 +4,13 @@ import React, { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatDate } from '@/lib/utils';
+import {
+  Plus,
+  User,
+  Pencil,
+  Trash2,
+  X,
+} from '@/components/ui/Icons';
 
 /* ---------- Types ---------- */
 
@@ -251,8 +258,13 @@ export default function UsersPage() {
             {t('Manage system users and their roles', 'အသုံးပြုသူနှင့်ရာထူးများစီမံပါ')}
           </p>
         </div>
-        <button className="btn btn-primary" onClick={openAdd}>
-          <span>＋</span> {t('Add User', 'အသုံးပြုသူထည့်ရန်')}
+        <button
+          className="btn btn-primary"
+          onClick={openAdd}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+        >
+          <Plus size={16} strokeWidth={2} />
+          {t('Add User', 'အသုံးပြုသူထည့်ရန်')}
         </button>
       </div>
 
@@ -316,7 +328,9 @@ export default function UsersPage() {
           {/* Users Table */}
           {filteredUsers.length === 0 ? (
             <div className="empty-state">
-              <div className="empty-state-icon">👤</div>
+              <div className="empty-state-icon">
+                <User size={28} strokeWidth={1.5} />
+              </div>
               <div className="empty-state-title">
                 {t('No users found', 'အသုံးပြုသူမတွေ့ပါ')}
               </div>
@@ -396,7 +410,7 @@ export default function UsersPage() {
                             onClick={() => openEdit(user)}
                             title={t('edit')}
                           >
-                            ✏️
+                            <Pencil size={15} strokeWidth={1.75} />
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
@@ -404,7 +418,7 @@ export default function UsersPage() {
                             title={t('deactivate')}
                             style={{ color: 'var(--danger)' }}
                           >
-                            🗑️
+                            <Trash2 size={15} strokeWidth={1.75} />
                           </button>
                         </div>
                       </td>
@@ -433,7 +447,7 @@ export default function UsersPage() {
                 type="button"
                 aria-label="Close"
               >
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div
@@ -567,7 +581,7 @@ export default function UsersPage() {
                 type="button"
                 aria-label="Close"
               >
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">

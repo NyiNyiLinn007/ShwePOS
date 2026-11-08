@@ -117,6 +117,8 @@ export const translations: TranslationKeys = {
   card: { en: 'Card', mm: 'ကတ်' },
   mobileBanking: { en: 'Mobile Banking', mm: 'မိုဘိုင်းဘဏ်' },
   credit: { en: 'Credit', mm: 'အကြွေး' },
+  splitPayment: { en: 'Split Payment', mm: 'ပေါင်းစပ်ငွေပေးချေမှု' },
+  partiallyRefunded: { en: 'Partially Refunded', mm: 'တစ်စိတ်တစ်ပိုင်း ပြန်အမ်းပြီး' },
   paidAmount: { en: 'Paid Amount', mm: 'ပေးငွေ' },
   changeAmount: { en: 'Change', mm: 'ပြန်အမ်းငွေ' },
   invoiceNumber: { en: 'Invoice No.', mm: 'ပြေစာအမှတ်' },

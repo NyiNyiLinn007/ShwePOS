@@ -34,15 +34,13 @@ export default async function DashboardPage() {
     where: { isActive: true },
   });
 
-  // Low stock: products where stockQuantity <= lowStockThreshold
-  // Prisma doesn't support comparing two fields directly, so we filter in memory
-  const lowStockProducts = await prisma.product.findMany({
-    where: { isActive: true },
-    select: { stockQuantity: true, lowStockThreshold: true },
-  });
-  const actualLowStockCount = lowStockProducts.filter(
-    (p) => p.stockQuantity <= p.lowStockThreshold
-  ).length;
+  // Low stock: products where stockQuantity <= lowStockThreshold via SQL count
+  const lowStockRows = await prisma.$queryRaw<Array<{ count: number }>>`
+    SELECT COUNT(*)::int AS "count"
+    FROM "Product"
+    WHERE "isActive" = true AND "stockQuantity" <= "lowStockThreshold"
+  `;
+  const actualLowStockCount = lowStockRows[0]?.count ?? 0;
 
   // --- Recent 10 sales ---
   const recentSalesRaw = todaySales.slice(0, 10);
@@ -91,7 +89,7 @@ export default async function DashboardPage() {
   const topProducts = topProductsRaw.map((tp) => ({
     productId: tp.productId,
     productName: productNameMap.get(tp.productId) ?? 'Unknown Product',
-    totalQuantity: tp._sum.quantity ?? 0,
+    totalQuantity: toNumber(tp._sum.quantity),
     totalRevenue: toNumber(tp._sum.total),
   }));
 

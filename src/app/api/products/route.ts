@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     await validateCsrf(request);
-    await requireRole('MANAGER', 'ADMIN');
+    const user = await requireRole('MANAGER', 'ADMIN');
 
     const body = await request.json();
     const parsed = createProductSchema.safeParse(body);
@@ -105,30 +105,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const product = await prisma.product.create({
-      data: {
-        name: parsed.data.name,
-        nameMm: parsed.data.nameMm ?? null,
-        sku: parsed.data.sku,
-        barcode: parsed.data.barcode ?? null,
-        categoryId: parsed.data.categoryId,
-        costPrice: parsed.data.costPrice,
-        sellingPrice: parsed.data.sellingPrice,
-        stockQuantity: parsed.data.stockQuantity,
-        lowStockThreshold: parsed.data.lowStockThreshold,
-        unit: parsed.data.unit,
-        imageUrl: parsed.data.imageUrl ?? null,
-        isActive: parsed.data.isActive ?? true,
-      },
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            nameMm: true,
+    const product = await prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
+          name: parsed.data.name,
+          nameMm: parsed.data.nameMm ?? null,
+          sku: parsed.data.sku,
+          barcode: parsed.data.barcode ?? null,
+          categoryId: parsed.data.categoryId,
+          costPrice: parsed.data.costPrice,
+          sellingPrice: parsed.data.sellingPrice,
+          stockQuantity: parsed.data.stockQuantity,
+          lowStockThreshold: parsed.data.lowStockThreshold,
+          unit: parsed.data.unit,
+          imageUrl: parsed.data.imageUrl ?? null,
+          batchNumber: parsed.data.batchNumber ?? null,
+          expiryDate: parsed.data.expiryDate ? new Date(parsed.data.expiryDate) : null,
+          isActive: parsed.data.isActive ?? true,
+        },
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+              nameMm: true,
+            },
           },
         },
-      },
+      });
+
+      if (parsed.data.stockQuantity > 0) {
+        await tx.stockMovement.create({
+          data: {
+            productId: created.id,
+            userId: user.id,
+            quantity: parsed.data.stockQuantity,
+            type: 'IN',
+            reason: 'Initial stock on product creation',
+            previousStock: 0,
+            newStock: parsed.data.stockQuantity,
+          },
+        });
+      }
+
+      return created;
     });
 
     return NextResponse.json(serializePrismaData(product), { status: 201 });

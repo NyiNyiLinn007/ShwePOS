@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatTime } from '@/lib/utils';
+import { Receipt } from '@/components/ui/Icons';
 
 interface RecentSaleItem {
   id: string;
@@ -23,6 +24,7 @@ const paymentMethodBadge: Record<string, string> = {
   CARD: 'badge-info',
   MOBILE_BANKING: 'badge-primary',
   CREDIT: 'badge-warning',
+  SPLIT: 'badge-neutral',
 };
 
 const paymentMethodTranslationKeys: Record<string, string> = {
@@ -30,6 +32,7 @@ const paymentMethodTranslationKeys: Record<string, string> = {
   CARD: 'card',
   MOBILE_BANKING: 'mobileBanking',
   CREDIT: 'credit',
+  SPLIT: 'splitPayment',
 };
 
 export default function RecentSales({ sales }: RecentSalesProps) {
@@ -39,18 +42,26 @@ export default function RecentSales({ sales }: RecentSalesProps) {
     <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
       <div
         style={{
-          padding: 'var(--space-lg)',
+          padding: '14px var(--space-lg)',
           borderBottom: '1px solid var(--border-subtle)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
         }}
       >
-        <h3 className="heading-4">
+        <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600 }}>
           {t('Recent Sales', 'မကြာမီက ရောင်းချမှုများ')}
         </h3>
+        <Link href="/sales" style={{ fontSize: 'var(--text-xs)', fontWeight: 500 }}>
+          {t('View all', 'အားလုံးကြည့်ရန်')} →
+        </Link>
       </div>
 
       {sales.length === 0 ? (
-        <div className="empty-state" style={{ padding: 'var(--space-2xl)' }}>
-          <div className="empty-state-icon">🛒</div>
+        <div className="empty-state" style={{ border: 'none', borderRadius: 0 }}>
+          <div className="empty-state-icon">
+            <Receipt size={20} strokeWidth={1.75} />
+          </div>
           <div className="empty-state-title">
             {t('No sales today', 'ယနေ့ ရောင်းချမှုမရှိပါ')}
           </div>
@@ -62,7 +73,7 @@ export default function RecentSales({ sales }: RecentSalesProps) {
           </div>
         </div>
       ) : (
-        <div className="table-container" style={{ border: 'none' }}>
+        <div className="table-container" style={{ border: 'none', boxShadow: 'none', borderRadius: 0 }}>
           <table className="table">
             <thead>
               <tr>
@@ -84,7 +95,11 @@ export default function RecentSales({ sales }: RecentSalesProps) {
                     <td>
                       <Link
                         href={`/sales/${sale.id}`}
-                        style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}
+                        style={{
+                          fontWeight: 600,
+                          fontSize: 'var(--text-xs)',
+                          fontFamily: 'var(--font-mono)',
+                        }}
                       >
                         {sale.invoiceNumber}
                       </Link>
@@ -96,8 +111,8 @@ export default function RecentSales({ sales }: RecentSalesProps) {
                     <td
                       style={{
                         textAlign: 'right',
-                        fontWeight: 700,
-                        color: 'var(--primary)',
+                        fontWeight: 600,
+                        color: 'var(--text-primary)',
                       }}
                     >
                       {formatCurrency(sale.totalAmount)}
@@ -111,7 +126,7 @@ export default function RecentSales({ sales }: RecentSalesProps) {
                       style={{
                         textAlign: 'right',
                         color: 'var(--text-muted)',
-                        fontSize: 'var(--text-sm)',
+                        fontSize: 'var(--text-xs)',
                       }}
                     >
                       {formatTime(sale.createdAt)}

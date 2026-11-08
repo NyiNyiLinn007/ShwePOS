@@ -5,7 +5,7 @@ import { persist } from 'zustand/middleware';
 
 // ============================================
 // ShwePOS Business Settings Store
-// Holds business profile + tax/currency settings
+// Holds business profile + tax/currency/loyalty settings
 // Syncs across Receipt, Sidebar, POS, etc.
 // ============================================
 
@@ -19,6 +19,9 @@ export interface BusinessSettings {
   currencySymbol: string;
   logo: string | null;
   receiptFooter: string | null;
+  loyaltyEnabled: boolean;
+  loyaltyEarnRate: number;
+  loyaltyRedeemRate: number;
 }
 
 interface SettingsState extends BusinessSettings {
@@ -45,6 +48,9 @@ const DEFAULT_SETTINGS: BusinessSettings = {
   currencySymbol: 'K',
   logo: null,
   receiptFooter: null,
+  loyaltyEnabled: true,
+  loyaltyEarnRate: 1000,
+  loyaltyRedeemRate: 10,
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -71,6 +77,9 @@ export const useSettingsStore = create<SettingsState>()(
         currencySymbol: state.currencySymbol,
         logo: state.logo,
         receiptFooter: state.receiptFooter,
+        loyaltyEnabled: state.loyaltyEnabled,
+        loyaltyEarnRate: state.loyaltyEarnRate,
+        loyaltyRedeemRate: state.loyaltyRedeemRate,
         loaded: state.loaded,
       }),
     }

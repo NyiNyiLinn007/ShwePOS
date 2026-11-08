@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
 import { useI18n } from '@/lib/i18n';
+import { CheckCircle2, AlertCircle, AlertTriangle, Info, X } from '@/components/ui/Icons';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
@@ -56,19 +57,20 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       <div className="toast-container">
         {toasts.map((toast) => (
           <div key={toast.id} className={`toast toast-${toast.type}`}>
-            <span className="toast-icon">
-              {toast.type === 'success' && '✓'}
-              {toast.type === 'error' && '✕'}
-              {toast.type === 'warning' && '⚠'}
-              {toast.type === 'info' && 'ℹ'}
+            <span className="toast-icon" style={{ display: 'inline-flex', alignItems: 'center' }}>
+              {toast.type === 'success' && <CheckCircle2 size={16} strokeWidth={2} />}
+              {toast.type === 'error' && <AlertCircle size={16} strokeWidth={2} />}
+              {toast.type === 'warning' && <AlertTriangle size={16} strokeWidth={2} />}
+              {toast.type === 'info' && <Info size={16} strokeWidth={2} />}
             </span>
             <span className="toast-message">{toast.message}</span>
             <button
               className="toast-close"
               onClick={() => removeToast(toast.id)}
               aria-label={t('close')}
+              style={{ display: 'inline-flex', alignItems: 'center' }}
             >
-              ✕
+              <X size={14} strokeWidth={2} />
             </button>
           </div>
         ))}

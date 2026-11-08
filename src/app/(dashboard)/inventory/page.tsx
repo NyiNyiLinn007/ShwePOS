@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { InventoryClient } from '@/components/inventory/InventoryClient';
 import { requirePageRole } from '@/lib/pageAuth';
+import { serializePrismaData } from '@/lib/number';
 
 export default async function InventoryPage() {
   await requirePageRole('MANAGER', 'ADMIN');
@@ -17,6 +18,8 @@ export default async function InventoryPage() {
         lowStockThreshold: true,
         unit: true,
         imageUrl: true,
+        batchNumber: true,
+        expiryDate: true,
         isActive: true,
         category: {
           select: { id: true, name: true, nameMm: true },
@@ -40,8 +43,8 @@ export default async function InventoryPage() {
 
   return (
     <InventoryClient
-      initialProducts={products}
-      initialMovements={recentMovements}
+      initialProducts={serializePrismaData(products)}
+      initialMovements={serializePrismaData(recentMovements)}
     />
   );
 }

@@ -3,6 +3,15 @@
 import React, { useState, useMemo } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
+import {
+  Plus,
+  FolderOpen,
+  Package,
+  Pencil,
+  Trash2,
+  X,
+  AlertTriangle,
+} from '@/components/ui/Icons';
 
 interface Category {
   id: string;
@@ -207,8 +216,12 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
           <p className="page-subtitle mm-text">{t('Category Management', 'အမျိုးအစားစီမံခန့်ခွဲမှု')}</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-primary" onClick={openAddModal}>
-            <span>＋</span>
+          <button
+            className="btn btn-primary"
+            onClick={openAddModal}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Plus size={16} strokeWidth={2} />
             {t('Add Category', 'အမျိုးအစားထည့်ရန်')}
           </button>
         </div>
@@ -230,7 +243,9 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
         {/* Categories Grid */}
         {filteredCategories.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">📂</div>
+            <div className="empty-state-icon">
+              <FolderOpen size={28} strokeWidth={1.5} />
+            </div>
             <div className="empty-state-title">{t('No categories found', 'အမျိုးအစားမတွေ့ပါ')}</div>
             <div className="empty-state-text">
               {search
@@ -238,8 +253,13 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
                 : t('Create your first category to get started', 'စတင်ရန် ပထမအမျိုးအစားကိုဖန်တီးပါ')}
             </div>
             {!search && (
-              <button className="btn btn-primary" onClick={openAddModal}>
-                <span>＋</span> {t('Add Category', 'အမျိုးအစားထည့်ရန်')}
+              <button
+                className="btn btn-primary"
+                onClick={openAddModal}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Plus size={16} strokeWidth={2} />
+                {t('Add Category', 'အမျိုးအစားထည့်ရန်')}
               </button>
             )}
           </div>
@@ -286,7 +306,7 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
                     alignItems: 'center',
                     gap: 'var(--space-xs)',
                   }}>
-                    <span>📦</span>
+                    <Package size={15} strokeWidth={1.75} />
                     <span>{category._count.products} {t('product', 'ခု')}{language !== 'mm' && category._count.products !== 1 ? 's' : ''}</span>
                   </div>
                   <div className="table-actions">
@@ -295,7 +315,7 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
                       onClick={() => openEditModal(category)}
                       title={t('Edit', 'ပြင်ဆင်ရန်')}
                     >
-                      ✏️
+                      <Pencil size={15} strokeWidth={1.75} />
                     </button>
                     <button
                       className="btn btn-ghost btn-sm"
@@ -303,7 +323,7 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
                       title={t('Delete', 'ဖျက်ရန်')}
                       style={{ color: 'var(--danger)' }}
                     >
-                      🗑️
+                      <Trash2 size={15} strokeWidth={1.75} />
                     </button>
                   </div>
                 </div>
@@ -322,7 +342,7 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
                 {editingCategory ? t('Edit Category', 'အမျိုးအစားပြင်ဆင်ရန်') : t('Add Category', 'အမျိုးအစားထည့်ရန်')}
               </h2>
               <button className="btn btn-ghost btn-icon" onClick={closeModal}>
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -440,7 +460,7 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
             <div className="modal-header">
               <h2 className="modal-title">{t('Delete Category', 'အမျိုးအစားဖျက်ရန်')}</h2>
               <button className="btn btn-ghost btn-icon" onClick={() => setDeleteTarget(null)}>
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -455,8 +475,14 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
                   borderRadius: 'var(--radius-md)',
                   fontSize: 'var(--text-sm)',
                   color: 'var(--warning)',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
                 }}>
-                  ⚠ {t(`This category has ${deleteTarget._count.products} product(s). You must reassign them before deleting.`, `ဤအမျိုးအစားတွင် ကုန်ပစ္စည်း ${deleteTarget._count.products} ခုရှိပါသည်။ ဖျက်မပယ်မီ အခြားအမျိုးအစားသို့ပြောင်းပါ။`)}
+                  <AlertTriangle size={16} strokeWidth={1.75} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <span>
+                    {t(`This category has ${deleteTarget._count.products} product(s). You must reassign them before deleting.`, `ဤအမျိုးအစားတွင် ကုန်ပစ္စည်း ${deleteTarget._count.products} ခုရှိပါသည်။ ဖျက်မပယ်မီ အခြားအမျိုးအစားသို့ပြောင်းပါ။`)}
+                  </span>
                 </div>
               )}
               <p style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 'var(--space-md)' }}>

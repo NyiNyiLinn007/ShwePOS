@@ -103,9 +103,14 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    const updateData: Record<string, unknown> = { ...parsed.data };
+    if (parsed.data.expiryDate !== undefined) {
+      updateData.expiryDate = parsed.data.expiryDate ? new Date(parsed.data.expiryDate) : null;
+    }
+
     const product = await prisma.product.update({
       where: { id },
-      data: parsed.data,
+      data: updateData,
       include: {
         category: {
           select: {

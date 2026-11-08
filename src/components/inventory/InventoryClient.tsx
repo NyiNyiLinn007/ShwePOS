@@ -4,8 +4,18 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatDateTime } from '@/lib/utils';
+import { formatDate, formatDateTime, formatQuantity, isFractionalUnit, parseMyanmarDateBoundary, roundQuantity } from '@/lib/utils';
 import { STOCK_MOVEMENT_TYPES } from '@/lib/constants';
+import {
+  StockMovementIcon,
+  Boxes,
+  FileSpreadsheet,
+  Package,
+  SlidersHorizontal,
+  AlertTriangle,
+  Clock,
+  X,
+} from '@/components/ui/Icons';
 
 const stockMovementTranslationKeys: Record<string, string> = {
   IN: 'stockIn',
@@ -30,6 +40,8 @@ interface InventoryProduct {
   stockQuantity: number;
   lowStockThreshold: number;
   unit: string;
+  batchNumber?: string | null;
+  expiryDate?: string | Date | null;
   imageUrl: string | null;
   isActive: boolean;
   category: ProductCategory;
@@ -140,15 +152,13 @@ export function InventoryClient({
     }
 
     if (movementDateFrom) {
-      const from = new Date(movementDateFrom);
-      from.setHours(0, 0, 0, 0);
-      result = result.filter((m) => new Date(m.createdAt) >= from);
+      const from = parseMyanmarDateBoundary(movementDateFrom, false);
+      if (from) result = result.filter((m) => new Date(m.createdAt) >= from);
     }
 
     if (movementDateTo) {
-      const to = new Date(movementDateTo);
-      to.setHours(23, 59, 59, 999);
-      result = result.filter((m) => new Date(m.createdAt) <= to);
+      const to = parseMyanmarDateBoundary(movementDateTo, true);
+      if (to) result = result.filter((m) => new Date(m.createdAt) <= to);
     }
 
     return result;
@@ -174,16 +184,16 @@ export function InventoryClient({
     return { label: t('inStock'), className: 'badge-success' };
   }
 
-  function getMovementTypeBadge(type: string): { label: string; className: string; icon: string } {
+  function getMovementTypeBadge(type: string): { label: string; className: string } {
     const found = STOCK_MOVEMENT_TYPES.find((movement) => movement.value === type);
     if (found) {
       let className = 'badge-primary';
       if (type === 'IN' || type === 'RETURN') className = 'badge-success';
       if (type === 'OUT') className = 'badge-danger';
       if (type === 'ADJUSTMENT') className = 'badge-warning';
-      return { label: t(stockMovementTranslationKeys[type] ?? type), className, icon: found.icon };
+      return { label: t(stockMovementTranslationKeys[type] ?? type), className };
     }
-    return { label: type, className: 'badge-neutral', icon: '📦' };
+    return { label: type, className: 'badge-neutral' };
   }
 
   // Adjust Stock Modal
@@ -213,9 +223,17 @@ export function InventoryClient({
   function validateAdjustment(): boolean {
     const errors: Record<string, string> = {};
     const qty = Number(adjustForm.quantity);
+    const fractional = isFractionalUnit(adjustTarget?.unit);
 
-    if (!adjustForm.quantity || isNaN(qty) || qty <= 0 || !Number.isInteger(qty)) {
-      errors.quantity = t('Quantity must be a positive integer', 'အရေအတွက်သည် အပြုကိန်းပြည့်ဖြစ်ရပါမည်');
+    if (
+      !adjustForm.quantity ||
+      isNaN(qty) ||
+      (adjustForm.type === 'ADJUSTMENT' ? qty < 0 : qty <= 0) ||
+      (!fractional && !Number.isInteger(qty))
+    ) {
+      errors.quantity = fractional
+        ? t('Quantity must be a valid positive number', 'အရေအတွက်သည် အပြုကိန်းဖြစ်ရပါမည်')
+        : t('Quantity must be a positive integer', 'အရေအတွက်သည် အပြုကိန်းပြည့်ဖြစ်ရပါမည်');
     }
 
     if (adjustForm.type === 'OUT' && adjustTarget) {
@@ -407,30 +425,38 @@ export function InventoryClient({
           style={{ marginBottom: 'var(--space-lg)', borderBottom: '1px solid var(--border-color)', paddingBottom: 0 }}
         >
           <button
-            className={`btn btn-ghost`}
+            className="btn btn-ghost"
             style={{
               borderBottom: activeTab === 'levels' ? '2px solid var(--primary)' : '2px solid transparent',
               borderRadius: 0,
               color: activeTab === 'levels' ? 'var(--primary)' : 'var(--text-muted)',
               fontWeight: activeTab === 'levels' ? 700 : 400,
               paddingBottom: 'var(--space-sm)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
             }}
             onClick={() => handleTabChange('levels')}
           >
-            📊 {t('Stock Levels', 'ကုန်လက်ကျန်အဆင့်')}
+            <Boxes size={15} strokeWidth={1.75} />
+            {t('Stock Levels', 'ကုန်လက်ကျန်အဆင့်')}
           </button>
           <button
-            className={`btn btn-ghost`}
+            className="btn btn-ghost"
             style={{
               borderBottom: activeTab === 'movements' ? '2px solid var(--primary)' : '2px solid transparent',
               borderRadius: 0,
               color: activeTab === 'movements' ? 'var(--primary)' : 'var(--text-muted)',
               fontWeight: activeTab === 'movements' ? 700 : 400,
               paddingBottom: 'var(--space-sm)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
             }}
             onClick={() => handleTabChange('movements')}
           >
-            📋 {t('Stock Movements', 'ကုန်ပစ္စည်းအဝင်အထွက်')}
+            <FileSpreadsheet size={15} strokeWidth={1.75} />
+            {t('Stock Movements', 'ကုန်ပစ္စည်းအဝင်အထွက်')}
           </button>
         </div>
 
@@ -452,8 +478,8 @@ export function InventoryClient({
                   }}
                 >
                   <option value="all">{t('All Products', 'ကုန်ပစ္စည်းအားလုံး')}</option>
-                  <option value="low">⚠️ {t('Low Stock Only', 'လက်ကျန်နည်းသောပစ္စည်းများသာ')}</option>
-                  <option value="out">🚫 {t('Out of Stock Only', 'ကုန်ပစ္စည်းကုန်သည်များသာ')}</option>
+                  <option value="low">{t('Low Stock Only', 'လက်ကျန်နည်းသောပစ္စည်းများသာ')}</option>
+                  <option value="out">{t('Out of Stock Only', 'ကုန်ပစ္စည်းကုန်သည်များသာ')}</option>
                 </select>
               </div>
               <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
@@ -463,7 +489,9 @@ export function InventoryClient({
 
             {filteredProducts.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-state-icon">📦</div>
+                <div className="empty-state-icon">
+                  <Package size={28} strokeWidth={1.5} />
+                </div>
                 <div className="empty-state-title">{t('No products found', 'ကုန်ပစ္စည်းမတွေ့ပါ')}</div>
                 <div className="empty-state-text">
                   {stockFilter !== 'all'
@@ -509,6 +537,34 @@ export function InventoryClient({
                                     {product.nameMm}
                                   </div>
                                 )}
+                                <div className="flex gap-xs" style={{ marginTop: 2, flexWrap: 'wrap' }}>
+                                  {product.batchNumber && (
+                                    <span className="badge badge-neutral" style={{ fontSize: '10px' }}>
+                                      Batch: {product.batchNumber}
+                                    </span>
+                                  )}
+                                  {product.expiryDate && (() => {
+                                    const exp = new Date(product.expiryDate);
+                                    const diffDays = Math.ceil((exp.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                                    if (diffDays < 0) {
+                                      return (
+                                        <span className="badge badge-danger" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                          <AlertTriangle size={10} strokeWidth={2} />
+                                          {t('Expired', 'သက်တမ်းကုန်')} ({formatDate(exp)})
+                                        </span>
+                                      );
+                                    }
+                                    if (diffDays <= 30) {
+                                      return (
+                                        <span className="badge badge-warning" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                          <Clock size={10} strokeWidth={2} />
+                                          {t('Exp', 'သက်တမ်း')}: {formatDate(exp)} ({diffDays}d)
+                                        </span>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
+                                </div>
                               </div>
                             </td>
                             <td>
@@ -543,11 +599,11 @@ export function InventoryClient({
                                       : 'var(--success)',
                                 }}
                               >
-                                {product.stockQuantity}
+                                {formatQuantity(product.stockQuantity, product.unit)}
                               </span>
                             </td>
                             <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
-                              {product.lowStockThreshold}
+                              {formatQuantity(product.lowStockThreshold, product.unit)}
                             </td>
                             <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
                               {product.unit}
@@ -561,8 +617,10 @@ export function InventoryClient({
                               <button
                                 className="btn btn-secondary btn-sm"
                                 onClick={() => openAdjustModal(product)}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
                               >
-                                ⚙️ {t('Adjust', 'ချိန်ညှိရန်')}
+                                <SlidersHorizontal size={13} strokeWidth={1.75} />
+                                {t('Adjust', 'ချိန်ညှိရန်')}
                               </button>
                             </td>
                           </tr>
@@ -638,7 +696,7 @@ export function InventoryClient({
                   <option value="">{t('All Types', 'အမျိုးအစားအားလုံး')}</option>
                   {STOCK_MOVEMENT_TYPES.map((movement) => (
                     <option key={movement.value} value={movement.value}>
-                      {movement.icon} {t(stockMovementTranslationKeys[movement.value] ?? movement.value)}
+                      {t(stockMovementTranslationKeys[movement.value] ?? movement.value)}
                     </option>
                   ))}
                 </select>
@@ -678,8 +736,10 @@ export function InventoryClient({
                     setMovementDateTo('');
                     setCurrentPage(1);
                   }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 >
-                  ✕ {t('Clear', 'ရှင်းလင်းရန်')}
+                  <X size={13} strokeWidth={1.75} />
+                  {t('Clear', 'ရှင်းလင်းရန်')}
                 </button>
               )}
               <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
@@ -689,7 +749,9 @@ export function InventoryClient({
 
             {filteredMovements.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-state-icon">📋</div>
+                <div className="empty-state-icon">
+                  <FileSpreadsheet size={28} strokeWidth={1.5} />
+                </div>
                 <div className="empty-state-title">{t('No stock movements found', 'ကုန်ပစ္စည်းအဝင်အထွက်မတွေ့ပါ')}</div>
                 <div className="empty-state-text">
                   {t('Stock movements will appear here when stock is adjusted', 'ကုန်လက်ကျန်ချိန်ညှိသည့်အခါ ဤနေရာတွင် ပေါ်လာပါမည်')}
@@ -734,8 +796,12 @@ export function InventoryClient({
                               </div>
                             </td>
                             <td>
-                              <span className={`badge ${typeBadge.className}`}>
-                                {typeBadge.icon} {typeBadge.label}
+                              <span
+                                className={`badge ${typeBadge.className}`}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                              >
+                                <StockMovementIcon type={movement.type} size={13} />
+                                {typeBadge.label}
                               </span>
                             </td>
                             <td
@@ -838,7 +904,7 @@ export function InventoryClient({
                 className="btn btn-ghost btn-icon"
                 onClick={closeAdjustModal}
               >
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -887,9 +953,9 @@ export function InventoryClient({
                     handleAdjustFormChange('type', e.target.value)
                   }
                 >
-                  <option value="IN">📥 {t('Stock In — Add to current stock', 'ကုန်ပစ္စည်းအဝင် — လက်ရှိကုန်လက်ကျန်သို့ထည့်ရန်')}</option>
-                  <option value="OUT">📤 {t('Stock Out — Remove from current stock', 'ကုန်ပစ္စည်းအထွက် — လက်ရှိကုန်လက်ကျန်မှနှုတ်ရန်')}</option>
-                  <option value="ADJUSTMENT">🔄 {t('Adjustment — Set exact quantity', 'ချိန်ညှိမှု — အတိအကျပမာဏသတ်မှတ်ရန်')}</option>
+                  <option value="IN">{t('Stock In — Add to current stock', 'ကုန်ပစ္စည်းအဝင် — လက်ရှိကုန်လက်ကျန်သို့ထည့်ရန်')}</option>
+                  <option value="OUT">{t('Stock Out — Remove from current stock', 'ကုန်ပစ္စည်းအထွက် — လက်ရှိကုန်လက်ကျန်မှနှုတ်ရန်')}</option>
+                  <option value="ADJUSTMENT">{t('Adjustment — Set exact quantity', 'ချိန်ညှိမှု — အတိအကျပမာဏသတ်မှတ်ရန်')}</option>
                 </select>
               </div>
 
@@ -903,7 +969,7 @@ export function InventoryClient({
                 <input
                   type="number"
                   min="0"
-                  step="1"
+                  step={isFractionalUnit(adjustTarget.unit) ? '0.01' : '1'}
                   className={`input ${adjustErrors.quantity ? 'input-error' : ''}`}
                   placeholder={
                     adjustForm.type === 'ADJUSTMENT'
@@ -930,13 +996,13 @@ export function InventoryClient({
                     }}
                   >
                     {adjustForm.type === 'IN' && (
-                      <>{t('New stock will be', 'အသစ်ကုန်လက်ကျန်')}: {adjustTarget.stockQuantity + Number(adjustForm.quantity)} {adjustTarget.unit}</>
+                      <>{t('New stock will be', 'အသစ်ကုန်လက်ကျန်')}: {roundQuantity(adjustTarget.stockQuantity + Number(adjustForm.quantity))} {adjustTarget.unit}</>
                     )}
                     {adjustForm.type === 'OUT' && (
-                      <>{t('New stock will be', 'အသစ်ကုန်လက်ကျန်')}: {adjustTarget.stockQuantity - Number(adjustForm.quantity)} {adjustTarget.unit}</>
+                      <>{t('New stock will be', 'အသစ်ကုန်လက်ကျန်')}: {roundQuantity(adjustTarget.stockQuantity - Number(adjustForm.quantity))} {adjustTarget.unit}</>
                     )}
                     {adjustForm.type === 'ADJUSTMENT' && (
-                      <>{t('Stock will be set to', 'ကုန်လက်ကျန်သတ်မှတ်မည်')}: {Number(adjustForm.quantity)} {adjustTarget.unit}</>
+                      <>{t('Stock will be set to', 'ကုန်လက်ကျန်သတ်မှတ်မည်')}: {roundQuantity(Number(adjustForm.quantity))} {adjustTarget.unit}</>
                     )}
                   </div>
                 )}

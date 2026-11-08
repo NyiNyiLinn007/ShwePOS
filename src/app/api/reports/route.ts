@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole, handleApiError } from '@/lib/apiAuth';
 import { toNumber } from '@/lib/number';
+import {
+  getMyanmarDateKey,
+  getMyanmarDateParts,
+  getMyanmarHour,
+  parseMyanmarDateBoundary,
+} from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,21 +17,20 @@ export async function GET(request: NextRequest) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
 
-    // Default to current month if no dates provided
-    const now = new Date();
-    const start = startDate
-      ? new Date(startDate)
-      : new Date(now.getFullYear(), now.getMonth(), 1);
-    if (Number.isNaN(start.getTime())) {
+    // Default to current month in Myanmar timezone if no dates provided
+    const nowParts = getMyanmarDateParts();
+    const defaultStartStr = `${nowParts.year}-${String(nowParts.month + 1).padStart(2, '0')}-01`;
+    const defaultEndStr = `${nowParts.year}-${String(nowParts.month + 1).padStart(2, '0')}-${String(nowParts.day).padStart(2, '0')}`;
+
+    const start = parseMyanmarDateBoundary(startDate || defaultStartStr, false);
+    if (!start) {
       return NextResponse.json({ error: 'Invalid startDate' }, { status: 400 });
     }
-    start.setHours(0, 0, 0, 0);
 
-    const end = endDate ? new Date(endDate) : new Date();
-    if (Number.isNaN(end.getTime())) {
+    const end = parseMyanmarDateBoundary(endDate || defaultEndStr, true);
+    if (!end) {
       return NextResponse.json({ error: 'Invalid endDate' }, { status: 400 });
     }
-    end.setHours(23, 59, 59, 999);
 
     // Enforce max date range of 366 days
     const diffMs = end.getTime() - start.getTime();
@@ -37,9 +42,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const activeStatuses = ['COMPLETED', 'PARTIALLY_REFUNDED'];
+
     const salesInRange = await prisma.sale.count({
       where: {
-        status: 'COMPLETED',
+        status: { in: activeStatuses },
         createdAt: { gte: start, lte: end },
       },
     });
@@ -47,89 +54,120 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Report is too large. Narrow the date range.' }, { status: 400 });
     }
 
-    // Fetch completed sales in range with items and product data
-    const sales = await prisma.sale.findMany({
-      where: {
-        status: 'COMPLETED',
-        createdAt: { gte: start, lte: end },
-      },
-      include: {
-        items: {
-          select: {
-            quantity: true,
-            unitPrice: true,
-            total: true,
-            costPrice: true,
-            productId: true,
-            product: {
-              select: {
-                id: true,
-                name: true,
-                nameMm: true,
-                sku: true,
-                categoryId: true,
-                category: {
-                  select: { id: true, name: true, nameMm: true },
+    // Fetch completed/partially-refunded sales and expenses in range
+    const [sales, expenses] = await Promise.all([
+      prisma.sale.findMany({
+        where: {
+          status: { in: activeStatuses },
+          createdAt: { gte: start, lte: end },
+        },
+        include: {
+          items: {
+            select: {
+              quantity: true,
+              refundedQuantity: true,
+              unitPrice: true,
+              total: true,
+              costPrice: true,
+              productId: true,
+              product: {
+                select: {
+                  id: true,
+                  name: true,
+                  nameMm: true,
+                  sku: true,
+                  categoryId: true,
+                  category: {
+                    select: { id: true, name: true, nameMm: true },
+                  },
                 },
               },
             },
           },
         },
-      },
-      orderBy: { createdAt: 'asc' },
-      take: 10000,
-    });
+        orderBy: { createdAt: 'asc' },
+        take: 10000,
+      }),
+      prisma.expense.findMany({
+        where: {
+          date: { gte: start, lte: end },
+        },
+        select: {
+          amount: true,
+          date: true,
+          category: true,
+        },
+      }),
+    ]);
 
     // ── Summary Totals ───────────────────────────────────────
     const totalRevenue = sales.reduce((sum, s) => sum + toNumber(s.totalAmount), 0);
     const totalCost = sales.reduce(
       (sum, s) =>
         sum +
-        s.items.reduce(
-          (itemSum, item) => itemSum + toNumber(item.costPrice) * item.quantity,
-          0
-        ),
+        s.items.reduce((itemSum, item) => {
+          const netQty = Math.max(0, toNumber(item.quantity) - toNumber((item as { refundedQuantity?: unknown }).refundedQuantity));
+          return itemSum + toNumber(item.costPrice) * netQty;
+        }, 0),
       0
     );
     const totalProfit = totalRevenue - totalCost;
+    const totalExpenses = expenses.reduce((sum, e) => sum + toNumber(e.amount), 0);
+    const netProfit = totalProfit - totalExpenses;
     const totalSalesCount = sales.length;
     const averageSaleValue =
       totalSalesCount > 0 ? totalRevenue / totalSalesCount : 0;
 
-    // ── Daily Sales ──────────────────────────────────────────
-    const dailyMap = new Map<string, { revenue: number; count: number; profit: number }>();
+    // ── Daily Sales (Myanmar Timezone) ───────────────────────
+    const dailyMap = new Map<string, { revenue: number; count: number; profit: number; expenses: number; netProfit: number }>();
 
     for (const sale of sales) {
-      const dateKey = sale.createdAt.toISOString().split('T')[0];
-      const existing = dailyMap.get(dateKey) || { revenue: 0, count: 0, profit: 0 };
-      const saleCost = sale.items.reduce(
-        (sum, item) => sum + toNumber(item.costPrice) * item.quantity,
-        0
-      );
+      const dateKey = getMyanmarDateKey(sale.createdAt);
+      const existing = dailyMap.get(dateKey) || { revenue: 0, count: 0, profit: 0, expenses: 0, netProfit: 0 };
+      const saleCost = sale.items.reduce((sum, item) => {
+        const netQty = Math.max(0, toNumber(item.quantity) - toNumber((item as { refundedQuantity?: unknown }).refundedQuantity));
+        return sum + toNumber(item.costPrice) * netQty;
+      }, 0);
+      const saleGrossProfit = toNumber(sale.totalAmount) - saleCost;
       existing.revenue += toNumber(sale.totalAmount);
       existing.count += 1;
-      existing.profit += toNumber(sale.totalAmount) - saleCost;
+      existing.profit += saleGrossProfit;
+      existing.netProfit += saleGrossProfit;
       dailyMap.set(dateKey, existing);
     }
 
-    // Fill in missing days
+    for (const expense of expenses) {
+      const dateKey = getMyanmarDateKey(expense.date);
+      const existing = dailyMap.get(dateKey) || { revenue: 0, count: 0, profit: 0, expenses: 0, netProfit: 0 };
+      const expAmt = toNumber(expense.amount);
+      existing.expenses += expAmt;
+      existing.netProfit -= expAmt;
+      dailyMap.set(dateKey, existing);
+    }
+
+    // Fill in missing days in Myanmar timezone
     const dailySales: Array<{
       date: string;
       revenue: number;
       count: number;
       profit: number;
+      expenses: number;
+      netProfit: number;
     }> = [];
-    const cursor = new Date(start);
-    while (cursor <= end) {
-      const dateKey = cursor.toISOString().split('T')[0];
-      const data = dailyMap.get(dateKey) || { revenue: 0, count: 0, profit: 0 };
+    const cursor = new Date(start.getTime() + 12 * 60 * 60 * 1000);
+    const endCursor = new Date(end.getTime());
+    while (cursor <= endCursor) {
+      const dateKey = getMyanmarDateKey(cursor);
+      const data = dailyMap.get(dateKey) || { revenue: 0, count: 0, profit: 0, expenses: 0, netProfit: 0 };
       dailySales.push({
         date: dateKey,
         revenue: Math.round(data.revenue),
         count: data.count,
         profit: Math.round(data.profit),
+        expenses: Math.round(data.expenses),
+        netProfit: Math.round(data.netProfit),
       });
-      cursor.setDate(cursor.getDate() + 1);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
 
     // ── Payment Method Breakdown ─────────────────────────────
@@ -166,6 +204,9 @@ export async function GET(request: NextRequest) {
 
     for (const sale of sales) {
       for (const item of sale.items) {
+        const netQty = Math.max(0, toNumber(item.quantity) - toNumber((item as { refundedQuantity?: unknown }).refundedQuantity));
+        if (netQty <= 0) continue;
+        const ratio = toNumber(item.quantity) > 0 ? netQty / toNumber(item.quantity) : 1;
         const existing = productMap.get(item.product.id) || {
           id: item.product.id,
           name: item.product.name,
@@ -175,9 +216,9 @@ export async function GET(request: NextRequest) {
           revenue: 0,
           cost: 0,
         };
-        existing.qtySold += item.quantity;
-        existing.revenue += toNumber(item.total);
-        existing.cost += toNumber(item.costPrice) * item.quantity;
+        existing.qtySold = Math.round((existing.qtySold + netQty) * 1000) / 1000;
+        existing.revenue += toNumber(item.total) * ratio;
+        existing.cost += toNumber(item.costPrice) * netQty;
         productMap.set(item.product.id, existing);
       }
     }
@@ -204,6 +245,9 @@ export async function GET(request: NextRequest) {
 
     for (const sale of sales) {
       for (const item of sale.items) {
+        const netQty = Math.max(0, toNumber(item.quantity) - toNumber((item as { refundedQuantity?: unknown }).refundedQuantity));
+        if (netQty <= 0) continue;
+        const ratio = toNumber(item.quantity) > 0 ? netQty / toNumber(item.quantity) : 1;
         const cat = item.product.category;
         const existing = categoryMap.get(cat.id) || {
           name: cat.name,
@@ -211,8 +255,8 @@ export async function GET(request: NextRequest) {
           revenue: 0,
           count: 0,
         };
-        existing.revenue += toNumber(item.total);
-        existing.count += item.quantity;
+        existing.revenue += toNumber(item.total) * ratio;
+        existing.count = Math.round((existing.count + netQty) * 1000) / 1000;
         categoryMap.set(cat.id, existing);
       }
     }
@@ -227,14 +271,14 @@ export async function GET(request: NextRequest) {
       }))
       .sort((a, b) => b.revenue - a.revenue);
 
-    // ── Hourly Distribution ──────────────────────────────────
+    // ── Hourly Distribution (Myanmar Timezone) ───────────────
     const hourlyMap = new Map<number, { count: number; revenue: number }>();
     for (let h = 0; h < 24; h++) {
       hourlyMap.set(h, { count: 0, revenue: 0 });
     }
 
     for (const sale of sales) {
-      const hour = sale.createdAt.getHours();
+      const hour = getMyanmarHour(sale.createdAt);
       const existing = hourlyMap.get(hour)!;
       existing.count += 1;
       existing.revenue += toNumber(sale.totalAmount);
@@ -254,6 +298,8 @@ export async function GET(request: NextRequest) {
         totalRevenue: Math.round(totalRevenue),
         totalProfit: Math.round(totalProfit),
         totalCost: Math.round(totalCost),
+        totalExpenses: Math.round(totalExpenses),
+        netProfit: Math.round(netProfit),
         totalSalesCount,
         averageSaleValue: Math.round(averageSaleValue),
       },

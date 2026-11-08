@@ -26,6 +26,9 @@ export function SettingsInitializer() {
             currencySymbol: data.currencySymbol ?? 'K',
             logo: data.logo ?? null,
             receiptFooter: data.receiptFooter ?? null,
+            loyaltyEnabled: data.loyaltyEnabled ?? true,
+            loyaltyEarnRate: Number(data.loyaltyEarnRate ?? 1000),
+            loyaltyRedeemRate: Number(data.loyaltyRedeemRate ?? 10),
           });
           setLoaded();
         }

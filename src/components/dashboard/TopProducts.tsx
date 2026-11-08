@@ -2,6 +2,7 @@
 
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatNumber } from '@/lib/utils';
+import { BarChart3 } from '@/components/ui/Icons';
 
 interface TopProductItem {
   productId: string;
@@ -15,37 +16,39 @@ interface TopProductsProps {
 }
 
 export default function TopProducts({ products }: TopProductsProps) {
-  const { language, t } = useI18n();
+  const { t } = useI18n();
   const maxRevenue = products.length > 0 ? Math.max(...products.map((p) => p.totalRevenue)) : 1;
 
   return (
     <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
       <div
         style={{
-          padding: 'var(--space-lg)',
+          padding: '14px var(--space-lg)',
           borderBottom: '1px solid var(--border-subtle)',
         }}
       >
-        <h3 className="heading-4">
+        <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600 }}>
           {t('Top Products', 'ထိပ်တန်းပစ္စည်းများ')}
         </h3>
       </div>
 
       {products.length === 0 ? (
-        <div className="empty-state" style={{ padding: 'var(--space-2xl)' }}>
-          <div className="empty-state-icon">📊</div>
+        <div className="empty-state" style={{ border: 'none', borderRadius: 0 }}>
+          <div className="empty-state-icon">
+            <BarChart3 size={20} strokeWidth={1.75} />
+          </div>
           <div className="empty-state-title">
             {t('No product data', 'ပစ္စည်းအချက်အလက်မရှိပါ')}
           </div>
         </div>
       ) : (
         <div style={{ padding: 'var(--space-lg)' }}>
-          <div className="flex-col gap-md" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
             {products.map((product, index) => {
               const barWidthPercent = (product.totalRevenue / maxRevenue) * 100;
 
               return (
-                <div key={product.productId} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-xs)' }}>
+                <div key={product.productId} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div
                     style={{
                       display: 'flex',
@@ -56,16 +59,18 @@ export default function TopProducts({ products }: TopProductsProps) {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
                       <span
                         style={{
-                          width: 24,
-                          height: 24,
+                          width: 22,
+                          height: 22,
                           borderRadius: 'var(--radius-sm)',
-                          background: 'var(--primary-light)',
-                          color: 'var(--primary)',
+                          background: 'var(--bg-secondary)',
+                          border: '1px solid var(--border-subtle)',
+                          color: 'var(--text-secondary)',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          fontSize: 'var(--text-xs)',
-                          fontWeight: 700,
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          fontVariantNumeric: 'tabular-nums',
                           flexShrink: 0,
                         }}
                       >
@@ -74,14 +79,14 @@ export default function TopProducts({ products }: TopProductsProps) {
                       <span
                         style={{
                           fontSize: 'var(--text-sm)',
-                          fontWeight: 600,
+                          fontWeight: 500,
                           color: 'var(--text-primary)',
                         }}
                       >
                         {product.productName}
                       </span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-lg)', flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-lg)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                       <span
                         style={{
                           fontSize: 'var(--text-xs)',
@@ -93,9 +98,9 @@ export default function TopProducts({ products }: TopProductsProps) {
                       <span
                         style={{
                           fontSize: 'var(--text-sm)',
-                          fontWeight: 700,
-                          color: 'var(--primary)',
-                          minWidth: 80,
+                          fontWeight: 600,
+                          color: 'var(--text-primary)',
+                          minWidth: 85,
                           textAlign: 'right',
                         }}
                       >
@@ -106,7 +111,7 @@ export default function TopProducts({ products }: TopProductsProps) {
                   {/* Horizontal bar */}
                   <div
                     style={{
-                      height: 6,
+                      height: 5,
                       borderRadius: 'var(--radius-full)',
                       background: 'var(--bg-secondary)',
                       overflow: 'hidden',
@@ -117,8 +122,8 @@ export default function TopProducts({ products }: TopProductsProps) {
                         height: '100%',
                         width: `${barWidthPercent}%`,
                         borderRadius: 'var(--radius-full)',
-                        background: 'linear-gradient(90deg, var(--primary-dark), var(--primary), var(--primary-hover))',
-                        transition: 'width 0.6s ease',
+                        background: 'var(--primary)',
+                        transition: 'width 0.4s ease',
                       }}
                     />
                   </div>

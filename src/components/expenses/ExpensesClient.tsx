@@ -14,6 +14,14 @@ import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import { EXPENSE_CATEGORIES as SHARED_EXPENSE_CATEGORIES } from '@/lib/constants';
+import {
+  Plus,
+  Wallet,
+  Tags,
+  Pencil,
+  Trash2,
+  X,
+} from '@/components/ui/Icons';
 
 /* ---------- Types ---------- */
 
@@ -394,8 +402,12 @@ export function ExpensesClient({
           </p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-primary" onClick={openAddModal}>
-            <span>＋</span>
+          <button
+            className="btn btn-primary"
+            onClick={openAddModal}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Plus size={16} strokeWidth={2} />
             {t('Add Expense', 'ကုန်ကျစရိတ်ထည့်ရန်')}
           </button>
         </div>
@@ -407,9 +419,9 @@ export function ExpensesClient({
           <div className="stat-card">
             <div
               className="stat-icon"
-              style={{ background: 'rgba(239,68,68,0.15)', color: '#EF4444' }}
+              style={{ background: 'rgba(239,68,68,0.12)', color: '#EF4444' }}
             >
-              💸
+              <Wallet size={20} strokeWidth={1.75} />
             </div>
             <div className="stat-content">
               <div className="stat-label">{t('Total Expenses', 'စုစုပေါင်းကုန်ကျစရိတ်')}</div>
@@ -430,21 +442,7 @@ export function ExpensesClient({
                     color: CATEGORY_COLORS[ct.category] || '#64748B',
                   }}
                 >
-                  {ct.category === 'Rent'
-                    ? '🏠'
-                    : ct.category === 'Utilities'
-                      ? '💡'
-                      : ct.category === 'Supplies'
-                        ? '📦'
-                        : ct.category === 'Transport'
-                          ? '🚗'
-                          : ct.category === 'Salary'
-                            ? '👤'
-                            : ct.category === 'Marketing'
-                              ? '📣'
-                              : ct.category === 'Maintenance'
-                                ? '🔧'
-                                : '📋'}
+                  <Tags size={20} strokeWidth={1.75} />
                 </div>
                 <div className="stat-content">
                   <div className="stat-label">{getCategoryLabel(ct.category)}</div>
@@ -581,7 +579,9 @@ export function ExpensesClient({
         {/* Expenses Table */}
         {filteredExpenses.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">💸</div>
+            <div className="empty-state-icon">
+              <Wallet size={28} strokeWidth={1.5} />
+            </div>
             <div className="empty-state-title">
               {t('No expenses found', 'ကုန်ကျစရိတ်ရှာမတွေ့ပါ')}
             </div>
@@ -597,8 +597,13 @@ export function ExpensesClient({
                   )}
             </div>
             {!categoryFilter && !dateFilter && (
-              <button className="btn btn-primary" onClick={openAddModal}>
-                <span>＋</span> {t('Add Expense', 'ကုန်ကျစရိတ်ထည့်ရန်')}
+              <button
+                className="btn btn-primary"
+                onClick={openAddModal}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Plus size={16} strokeWidth={2} />
+                {t('Add Expense', 'ကုန်ကျစရိတ်ထည့်ရန်')}
               </button>
             )}
           </div>
@@ -667,7 +672,7 @@ export function ExpensesClient({
                             onClick={() => openEditModal(expense)}
                             title={t('edit')}
                           >
-                            ✏️
+                            <Pencil size={15} strokeWidth={1.75} />
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
@@ -675,7 +680,7 @@ export function ExpensesClient({
                             title={t('delete')}
                             style={{ color: 'var(--danger)' }}
                           >
-                            🗑️
+                            <Trash2 size={15} strokeWidth={1.75} />
                           </button>
                         </div>
                       </td>
@@ -741,7 +746,7 @@ export function ExpensesClient({
                   : t('Add Expense', 'ကုန်ကျစရိတ်ထည့်ရန်')}
               </h2>
               <button className="btn btn-ghost btn-icon" onClick={closeModal}>
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -878,7 +883,7 @@ export function ExpensesClient({
                 className="btn btn-ghost btn-icon"
                 onClick={() => setDeleteTarget(null)}
               >
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">

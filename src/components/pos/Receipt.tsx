@@ -1,10 +1,12 @@
 'use client';
 
-import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { useState } from 'react';
+import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useI18n } from '@/lib/i18n';
+import { Printer, WifiOff, Plus } from '@/components/ui/Icons';
 
-interface ReceiptData {
+export interface ReceiptData {
   invoiceNumber: string;
   createdAt: string;
   cashierName: string;
@@ -12,7 +14,9 @@ interface ReceiptData {
     name: string;
     quantity: number;
     unitPrice: number;
+    discount?: number;
     total: number;
+    unit?: string;
   }>;
   subtotal: number;
   discountAmount: number;
@@ -20,8 +24,17 @@ interface ReceiptData {
   totalAmount: number;
   paymentMethod: string;
   paidAmount: number;
+  dueAmount?: number;
   changeAmount: number;
+  pointsEarned?: number;
+  pointsRedeemed?: number;
   customerName?: string | null;
+  isOfflineQueued?: boolean;
+  payments?: Array<{
+    method: string;
+    amount: number;
+    reference?: string | null;
+  }>;
 }
 
 interface ReceiptProps {
@@ -30,39 +43,99 @@ interface ReceiptProps {
 }
 
 export default function Receipt({ data, onNewSale }: ReceiptProps) {
-  const { businessName, businessNameMm, address, phone, receiptFooter } = useSettingsStore();
+  const { businessName, businessNameMm, address, phone, logo, receiptFooter } = useSettingsStore();
   const { t } = useI18n();
+  const [paperSize, setPaperSize] = useState<'80mm' | '58mm'>('80mm');
 
   const handlePrint = () => {
+    document.body.setAttribute('data-print-size', paperSize);
     window.print();
+  };
+
+  const getMethodLabel = (method: string) => {
+    switch (method) {
+      case 'CASH': return t('cash');
+      case 'CARD': return t('card');
+      case 'MOBILE_BANKING': return t('mobileBanking');
+      case 'CREDIT': return t('Credit', 'အကြွေး');
+      case 'SPLIT': return t('Split Payment', 'ပေါင်းစပ်ပေးချေမှု');
+      default: return method;
+    }
   };
 
   return (
     <div className="modal-backdrop" onClick={onNewSale}>
       <div
         className="modal"
-        style={{ maxWidth: '380px' }}
+        style={{ maxWidth: paperSize === '58mm' ? '300px' : '380px' }}
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Thermal Paper Width Selector (hidden during print) */}
         <div
+          className="no-print"
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: 'var(--space-sm) var(--space-md)',
+            borderBottom: '1px solid var(--border-subtle)',
+            background: 'var(--bg-secondary)',
+          }}
+        >
+          <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <Printer size={13} strokeWidth={1.75} />
+            {t('Paper Size', 'စက္ကူအရွယ်အစား')}:
+          </span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button
+              type="button"
+              className={`btn btn-sm ${paperSize === '80mm' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setPaperSize('80mm')}
+              style={{ padding: '2px 8px', fontSize: 11 }}
+            >
+              80mm
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${paperSize === '58mm' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setPaperSize('58mm')}
+              style={{ padding: '2px 8px', fontSize: 11 }}
+            >
+              58mm
+            </button>
+          </div>
+        </div>
+
+        <div
+          className={`receipt-printable receipt-${paperSize}`}
           style={{
             padding: 'var(--space-xl)',
             fontFamily: 'var(--font-mono)',
-            fontSize: 'var(--text-sm)',
+            fontSize: paperSize === '58mm' ? '11px' : 'var(--text-sm)',
           }}
           id="receipt-content"
         >
           {/* Header */}
           <div style={{ textAlign: 'center', marginBottom: 'var(--space-lg)' }}>
+            {logo && (
+              <div style={{ marginBottom: 6 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={logo}
+                  alt={businessName}
+                  style={{ maxHeight: 48, maxWidth: 140, objectFit: 'contain', margin: '0 auto' }}
+                />
+              </div>
+            )}
             <div
               style={{
                 fontSize: 'var(--text-xl)',
                 fontWeight: 800,
-                color: 'var(--primary)',
+                color: 'var(--text-primary)',
                 marginBottom: '4px',
               }}
             >
-              ✦ {businessName} ✦
+              {businessName}
             </div>
             {businessNameMm && (
               <div
@@ -84,6 +157,12 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
             {phone && (
               <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                 Tel: {phone}
+              </div>
+            )}
+            {data.isOfflineQueued && (
+              <div className="badge badge-warning" style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <WifiOff size={12} strokeWidth={1.75} />
+                {t('Offline Receipt (Pending Sync)', 'အော့ဖ်လိုင်းဘောင်ချာ')}
               </div>
             )}
             <div
@@ -132,7 +211,8 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
                 <div style={{ fontWeight: 600, marginBottom: '2px' }}>{item.name}</div>
                 <div className="flex justify-between" style={{ color: 'var(--text-secondary)' }}>
                   <span>
-                    {item.quantity} × {formatCurrency(item.unitPrice)}
+                    {formatQuantity(item.quantity)}{item.unit ? ` ${item.unit}` : ''} × {formatCurrency(item.unitPrice)}
+                    {item.discount && item.discount > 0 ? ` (−${formatCurrency(item.discount)})` : ''}
                   </span>
                   <span>{formatCurrency(item.total)}</span>
                 </div>
@@ -197,12 +277,31 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
           <div style={{ marginBottom: 'var(--space-lg)' }}>
             <div className="flex justify-between" style={{ marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-muted)' }}>{t('paymentMethod')}</span>
-              <span>{data.paymentMethod === 'CASH' ? t('cash') : data.paymentMethod === 'CARD' ? t('card') : data.paymentMethod === 'MOBILE_BANKING' ? t('mobileBanking') : data.paymentMethod}</span>
+              <span>{getMethodLabel(data.paymentMethod)}</span>
             </div>
+            {data.payments && data.payments.length > 1 && (
+              <div style={{ marginBottom: 6, paddingLeft: 8, borderLeft: '2px solid var(--border-subtle)' }}>
+                {data.payments.map((leg, i) => (
+                  <div key={i} className="flex justify-between" style={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}>
+                    <span>{getMethodLabel(leg.method)}{leg.reference ? ` (${leg.reference})` : ''}</span>
+                    <span>{formatCurrency(leg.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex justify-between" style={{ marginBottom: '4px' }}>
               <span style={{ color: 'var(--text-muted)' }}>{t('paidAmount')}</span>
               <span>{formatCurrency(data.paidAmount)}</span>
             </div>
+            {(data.dueAmount ?? 0) > 0 && (
+              <div
+                className="flex justify-between"
+                style={{ fontWeight: 700, color: 'var(--danger)', marginBottom: '4px' }}
+              >
+                <span>{t('Credit Due', 'ကြွေးကျန်')}</span>
+                <span>{formatCurrency(data.dueAmount ?? 0)}</span>
+              </div>
+            )}
             {data.changeAmount > 0 && (
               <div
                 className="flex justify-between"
@@ -210,6 +309,22 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
               >
                 <span>{t('changeAmount')}</span>
                 <span>{formatCurrency(data.changeAmount)}</span>
+              </div>
+            )}
+            {((data.pointsEarned ?? 0) > 0 || (data.pointsRedeemed ?? 0) > 0) && (
+              <div style={{ marginTop: 6, fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                {(data.pointsRedeemed ?? 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span>{t('Points Redeemed', 'သုံးခဲ့သောပွိုင့်')}:</span>
+                    <span>−{data.pointsRedeemed} pts</span>
+                  </div>
+                )}
+                {(data.pointsEarned ?? 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span>{t('Points Earned', 'ရရှိသောပွိုင့်')}:</span>
+                    <span>+{data.pointsEarned} pts</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -231,7 +346,7 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
             ) : (
               <>
                 <div style={{ fontSize: 'var(--text-base)', marginBottom: '4px' }}>
-                  Thank you! 🙏
+                  Thank you!
                 </div>
                 <div className="mm-text" style={{ fontSize: 'var(--text-sm)' }}>
                   ကျေးဇူးတင်ပါသည်!
@@ -243,14 +358,26 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
 
         {/* Actions */}
         <div
-          className="modal-footer"
+          className="modal-footer no-print"
           style={{ borderTop: '1px solid var(--border-subtle)' }}
         >
-          <button className="btn btn-secondary" onClick={handlePrint} type="button">
-            🖨️ Print
+          <button
+            className="btn btn-secondary"
+            onClick={handlePrint}
+            type="button"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Printer size={15} strokeWidth={1.75} />
+            {t('print')} ({paperSize})
           </button>
-          <button className="btn btn-primary" onClick={onNewSale} type="button">
-            ✨ New Sale
+          <button
+            className="btn btn-primary"
+            onClick={onNewSale}
+            type="button"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Plus size={15} strokeWidth={2} />
+            {t('New Sale', 'အရောင်းအသစ်')}
           </button>
         </div>
       </div>

@@ -22,17 +22,30 @@ export async function GET(request: NextRequest) {
         }
       : {};
 
-    // Cashier POS search only needs a minimal customer identity. Full PII and
-    // purchase history remain manager/admin-only.
+    // Cashier POS search needs customer identity, loyalty points, and credit state.
     if (user.role === 'CASHIER') {
       const customers = await prisma.customer.findMany({
         where,
-        select: { id: true, name: true, phone: true },
+        select: {
+          id: true,
+          name: true,
+          phone: true,
+          loyaltyPoints: true,
+          creditBalance: true,
+          creditLimit: true,
+        },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
       });
-      return NextResponse.json(customers, { headers: { 'Cache-Control': 'no-store' } });
+      return NextResponse.json(
+        customers.map((c) => ({
+          ...c,
+          creditBalance: Number(c.creditBalance),
+          creditLimit: c.creditLimit !== null ? Number(c.creditLimit) : null,
+        })),
+        { headers: { 'Cache-Control': 'no-store' } }
+      );
     }
 
     const customers = await prisma.customer.findMany({
@@ -44,6 +57,8 @@ export async function GET(request: NextRequest) {
         email: true,
         address: true,
         totalPurchases: true,
+        creditBalance: true,
+        creditLimit: true,
         loyaltyPoints: true,
         createdAt: true,
         updatedAt: true,
@@ -59,7 +74,9 @@ export async function GET(request: NextRequest) {
     });
 
     const result = customers.map((customer) => {
-      const completedSales = customer.sales.filter((sale) => sale.status === 'COMPLETED');
+      const completedSales = customer.sales.filter(
+        (sale) => sale.status === 'COMPLETED' || sale.status === 'PARTIALLY_REFUNDED'
+      );
       const lastSale = customer.sales[0] || null;
       return {
         id: customer.id,
@@ -68,6 +85,8 @@ export async function GET(request: NextRequest) {
         email: customer.email,
         address: customer.address,
         totalPurchases: Number(customer.totalPurchases),
+        creditBalance: Number(customer.creditBalance),
+        creditLimit: customer.creditLimit !== null ? Number(customer.creditLimit) : null,
         loyaltyPoints: customer.loyaltyPoints,
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
@@ -86,7 +105,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     await validateCsrf(request);
-    await requireRole('MANAGER', 'ADMIN');
+    // Allow CASHIER, MANAGER, and ADMIN to register new customers at POS
+    const user = await requireAuth();
 
     const parsed = createCustomerSchema.parse(await request.json());
     const name = parsed.name.trim();
@@ -108,10 +128,19 @@ export async function POST(request: NextRequest) {
         phone,
         email: parsed.email?.trim() || null,
         address: parsed.address?.trim() || null,
+        creditLimit: user.role !== 'CASHIER' && parsed.creditLimit !== undefined ? parsed.creditLimit : null,
       },
     });
 
-    return NextResponse.json({ ...customer, totalPurchases: Number(customer.totalPurchases) }, { status: 201 });
+    return NextResponse.json(
+      {
+        ...customer,
+        totalPurchases: Number(customer.totalPurchases),
+        creditBalance: Number(customer.creditBalance),
+        creditLimit: customer.creditLimit !== null ? Number(customer.creditLimit) : null,
+      },
+      { status: 201 }
+    );
   } catch (error) {
     return handleApiError(error, 'Failed to create customer');
   }

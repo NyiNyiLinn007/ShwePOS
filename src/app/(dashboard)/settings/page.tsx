@@ -1,6 +1,7 @@
 import prisma from '@/lib/prisma';
 import { SettingsClient } from '@/components/settings/SettingsClient';
 import { requirePageRole } from '@/lib/pageAuth';
+import { serializePrismaData } from '@/lib/number';
 
 export default async function SettingsPage() {
   await requirePageRole('ADMIN');
@@ -35,5 +36,5 @@ export default async function SettingsPage() {
     orderBy: { createdAt: 'desc' },
   });
 
-  return <SettingsClient initialSettings={settings} initialUsers={users} />;
+  return <SettingsClient initialSettings={serializePrismaData(settings)} initialUsers={users} />;
 }

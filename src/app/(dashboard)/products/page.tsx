@@ -29,6 +29,9 @@ export default async function ProductsPage() {
     ...product,
     costPrice: toNumber(product.costPrice),
     sellingPrice: toNumber(product.sellingPrice),
+    stockQuantity: toNumber(product.stockQuantity),
+    lowStockThreshold: toNumber(product.lowStockThreshold),
+    expiryDate: product.expiryDate ? product.expiryDate.toISOString() : null,
   }));
 
   return <ProductsClient initialProducts={serializedProducts} categories={categories} />;

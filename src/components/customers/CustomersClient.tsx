@@ -4,6 +4,17 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
+import {
+  Plus,
+  Users,
+  Star,
+  CreditCard,
+  Eye,
+  Pencil,
+  Trash2,
+  X,
+  AlertTriangle,
+} from '@/components/ui/Icons';
 
 /* ---------- Types ---------- */
 
@@ -22,6 +33,8 @@ interface CustomerData {
   email: string | null;
   address: string | null;
   totalPurchases: number;
+  creditBalance?: number;
+  creditLimit?: number | null;
   loyaltyPoints: number;
   createdAt: string | Date;
   updatedAt: string | Date;
@@ -35,6 +48,7 @@ interface CustomerFormData {
   phone: string;
   email: string;
   address: string;
+  creditLimit: string;
 }
 
 /* ---------- Constants ---------- */
@@ -46,6 +60,7 @@ const emptyForm: CustomerFormData = {
   phone: '',
   email: '',
   address: '',
+  creditLimit: '0',
 };
 
 /* ---------- Component ---------- */
@@ -72,6 +87,14 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
   const [deleteTarget, setDeleteTarget] = useState<CustomerData | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerData | null>(null);
+
+  // Debt Repayment Modal State
+  const [repayTarget, setRepayTarget] = useState<CustomerData | null>(null);
+  const [repayAmount, setRepayAmount] = useState('');
+  const [repayMethod, setRepayMethod] = useState<'CASH' | 'CARD' | 'MOBILE_BANKING'>('CASH');
+  const [repayReference, setRepayReference] = useState('');
+  const [repayNotes, setRepayNotes] = useState('');
+  const [repaying, setRepaying] = useState(false);
 
   // Filtered customers
   const filteredCustomers = useMemo(() => {
@@ -115,6 +138,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
       phone: customer.phone || '',
       email: customer.email || '',
       address: customer.address || '',
+      creditLimit: String(customer.creditLimit ?? 0),
     });
     setFormErrors({});
     setShowModal(true);
@@ -160,6 +184,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
         phone: formData.phone.trim() || null,
         email: formData.email.trim() || null,
         address: formData.address.trim() || null,
+        creditLimit: Math.max(0, parseFloat(formData.creditLimit) || 0),
       };
 
       const url = editingCustomer
@@ -190,6 +215,8 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                   phone: data.phone,
                   email: data.email,
                   address: data.address,
+                  creditLimit: data.creditLimit,
+                  creditBalance: data.creditBalance,
                   updatedAt: data.updatedAt,
                 }
               : c
@@ -212,6 +239,62 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
       addToast(t('Network error. Please try again.', '\u1000\u103d\u1014\u103a\u101b\u1000\u103a\u1001\u103b\u102d\u102f\u1037\u101a\u103d\u1004\u103a\u1038\u1001\u103b\u1000\u103a\u104b \u1011\u1015\u103a\u1000\u103c\u102d\u102f\u1038\u1005\u102c\u1038\u1015\u102b\u104b'), 'error');
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openRepayModal(customer: CustomerData) {
+    setRepayTarget(customer);
+    setRepayAmount(String(customer.creditBalance || 0));
+    setRepayMethod('CASH');
+    setRepayReference('');
+    setRepayNotes('');
+  }
+
+  async function handleRepayDebt() {
+    if (!repayTarget) return;
+    const amt = parseFloat(repayAmount);
+    if (!amt || amt <= 0) {
+      addToast(t('Please enter a valid repayment amount', 'ပေးဆပ်မည့်ပမာဏ အမှန်ထည့်ပါ'), 'error');
+      return;
+    }
+
+    setRepaying(true);
+    try {
+      const res = await fetch(`/api/customers/${repayTarget.id}/repay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: amt,
+          method: repayMethod,
+          reference: repayReference.trim() || undefined,
+          notes: repayNotes.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        addToast(data.error || t('Failed to record repayment', 'အကြွေးဆပ်မှု မှတ်တမ်းတင်မရပါ'), 'error');
+        return;
+      }
+
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === repayTarget.id
+            ? { ...c, creditBalance: data.newCreditBalance }
+            : c
+        )
+      );
+      if (selectedCustomer?.id === repayTarget.id) {
+        setSelectedCustomer((prev) =>
+          prev ? { ...prev, creditBalance: data.newCreditBalance } : null
+        );
+      }
+
+      addToast(t('Debt repayment recorded successfully', 'အကြွေးဆပ်မှု မှတ်တမ်းတင်ပြီးပါပြီ'), 'success');
+      setRepayTarget(null);
+    } catch {
+      addToast(t('Network error. Please try again.', 'ကွန်ရက်ချို့ယွင်းချက်။ ထပ်ကြိုးစားပါ။'), 'error');
+    } finally {
+      setRepaying(false);
     }
   }
 
@@ -283,8 +366,12 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
           <p className="page-subtitle mm-text">{t('Customer Management', 'ဖောက်သည်စီမံခန့်ခွဲမှု')}</p>
         </div>
         <div className="page-actions">
-          <button className="btn btn-primary" onClick={openAddModal}>
-            <span>＋</span>
+          <button
+            className="btn btn-primary"
+            onClick={openAddModal}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Plus size={16} strokeWidth={2} />
             {t('Add Customer', 'ဖောက်သည်ထည့်ရန်')}
           </button>
         </div>
@@ -313,7 +400,9 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
         {/* Customers Table */}
         {filteredCustomers.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">👥</div>
+            <div className="empty-state-icon">
+              <Users size={28} strokeWidth={1.5} />
+            </div>
             <div className="empty-state-title">{t('No customers found', 'ဖောက်သည်မတွေ့ပါ')}</div>
             <div className="empty-state-text">
               {search
@@ -321,8 +410,13 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                 : t('Add your first customer to get started', 'စတင်ရန် ပထမဖောက်သည်ကိုထည့်ပါ')}
             </div>
             {!search && (
-              <button className="btn btn-primary" onClick={openAddModal}>
-                <span>＋</span> {t('Add Customer', 'ဖောက်သည်ထည့်ရန်')}
+              <button
+                className="btn btn-primary"
+                onClick={openAddModal}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Plus size={16} strokeWidth={2} />
+                {t('Add Customer', 'ဖောက်သည်ထည့်ရန်')}
               </button>
             )}
           </div>
@@ -334,12 +428,12 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                   <tr>
                     <th>{t('Name', 'အမည်')}</th>
                     <th>{t('phone')}</th>
-                    <th>{t('Email', 'အီးမေးလ်')}</th>
                     <th>{t('Address', 'လိပ်စာ')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Total Purchases', 'စုစုပေါင်းဝယ်ယူမှု')}</th>
+                    <th style={{ textAlign: 'right' }}>{t('Credit Due', 'ကြွေးကျန်')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Loyalty Points', 'အမှတ်စု')}</th>
                     <th>{t('Last Purchase', 'နောက်ဆုံးဝယ်ယူမှု')}</th>
-                    <th style={{ width: 130 }}>{t('Actions', 'လုပ်ဆောင်ချက်')}</th>
+                    <th style={{ width: 150 }}>{t('Actions', 'လုပ်ဆောင်ချက်')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -358,11 +452,6 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                       </td>
                       <td style={{ fontSize: 'var(--text-sm)' }}>
                         {customer.phone || (
-                          <span style={{ color: 'var(--text-muted)' }}>—</span>
-                        )}
-                      </td>
-                      <td style={{ fontSize: 'var(--text-sm)' }}>
-                        {customer.email || (
                           <span style={{ color: 'var(--text-muted)' }}>—</span>
                         )}
                       </td>
@@ -389,9 +478,25 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                           fontSize: 'var(--text-sm)',
                         }}
                       >
+                        {(customer.creditBalance ?? 0) > 0 ? (
+                          <span className="badge badge-danger">
+                            {formatCurrency(customer.creditBalance ?? 0)}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)' }}>0 K</span>
+                        )}
+                      </td>
+                      <td
+                        style={{
+                          textAlign: 'right',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 'var(--text-sm)',
+                        }}
+                      >
                         {customer.loyaltyPoints > 0 ? (
-                          <span className="badge badge-primary">
-                            ⭐ {customer.loyaltyPoints}
+                          <span className="badge badge-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                            <Star size={11} strokeWidth={1.75} />
+                            {customer.loyaltyPoints}
                           </span>
                         ) : (
                           <span style={{ color: 'var(--text-muted)' }}>0</span>
@@ -406,19 +511,29 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                       </td>
                       <td>
                         <div className="table-actions">
+                          {(customer.creditBalance ?? 0) > 0 && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => openRepayModal(customer)}
+                              title={t('Repay Debt', 'အကြွေးဆပ်ရန်')}
+                              style={{ color: 'var(--warning)' }}
+                            >
+                              <CreditCard size={15} strokeWidth={1.75} />
+                            </button>
+                          )}
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => setSelectedCustomer(customer)}
                             title={t('View details', 'အသေးစိတ်ကြည့်ရန်')}
                           >
-                            👁️
+                            <Eye size={15} strokeWidth={1.75} />
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={() => openEditModal(customer)}
                             title={t('Edit customer', 'ဖောက်သည်ပြင်ဆင်ရန်')}
                           >
-                            ✏️
+                            <Pencil size={15} strokeWidth={1.75} />
                           </button>
                           <button
                             className="btn btn-ghost btn-sm"
@@ -426,7 +541,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                             title={t('Delete customer', 'ဖောက်သည်ဖျက်ရန်')}
                             style={{ color: 'var(--danger)' }}
                           >
-                            🗑️
+                            <Trash2 size={15} strokeWidth={1.75} />
                           </button>
                         </div>
                       </td>
@@ -494,7 +609,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                 {editingCustomer ? t('Edit Customer', 'ဖောက်သည်ပြင်ဆင်ရန်') : t('Add Customer', 'ဖောက်သည်ထည့်ရန်')}
               </h2>
               <button className="btn btn-ghost btn-icon" onClick={closeModal}>
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -549,11 +664,26 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                 <label className="input-label">{t('Address', 'လိပ်စာ')}</label>
                 <textarea
                   className="input"
-                  rows={3}
+                  rows={2}
                   placeholder="Customer address"
                   value={formData.address}
                   onChange={(e) => handleFormChange('address', e.target.value)}
                   style={{ resize: 'vertical' }}
+                />
+              </div>
+
+              {/* Credit Limit */}
+              <div className="input-group">
+                <label className="input-label">
+                  {t('Credit Limit (MMK) — 0 = Unlimited', 'အကြွေးကန့်သတ်ချက် (ကျပ်) — 0 = အကန့်အသတ်မရှိ')}
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1000"
+                  className="input"
+                  value={formData.creditLimit}
+                  onChange={(e) => handleFormChange('creditLimit', e.target.value)}
                 />
               </div>
             </div>
@@ -594,7 +724,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                 className="btn btn-ghost btn-icon"
                 onClick={() => setSelectedCustomer(null)}
               >
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -654,8 +784,27 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                   <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
                     {t('Loyalty Points', 'အမှတ်စု')}
                   </div>
-                  <div style={{ fontWeight: 600 }}>
-                    ⭐ {selectedCustomer.loyaltyPoints}
+                  <div style={{ fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <Star size={14} strokeWidth={1.75} />
+                    {selectedCustomer.loyaltyPoints}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
+                    {t('Credit Due (Debt)', 'ကြွေးကျန်')}
+                  </div>
+                  <div style={{ fontWeight: 700, color: (selectedCustomer.creditBalance ?? 0) > 0 ? 'var(--danger)' : 'var(--success)', fontFamily: 'var(--font-mono)' }}>
+                    {formatCurrency(selectedCustomer.creditBalance ?? 0)}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
+                    {t('Credit Limit', 'အကြွေးကန့်သတ်ချက်')}
+                  </div>
+                  <div style={{ fontSize: 'var(--text-sm)', fontFamily: 'var(--font-mono)' }}>
+                    {(selectedCustomer.creditLimit ?? 0) > 0
+                      ? formatCurrency(selectedCustomer.creditLimit ?? 0)
+                      : t('Unlimited', 'အကန့်အသတ်မရှိ')}
                   </div>
                 </div>
                 <div>
@@ -745,20 +894,141 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
               )}
             </div>
             <div className="modal-footer">
+              {(selectedCustomer.creditBalance ?? 0) > 0 && (
+                <button
+                  className="btn btn-warning"
+                  onClick={() => openRepayModal(selectedCustomer)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <CreditCard size={15} strokeWidth={1.75} />
+                  {t('Repay Debt', 'အကြွေးဆပ်ရန်')}
+                </button>
+              )}
               <button
                 className="btn btn-secondary"
                 onClick={() => {
                   setSelectedCustomer(null);
                   openEditModal(selectedCustomer);
                 }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
-                ✏️ {t('Edit', 'ပြင်ဆင်ရန်')}
+                <Pencil size={15} strokeWidth={1.75} />
+                {t('Edit', 'ပြင်ဆင်ရန်')}
               </button>
               <button
                 className="btn btn-secondary"
                 onClick={() => setSelectedCustomer(null)}
               >
                 {t('Close', 'ပိတ်ရန်')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Debt Repayment Modal */}
+      {repayTarget && (
+        <div className="modal-backdrop" onClick={() => setRepayTarget(null)}>
+          <div
+            className="modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 440 }}
+          >
+            <div className="modal-header">
+              <h2 className="modal-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <CreditCard size={18} strokeWidth={1.75} />
+                {t('Repay Debt', 'အကြွေးဆပ်ရန်')} — {repayTarget.name}
+              </h2>
+              <button className="btn btn-ghost btn-icon" onClick={() => setRepayTarget(null)}>
+                <X size={16} strokeWidth={1.75} />
+              </button>
+            </div>
+            <div className="modal-body">
+              <div
+                style={{
+                  padding: 'var(--space-md)',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: 'var(--radius-md)',
+                  marginBottom: 'var(--space-md)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
+                <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
+                  {t('Current Credit Due', 'လက်ရှိကြွေးကျန်')}:
+                </span>
+                <strong style={{ fontSize: 'var(--text-lg)', color: 'var(--danger)', fontFamily: 'var(--font-mono)' }}>
+                  {formatCurrency(repayTarget.creditBalance ?? 0)}
+                </strong>
+              </div>
+
+              <div className="input-group">
+                <label className="input-label">
+                  {t('Repayment Amount (MMK)', 'ပေးဆပ်မည့်ပမာဏ (ကျပ်)')} *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max={repayTarget.creditBalance ?? 0}
+                  className="input"
+                  value={repayAmount}
+                  onChange={(e) => setRepayAmount(e.target.value)}
+                />
+              </div>
+
+              <div className="input-group">
+                <label className="input-label">
+                  {t('Payment Method', 'ငွေပေးချေမှုနည်းလမ်း')}
+                </label>
+                <select
+                  className="input"
+                  value={repayMethod}
+                  onChange={(e) => setRepayMethod(e.target.value as 'CASH' | 'CARD' | 'MOBILE_BANKING')}
+                >
+                  <option value="CASH">{t('cash')}</option>
+                  <option value="MOBILE_BANKING">{t('mobileBanking')}</option>
+                  <option value="CARD">{t('card')}</option>
+                </select>
+              </div>
+
+              <div className="input-group">
+                <label className="input-label">
+                  {t('Reference (Optional)', 'ရည်ညွှန်းနံပါတ် (ရှိလျှင်)')}
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="KBZPay / Wave Tx ID"
+                  value={repayReference}
+                  onChange={(e) => setRepayReference(e.target.value)}
+                />
+              </div>
+
+              <div className="input-group">
+                <label className="input-label">{t('notes')}</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={repayNotes}
+                  onChange={(e) => setRepayNotes(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setRepayTarget(null)}
+                disabled={repaying}
+              >
+                {t('Cancel', 'မလုပ်တော့ပါ')}
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleRepayDebt}
+                disabled={repaying}
+              >
+                {repaying ? t('Saving...', 'သိမ်းနေသည်...') : t('Confirm Repayment', 'အကြွေးဆပ်မှု အတည်ပြုရန်')}
               </button>
             </div>
           </div>
@@ -782,7 +1052,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                 className="btn btn-ghost btn-icon"
                 onClick={() => setDeleteTarget(null)}
               >
-                ✕
+                <X size={16} strokeWidth={1.75} />
               </button>
             </div>
             <div className="modal-body">
@@ -808,9 +1078,15 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                     borderRadius: 'var(--radius-md)',
                     fontSize: 'var(--text-sm)',
                     color: 'var(--warning)',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 8,
                   }}
                 >
-                  ⚠ {t(`This customer has ${deleteTarget.purchaseCount} purchase${deleteTarget.purchaseCount !== 1 ? 's' : ''}. Customers with purchase history cannot be deleted.`, `ဤဖောက်သည်တွင် ဝယ်ယူမှု ${deleteTarget.purchaseCount} ခုရှိပါသည်။ ဝယ်ယူမှုမှတ်တမ်းရှိသောဖောက်သည်ကို ဖျက်ပယ်မရပါ။`)}
+                  <AlertTriangle size={16} strokeWidth={1.75} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <span>
+                    {t(`This customer has ${deleteTarget.purchaseCount} purchase${deleteTarget.purchaseCount !== 1 ? 's' : ''}. Customers with purchase history cannot be deleted.`, `ဤဖောက်သည်တွင် ဝယ်ယူမှု ${deleteTarget.purchaseCount} ခုရှိပါသည်။ ဝယ်ယူမှုမှတ်တမ်းရှိသောဖောက်သည်ကို ဖျက်ပယ်မရပါ။`)}
+                  </span>
                 </div>
               )}
               {deleteTarget.purchaseCount === 0 && (
@@ -822,9 +1098,15 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                     borderRadius: 'var(--radius-md)',
                     fontSize: 'var(--text-sm)',
                     color: 'var(--danger)',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: 8,
                   }}
                 >
-                  ⚠ {t('This action cannot be undone.', 'ဤလုပ်ဆောင်ချက်ကို ပြန်ဖျက်မရပါ။')}
+                  <AlertTriangle size={16} strokeWidth={1.75} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <span>
+                    {t('This action cannot be undone.', 'ဤလုပ်ဆောင်ချက်ကို ပြန်ဖျက်မရပါ။')}
+                  </span>
                 </div>
               )}
             </div>

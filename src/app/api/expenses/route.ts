@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { createExpenseSchema } from '@/lib/validations';
 import { toNumber } from '@/lib/number';
+import { parseMyanmarDateBoundary } from '@/lib/utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,15 +23,13 @@ export async function GET(request: NextRequest) {
     if (startDate || endDate) {
       where.date = {};
       if (startDate) {
-        const start = new Date(startDate);
-        if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Invalid startDate' }, { status: 400 });
-        start.setHours(0, 0, 0, 0);
+        const start = parseMyanmarDateBoundary(startDate, false);
+        if (!start) return NextResponse.json({ error: 'Invalid startDate' }, { status: 400 });
         (where.date as Record<string, unknown>).gte = start;
       }
       if (endDate) {
-        const end = new Date(endDate);
-        if (Number.isNaN(end.getTime())) return NextResponse.json({ error: 'Invalid endDate' }, { status: 400 });
-        end.setHours(23, 59, 59, 999);
+        const end = parseMyanmarDateBoundary(endDate, true);
+        if (!end) return NextResponse.json({ error: 'Invalid endDate' }, { status: 400 });
         (where.date as Record<string, unknown>).lte = end;
       }
     }

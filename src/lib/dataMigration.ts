@@ -90,13 +90,13 @@ const MAX_IMPORT_ROWS = 100_000;
 const MAX_IMPORT_COLUMNS = 64;
 
 const USER_ROLES = new Set(['ADMIN', 'MANAGER', 'CASHIER']);
-const PAYMENT_METHODS = new Set(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT']);
-const PAYMENT_STATUSES = new Set(['PAID', 'PENDING', 'FAILED', 'REVERSED']);
-const SALE_STATUSES = new Set(['COMPLETED', 'REFUNDED', 'VOIDED']);
+const PAYMENT_METHODS = new Set(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT', 'SPLIT']);
+const PAYMENT_STATUSES = new Set(['PAID', 'PARTIAL', 'PENDING', 'FAILED', 'REVERSED']);
+const SALE_STATUSES = new Set(['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED', 'VOIDED']);
 const MOVEMENT_TYPES = new Set(['IN', 'OUT', 'ADJUSTMENT', 'RETURN']);
 const SHIFT_STATUSES = new Set(['OPEN', 'CLOSED']);
 const CASH_MOVEMENT_TYPES = new Set(['OPENING', 'CASH_SALE', 'REFUND', 'VOID', 'PAID_IN', 'PAID_OUT', 'CLOSING']);
-const ADJUSTMENT_TYPES = new Set(['REFUND', 'VOID']);
+const ADJUSTMENT_TYPES = new Set(['REFUND', 'PARTIAL_REFUND', 'VOID']);
 const REVERSAL_STATUSES = new Set(['PENDING', 'COMPLETED', 'FAILED', 'NOT_REQUIRED']);
 const PRODUCT_UNITS = new Set(['pcs', 'kg', 'g', 'liter', 'ml', 'pack', 'box', 'bottle', 'dozen', 'set']);
 const MAX_MIGRATION_MONEY = 1_000_000_000_000;
@@ -820,10 +820,12 @@ async function importProducts(tx: ImportClient, rows: Record<string, unknown>[],
       categoryId,
       costPrice: nonNegativeNumberValue(row, 'costPrice', 'Products', rowNumber) ?? 0,
       sellingPrice: nonNegativeNumberValue(row, 'sellingPrice', 'Products', rowNumber) ?? 0,
-      stockQuantity: nonNegativeIntegerValue(row, 'stockQuantity', 'Products', rowNumber) ?? 0,
-      lowStockThreshold: nonNegativeIntegerValue(row, 'lowStockThreshold', 'Products', rowNumber) ?? 10,
+      stockQuantity: nonNegativeNumberValue(row, 'stockQuantity', 'Products', rowNumber) ?? 0,
+      lowStockThreshold: nonNegativeNumberValue(row, 'lowStockThreshold', 'Products', rowNumber) ?? 10,
       unit: enumValue(row, 'unit', PRODUCT_UNITS, 'Products', rowNumber, 'pcs'),
-      imageUrl: boundedString(row, 'imageUrl', 'Products', rowNumber, 500),
+      imageUrl: boundedString(row, 'imageUrl', 'Products', rowNumber, 500000),
+      batchNumber: boundedString(row, 'batchNumber', 'Products', rowNumber, 100),
+      expiryDate: dateValue(row, 'expiryDate', 'Products', rowNumber),
       isActive: booleanValue(row, 'isActive', 'Products', rowNumber, true),
       createdAt: dateValue(row, 'createdAt', 'Products', rowNumber) ?? new Date(),
       updatedAt: dateValue(row, 'updatedAt', 'Products', rowNumber) ?? new Date(),
@@ -895,7 +897,7 @@ async function importSaleItems(tx: ImportClient, rows: Record<string, unknown>[]
     const id = inputId(row);
     const saleId = await resolveSale(tx, row.saleId, maps, 'SaleItems', rowNumber);
     const productId = await resolveProduct(tx, row.productId, maps, 'SaleItems', rowNumber);
-    const quantity = positiveIntegerValue(row, 'quantity', 'SaleItems', rowNumber, true) as number;
+    const quantity = positiveNumberValue(row, 'quantity', 'SaleItems', rowNumber, true) as number;
     const data = {
       saleId,
       productId,
@@ -931,22 +933,22 @@ async function importStockMovements(tx: ImportClient, rows: Record<string, unkno
       productId,
       userId,
       saleId,
-      quantity: positiveIntegerValue(row, 'quantity', 'StockMovements', rowNumber, true) as number,
+      quantity: positiveNumberValue(row, 'quantity', 'StockMovements', rowNumber, true) as number,
       type: enumValue(row, 'type', MOVEMENT_TYPES, 'StockMovements', rowNumber),
       reason: boundedString(row, 'reason', 'StockMovements', rowNumber, 500),
-      previousStock: nonNegativeIntegerValue(row, 'previousStock', 'StockMovements', rowNumber, true) as number,
-      newStock: nonNegativeIntegerValue(row, 'newStock', 'StockMovements', rowNumber, true) as number,
+      previousStock: nonNegativeNumberValue(row, 'previousStock', 'StockMovements', rowNumber, true) as number,
+      newStock: nonNegativeNumberValue(row, 'newStock', 'StockMovements', rowNumber, true) as number,
       createdAt: dateValue(row, 'createdAt', 'StockMovements', rowNumber) ?? new Date(),
     };
     if (data.type === 'IN' || data.type === 'RETURN') {
-      if (data.newStock !== data.previousStock + data.quantity) {
+      if (Math.abs(data.newStock - (data.previousStock + data.quantity)) > 0.001) {
         migrationError('newStock', 'IN/RETURN movement must increase stock by quantity', 'StockMovements', rowNumber);
       }
     } else if (data.type === 'OUT') {
-      if (data.newStock !== data.previousStock - data.quantity) {
+      if (Math.abs(data.newStock - (data.previousStock - data.quantity)) > 0.001) {
         migrationError('newStock', 'OUT movement must decrease stock by quantity', 'StockMovements', rowNumber);
       }
-    } else if (data.newStock !== data.quantity) {
+    } else if (Math.abs(data.newStock - data.quantity) > 0.001) {
       migrationError('newStock', 'ADJUSTMENT quantity must equal newStock', 'StockMovements', rowNumber);
     }
     if (id) {

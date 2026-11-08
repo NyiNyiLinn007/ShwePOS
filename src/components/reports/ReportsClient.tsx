@@ -17,7 +17,15 @@ import {
   Bar,
 } from 'recharts';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, getMyanmarDateKey, getMyanmarDateParts } from '@/lib/utils';
+import {
+  BarChart3,
+  Banknote,
+  TrendingUp,
+  Wallet,
+  DollarSign,
+  Receipt,
+} from '@/components/ui/Icons';
 
 /* ---------- Types ---------- */
 
@@ -25,6 +33,8 @@ interface ReportSummary {
   totalRevenue: number;
   totalProfit: number;
   totalCost: number;
+  totalExpenses?: number;
+  netProfit?: number;
   totalSalesCount: number;
   averageSaleValue: number;
 }
@@ -34,6 +44,8 @@ interface DailySale {
   revenue: number;
   count: number;
   profit: number;
+  expenses?: number;
+  netProfit?: number;
 }
 
 interface PaymentBreakdown {
@@ -87,6 +99,7 @@ const PAYMENT_COLORS: Record<string, string> = {
   CARD: '#22C55E',
   MOBILE_BANKING: '#3B82F6',
   CREDIT: '#A855F7',
+  SPLIT: '#06B6D4',
 };
 
 const PAYMENT_LABELS: Record<string, { en: string; mm: string }> = {
@@ -94,6 +107,7 @@ const PAYMENT_LABELS: Record<string, { en: string; mm: string }> = {
   CARD: { en: 'Card', mm: 'ကတ်' },
   MOBILE_BANKING: { en: 'Mobile Banking', mm: 'မိုဘိုင်းဘဏ်' },
   CREDIT: { en: 'Credit', mm: 'အကြွေး' },
+  SPLIT: { en: 'Split Payment', mm: 'ပေါင်းစပ်ပေးချေမှု' },
 };
 
 const CATEGORY_COLORS = [
@@ -105,19 +119,21 @@ const CATEGORY_COLORS = [
 
 function getDateRange(preset: DatePreset): { start: string; end: string } {
   const now = new Date();
-  const end = now.toISOString().split('T')[0];
+  const end = getMyanmarDateKey(now);
+  const { year, month, day } = getMyanmarDateParts(now);
 
   switch (preset) {
     case 'today':
       return { start: end, end };
     case 'week': {
-      const weekStart = new Date(now);
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-      return { start: weekStart.toISOString().split('T')[0], end };
+      const mmDate = new Date(Date.UTC(year, month, day));
+      mmDate.setUTCDate(mmDate.getUTCDate() - mmDate.getUTCDay());
+      const start = `${mmDate.getUTCFullYear()}-${String(mmDate.getUTCMonth() + 1).padStart(2, '0')}-${String(mmDate.getUTCDate()).padStart(2, '0')}`;
+      return { start, end };
     }
     case 'month': {
-      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-      return { start: monthStart.toISOString().split('T')[0], end };
+      const start = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+      return { start, end };
     }
     default:
       return { start: end, end };
@@ -360,21 +376,25 @@ export function ReportsClient() {
 
         {loading ? (
           <div className="empty-state">
-            <div className="empty-state-icon">📊</div>
+            <div className="empty-state-icon">
+              <BarChart3 size={28} strokeWidth={1.5} />
+            </div>
             <div className="empty-state-title">{t('Loading reports...', 'အစီရင်ခံစာများဖွင့်နေသည်...')}</div>
           </div>
         ) : !data ? (
           <div className="empty-state">
-            <div className="empty-state-icon">📊</div>
+            <div className="empty-state-icon">
+              <BarChart3 size={28} strokeWidth={1.5} />
+            </div>
             <div className="empty-state-title">{t('No data available', 'ဒေတာမရှိပါ')}</div>
           </div>
         ) : (
           <>
             {/* Summary Cards */}
-            <div className="stats-grid" style={{ marginBottom: 'var(--space-xl)' }}>
+            <div className="stats-grid" style={{ marginBottom: 'var(--space-xl)', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
               <div className="stat-card">
-                <div className="stat-icon" style={{ background: 'rgba(212,168,67,0.15)', color: '#D4A843' }}>
-                  💰
+                <div className="stat-icon" style={{ background: 'var(--primary-light)', color: 'var(--primary)' }}>
+                  <Banknote size={20} strokeWidth={1.75} />
                 </div>
                 <div className="stat-content">
                   <div className="stat-label">{t('Total Revenue', 'စုစုပေါင်းဝင်ငွေ')}</div>
@@ -382,19 +402,47 @@ export function ReportsClient() {
                 </div>
               </div>
               <div className="stat-card">
-                <div className="stat-icon" style={{ background: 'rgba(34,197,94,0.15)', color: '#22C55E' }}>
-                  📈
+                <div className="stat-icon" style={{ background: 'var(--success-light)', color: 'var(--success)' }}>
+                  <TrendingUp size={20} strokeWidth={1.75} />
                 </div>
                 <div className="stat-content">
-                  <div className="stat-label">{t('Total Profit', 'စုစုပေါင်းအမြတ်')}</div>
+                  <div className="stat-label">{t('Gross Profit', 'အကြမ်းအမြတ်')}</div>
                   <div className="stat-value" style={{ color: data.summary.totalProfit >= 0 ? 'var(--success)' : 'var(--danger)' }}>
                     {formatCurrency(data.summary.totalProfit)}
                   </div>
                 </div>
               </div>
               <div className="stat-card">
-                <div className="stat-icon" style={{ background: 'rgba(59,130,246,0.15)', color: '#3B82F6' }}>
-                  🧾
+                <div className="stat-icon" style={{ background: 'var(--danger-light)', color: 'var(--danger)' }}>
+                  <Wallet size={20} strokeWidth={1.75} />
+                </div>
+                <div className="stat-content">
+                  <div className="stat-label">{t('Total Expenses', 'စုစုပေါင်းအသုံးစရိတ်')}</div>
+                  <div className="stat-value">{formatCurrency(data.summary.totalExpenses ?? 0)}</div>
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-icon" style={{ background: 'rgba(6,182,212,0.12)', color: '#06B6D4' }}>
+                  <DollarSign size={20} strokeWidth={1.75} />
+                </div>
+                <div className="stat-content">
+                  <div className="stat-label">{t('Net Profit', 'အသားတင်အမြတ်')}</div>
+                  <div
+                    className="stat-value"
+                    style={{
+                      color:
+                        (data.summary.netProfit ?? data.summary.totalProfit) >= 0
+                          ? 'var(--success)'
+                          : 'var(--danger)',
+                    }}
+                  >
+                    {formatCurrency(data.summary.netProfit ?? data.summary.totalProfit)}
+                  </div>
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-icon" style={{ background: 'var(--info-light)', color: 'var(--info)' }}>
+                  <Receipt size={20} strokeWidth={1.75} />
                 </div>
                 <div className="stat-content">
                   <div className="stat-label">{t('totalSales')}</div>
@@ -402,8 +450,8 @@ export function ReportsClient() {
                 </div>
               </div>
               <div className="stat-card">
-                <div className="stat-icon" style={{ background: 'rgba(168,85,247,0.15)', color: '#A855F7' }}>
-                  📊
+                <div className="stat-icon" style={{ background: 'rgba(168,85,247,0.12)', color: '#A855F7' }}>
+                  <BarChart3 size={20} strokeWidth={1.75} />
                 </div>
                 <div className="stat-content">
                   <div className="stat-label">{t('Average Sale', 'ပျမ်းမျှအရောင်း')}</div>

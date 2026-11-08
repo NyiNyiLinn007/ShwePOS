@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateCustomerSchema } from '@/lib/validations';
+import { serializePrismaData } from '@/lib/number';
 
 export async function GET(
   _request: NextRequest,
@@ -28,6 +29,11 @@ export async function GET(
           orderBy: { createdAt: 'desc' },
           take: 50,
         },
+        salePayments: {
+          where: { type: 'DEBT_REPAYMENT' },
+          orderBy: { createdAt: 'desc' },
+          take: 25,
+        },
       },
     });
 
@@ -38,21 +44,7 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({
-      ...customer,
-      totalPurchases: Number(customer.totalPurchases),
-      sales: customer.sales.map((sale) => ({
-        ...sale,
-        totalAmount: Number(sale.totalAmount),
-        items: sale.items.map((item) => ({
-          ...item,
-          unitPrice: Number(item.unitPrice),
-          costPrice: Number(item.costPrice),
-          discount: Number(item.discount),
-          total: Number(item.total),
-        })),
-      })),
-    }, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json(serializePrismaData(customer), { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return handleApiError(error, 'Failed to fetch customer');
   }
@@ -100,10 +92,11 @@ export async function PUT(
         phone,
         email,
         address,
+        ...(parsed.creditLimit !== undefined && { creditLimit: parsed.creditLimit }),
       },
     });
 
-    return NextResponse.json({ ...customer, totalPurchases: Number(customer.totalPurchases) });
+    return NextResponse.json(serializePrismaData(customer));
   } catch (error) {
     return handleApiError(error, 'Failed to update customer');
   }

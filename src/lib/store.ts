@@ -26,7 +26,7 @@ export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
       language: 'en',
-      theme: 'dark',
+      theme: 'light',
       sidebarCollapsed: false,
       lowStockRefreshKey: 0,
       setLanguage: (language) => set({ language }),

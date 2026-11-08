@@ -47,7 +47,7 @@ export default async function POSPage() {
     barcode: p.barcode,
     sellingPrice: toNumber(p.sellingPrice),
     // costPrice intentionally excluded — sensitive margin data
-    stockQuantity: p.stockQuantity,
+    stockQuantity: toNumber(p.stockQuantity),
     unit: p.unit,
     imageUrl: p.imageUrl,
     category: p.category,

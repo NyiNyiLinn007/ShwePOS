@@ -11,7 +11,7 @@ export function formatCurrency(amount: number): string {
 }
 
 /**
- * Format a Date or ISO string as a readable date.
+ * Format a Date or ISO string as a readable date in Myanmar timezone.
  * Example: "Jan 15, 2024"
  */
 export function formatDate(date: Date | string): string {
@@ -20,11 +20,12 @@ export function formatDate(date: Date | string): string {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
+    timeZone: 'Asia/Yangon',
   });
 }
 
 /**
- * Format a Date or ISO string as a readable date + time.
+ * Format a Date or ISO string as a readable date + time in Myanmar timezone.
  * Example: "Jan 15, 2024 02:30 PM"
  */
 export function formatDateTime(date: Date | string): string {
@@ -36,22 +37,20 @@ export function formatDateTime(date: Date | string): string {
     hour: '2-digit',
     minute: '2-digit',
     hour12: true,
+    timeZone: 'Asia/Yangon',
   });
 }
 
 /**
- * Generate a unique invoice number.
- * Format: INV-YYYYMMDD-XXX where XXX is a random 3-digit number.
- * Example: "INV-20240115-483"
+ * Generate a unique invoice number in Myanmar timezone.
+ * Format: INV-YYYYMMDD-XXXXXX
  */
 export function generateInvoiceNumber(): string {
   const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
+  const dateCompact = getMyanmarDateCompact(now);
   const random = String(Math.floor(Math.random() * 900) + 100);
   const ms = String(now.getMilliseconds()).padStart(3, '0');
-  return `INV-${year}${month}${day}-${random}${ms}`;
+  return `INV-${dateCompact}-${random}${ms}`;
 }
 
 /**
@@ -135,7 +134,7 @@ export function formatNumber(value: number): string {
 }
 
 /**
- * Format a Date to a readable time string (h:mm AM/PM).
+ * Format a Date to a readable time string (h:mm AM/PM) in Myanmar timezone.
  * Example: formatTime(new Date()) => "2:30 PM"
  */
 export function formatTime(date: Date | string): string {
@@ -144,6 +143,7 @@ export function formatTime(date: Date | string): string {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
+    timeZone: 'Asia/Yangon',
   });
 }
 
@@ -167,14 +167,65 @@ const MYANMAR_OFFSET_MS = 6.5 * 60 * 60 * 1000;
  * Get current date parts in Myanmar timezone (UTC+6:30).
  * Works correctly on Vercel (UTC) and any server timezone.
  */
-function getMyanmarDateParts(d?: Date): { year: number; month: number; day: number } {
-  const utcMs = (d ?? new Date()).getTime();
+export function getMyanmarDateParts(d?: Date | string): { year: number; month: number; day: number; hour: number } {
+  const dateObj = typeof d === 'string' ? new Date(d) : (d ?? new Date());
+  const utcMs = dateObj.getTime();
   const mmDate = new Date(utcMs + MYANMAR_OFFSET_MS);
   return {
     year: mmDate.getUTCFullYear(),
     month: mmDate.getUTCMonth(),
     day: mmDate.getUTCDate(),
+    hour: mmDate.getUTCHours(),
   };
+}
+
+/**
+ * Get compact YYYYMMDD date string in Myanmar timezone (UTC+6:30).
+ */
+export function getMyanmarDateCompact(d?: Date | string): string {
+  const { year, month, day } = getMyanmarDateParts(d);
+  return `${year}${String(month + 1).padStart(2, '0')}${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * Get YYYY-MM-DD date string in Myanmar timezone (UTC+6:30).
+ */
+export function getMyanmarDateKey(d?: Date | string): string {
+  const { year, month, day } = getMyanmarDateParts(d);
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * Get hour (0-23) in Myanmar timezone (UTC+6:30).
+ */
+export function getMyanmarHour(d: Date | string): number {
+  return getMyanmarDateParts(d).hour;
+}
+
+/**
+ * Parse a YYYY-MM-DD or ISO date string into Myanmar midnight-to-midnight UTC Date bounds.
+ */
+export function parseMyanmarDateBoundary(dateStr: string, isEndOfDay: boolean): Date | null {
+  const trimmed = dateStr.trim();
+  const ymdMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (ymdMatch) {
+    const year = Number(ymdMatch[1]);
+    const month = Number(ymdMatch[2]) - 1;
+    const day = Number(ymdMatch[3]);
+    const utcMs = isEndOfDay
+      ? Date.UTC(year, month, day, 23, 59, 59, 999) - MYANMAR_OFFSET_MS
+      : Date.UTC(year, month, day, 0, 0, 0, 0) - MYANMAR_OFFSET_MS;
+    const d = new Date(utcMs);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  const { year, month, day } = getMyanmarDateParts(parsed);
+  const utcMs = isEndOfDay
+    ? Date.UTC(year, month, day, 23, 59, 59, 999) - MYANMAR_OFFSET_MS
+    : Date.UTC(year, month, day, 0, 0, 0, 0) - MYANMAR_OFFSET_MS;
+  return new Date(utcMs);
 }
 
 /**
@@ -211,6 +262,32 @@ export function getLastNDayLabels(n: number): string[] {
     labels.push(formatShortDate(d));
   }
   return labels;
+}
+
+/**
+ * Check if a unit supports fractional quantities (e.g. 0.5 kg, 1.25 liter).
+ */
+export function isFractionalUnit(unit?: string | null): boolean {
+  if (!unit) return false;
+  return ['kg', 'g', 'liter', 'ml'].includes(unit.toLowerCase());
+}
+
+/**
+ * Round a quantity to 3 decimal places to prevent floating-point drift.
+ */
+export function roundQuantity(value: number): number {
+  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
+/**
+ * Format a quantity cleanly (removes trailing zeros for fractional quantities).
+ */
+export function formatQuantity(value: number, _unit?: string | null): string {
+  const rounded = roundQuantity(value);
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3,
+  }).format(rounded);
 }
 
 /**

@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { EXPENSE_CATEGORY_VALUES } from '@/lib/constants';
 
 const moneySchema = z.number().finite().min(0).max(1_000_000_000_000);
+const quantitySchema = z.number().finite().min(0).max(1_000_000_000);
+const positiveQuantitySchema = z.number().finite().positive('Quantity must be greater than zero').max(1_000_000_000);
 const dateStringSchema = z.string().max(40).refine(
   (value) => !Number.isNaN(Date.parse(value)),
   'Date must be a valid ISO/date string'
@@ -12,8 +14,9 @@ const dateStringSchema = z.string().max(40).refine(
 
 // ---- Shared Enums ----
 
-export const PaymentMethodEnum = z.enum(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT']);
-export const SaleStatusEnum = z.enum(['COMPLETED', 'REFUNDED', 'VOIDED']);
+export const PaymentMethodEnum = z.enum(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT', 'SPLIT']);
+export const SinglePaymentMethodEnum = z.enum(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT']);
+export const SaleStatusEnum = z.enum(['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED', 'VOIDED']);
 export const MovementTypeEnum = z.enum(['IN', 'OUT', 'ADJUSTMENT', 'RETURN']);
 export const UserRoleEnum = z.enum(['ADMIN', 'MANAGER', 'CASHIER']);
 export const ProductUnitEnum = z.enum(['pcs', 'kg', 'g', 'liter', 'ml', 'pack', 'box', 'bottle', 'dozen', 'set']);
@@ -43,10 +46,12 @@ export const createProductSchema = z.object({
   categoryId: z.string().min(1, 'Category is required'),
   costPrice: moneySchema.default(0),
   sellingPrice: moneySchema.default(0),
-  stockQuantity: z.number().int().min(0).default(0),
-  lowStockThreshold: z.number().int().min(0).default(10),
+  stockQuantity: quantitySchema.default(0),
+  lowStockThreshold: quantitySchema.default(10),
   unit: ProductUnitEnum.default('pcs'),
-  imageUrl: z.string().max(500).optional().nullable(),
+  imageUrl: z.string().max(500000).optional().nullable(),
+  batchNumber: z.string().max(100).optional().nullable(),
+  expiryDate: dateStringSchema.optional().nullable(),
   isActive: z.boolean().optional().default(true),
 });
 
@@ -59,8 +64,14 @@ export type UpdateProductInput = z.infer<typeof updateProductSchema>;
 
 export const saleItemInputSchema = z.object({
   productId: z.string().min(1, 'Product ID is required'),
-  quantity: z.number().int().positive('Quantity must be a positive integer'),
+  quantity: positiveQuantitySchema,
   discount: moneySchema.default(0),
+});
+
+export const salePaymentLegSchema = z.object({
+  method: SinglePaymentMethodEnum,
+  amount: moneySchema.positive('Payment leg amount must be positive'),
+  reference: z.string().max(100).optional().nullable(),
 });
 
 export const createSaleSchema = z.object({
@@ -68,6 +79,8 @@ export const createSaleSchema = z.object({
   customerId: z.string().optional().nullable(),
   paymentMethod: PaymentMethodEnum,
   paidAmount: moneySchema,
+  payments: z.array(salePaymentLegSchema).max(10).optional(),
+  pointsRedeemed: z.number().int().min(0).max(10_000_000).default(0),
   cartDiscount: moneySchema.default(0),
   clientSaleId: z.string().uuid('Invalid idempotency key').optional(),
   paymentReference: z.string().max(100).optional().nullable(),
@@ -76,9 +89,16 @@ export const createSaleSchema = z.object({
 
 export type CreateSaleInput = z.infer<typeof createSaleSchema>;
 
+export const refundItemInputSchema = z.object({
+  saleItemId: z.string().min(1),
+  quantity: positiveQuantitySchema,
+});
+
 export const updateSaleStatusSchema = z.object({
-  status: z.enum(['REFUNDED', 'VOIDED']),
+  status: z.enum(['REFUNDED', 'VOIDED', 'PARTIALLY_REFUNDED']),
   reason: z.string().min(1, 'Reason is required for refund/void').max(500),
+  refundMethod: z.enum(['ORIGINAL', 'CASH']).optional().default('ORIGINAL'),
+  items: z.array(refundItemInputSchema).optional(),
 });
 
 export type UpdateSaleStatusInput = z.infer<typeof updateSaleStatusSchema>;
@@ -87,7 +107,7 @@ export type UpdateSaleStatusInput = z.infer<typeof updateSaleStatusSchema>;
 
 export const inventoryMovementSchema = z.object({
   productId: z.string().min(1, 'Product ID is required'),
-  quantity: z.number().int().positive('Quantity must be a positive integer'),
+  quantity: quantitySchema,
   type: MovementTypeEnum,
   reason: z.string().min(1, 'Reason is required').max(500),
 });
@@ -101,12 +121,21 @@ export const createCustomerSchema = z.object({
   phone: z.string().max(20).optional().nullable(),
   email: z.string().email('Invalid email').max(200).optional().nullable(),
   address: z.string().max(500).optional().nullable(),
+  creditLimit: moneySchema.optional().nullable(),
 });
 
 export const updateCustomerSchema = createCustomerSchema.partial();
 
+export const repayCustomerDebtSchema = z.object({
+  amount: moneySchema.positive('Repayment amount must be positive'),
+  method: z.enum(['CASH', 'CARD', 'MOBILE_BANKING']),
+  reference: z.string().max(100).optional().nullable(),
+  notes: z.string().max(500).optional().nullable(),
+});
+
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export type UpdateCustomerInput = z.infer<typeof updateCustomerSchema>;
+export type RepayCustomerDebtInput = z.infer<typeof repayCustomerDebtSchema>;
 
 // ---- Expense Schemas ----
 
@@ -134,8 +163,15 @@ export const closeShiftSchema = z.object({
   notes: z.string().max(500).optional().nullable(),
 });
 
+export const shiftCashMovementSchema = z.object({
+  type: z.enum(['PAID_IN', 'PAID_OUT']),
+  amount: moneySchema.positive('Amount must be greater than zero'),
+  reason: z.string().min(1, 'Reason is required').max(500),
+});
+
 export type OpenShiftInput = z.infer<typeof openShiftSchema>;
 export type CloseShiftInput = z.infer<typeof closeShiftSchema>;
+export type ShiftCashMovementInput = z.infer<typeof shiftCashMovementSchema>;
 
 // ---- User Schemas ----
 
@@ -184,8 +220,11 @@ export const updateSettingsSchema = z.object({
   email: z.string().email().max(200).optional().nullable(),
   taxRate: z.number().min(0).max(100).optional(),
   currencySymbol: z.string().max(10).optional(),
-  logo: z.string().max(1000).optional().nullable(),
+  logo: z.string().max(500000).optional().nullable(),
   receiptFooter: z.string().max(500).optional().nullable(),
+  loyaltyEnabled: z.boolean().optional(),
+  loyaltyEarnRate: moneySchema.positive().optional(),
+  loyaltyRedeemRate: moneySchema.positive().optional(),
 });
 
 export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;
