@@ -977,6 +977,24 @@ select.input {
   margin-left: var(--sidebar-collapsed);
 }
 
+.sidebar.collapsed .sidebar-logo {
+  justify-content: space-between;
+  gap: 0;
+  padding-inline: 4px;
+}
+
+.sidebar.collapsed .sidebar-logo-icon {
+  width: 28px;
+  height: 28px;
+  font-size: 14px;
+}
+
+.sidebar.collapsed .sidebar-logo .btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+}
+
 .page-header {
   display: flex;
   align-items: center;
