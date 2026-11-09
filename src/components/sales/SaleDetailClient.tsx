@@ -15,8 +15,10 @@ import {
   UserCog,
   FileSpreadsheet,
   CreditCard,
+  Printer,
   X,
 } from '@/components/ui/Icons';
+import Receipt from '@/components/pos/Receipt';
 
 const paymentMethodTranslationKeys: Record<string, string> = {
   CASH: 'cash',
@@ -114,6 +116,7 @@ export function SaleDetailClient({
 
   // Refund / Void modal state
   const [modalOpen, setModalOpen] = useState(false);
+  const [showReceipt, setShowReceipt] = useState(false);
   const [actionType, setActionType] = useState<'VOIDED' | 'REFUNDED' | 'PARTIALLY_REFUNDED'>('REFUNDED');
   const [refundMethod, setRefundMethod] = useState<'ORIGINAL' | 'CASH'>('ORIGINAL');
   const [reason, setReason] = useState('');
@@ -216,40 +219,50 @@ export function SaleDetailClient({
 
   return (
     <div className="page-body">
-      {/* Action Buttons for Manager/Admin */}
-      {canManageRefund && (sale.status === 'COMPLETED' || sale.status === 'PARTIALLY_REFUNDED') && (
-        <div
-          className="flex gap-sm"
-          style={{ justifyContent: 'flex-end', marginBottom: 'var(--space-md)', flexWrap: 'wrap' }}
+      {/* Action Buttons (Print Receipt + Manager/Admin Refund/Void) */}
+      <div
+        className="flex gap-sm no-print"
+        style={{ justifyContent: 'flex-end', marginBottom: 'var(--space-md)', flexWrap: 'wrap' }}
+      >
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => setShowReceipt(true)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
         >
-          <button
-            className="btn btn-warning btn-sm"
-            onClick={() => openActionModal('PARTIALLY_REFUNDED')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          >
-            <Package size={14} strokeWidth={1.75} />
-            {t('Partial Refund', 'ပစ္စည်းအချို့ ပြန်အမ်းရန်')}
-          </button>
-          <button
-            className="btn btn-warning btn-sm"
-            onClick={() => openActionModal('REFUNDED')}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-          >
-            <RotateCcw size={14} strokeWidth={1.75} />
-            {t('Full Refund', 'ဘောင်ချာအပြည့် ပြန်အမ်းရန်')}
-          </button>
-          {sale.status === 'COMPLETED' && (
+          <Printer size={14} strokeWidth={1.75} />
+          {t('Print Receipt', 'ဘောင်ချာ ပရင့်ထုတ်ရန်')}
+        </button>
+        {canManageRefund && (sale.status === 'COMPLETED' || sale.status === 'PARTIALLY_REFUNDED') && (
+          <>
             <button
-              className="btn btn-danger btn-sm"
-              onClick={() => openActionModal('VOIDED')}
+              className="btn btn-warning btn-sm"
+              onClick={() => openActionModal('PARTIALLY_REFUNDED')}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
-              <Ban size={14} strokeWidth={1.75} />
-              {t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')}
+              <Package size={14} strokeWidth={1.75} />
+              {t('Partial Refund', 'ပစ္စည်းအချို့ ပြန်အမ်းရန်')}
             </button>
-          )}
-        </div>
-      )}
+            <button
+              className="btn btn-warning btn-sm"
+              onClick={() => openActionModal('REFUNDED')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <RotateCcw size={14} strokeWidth={1.75} />
+              {t('Full Refund', 'ဘောင်ချာအပြည့် ပြန်အမ်းရန်')}
+            </button>
+            {sale.status === 'COMPLETED' && (
+              <button
+                className="btn btn-danger btn-sm"
+                onClick={() => openActionModal('VOIDED')}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Ban size={14} strokeWidth={1.75} />
+                {t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')}
+              </button>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Info Grid */}
       <div
@@ -662,6 +675,42 @@ export function SaleDetailClient({
             </div>
           </div>
         </div>
+      )}
+
+      {showReceipt && (
+        <Receipt
+          data={{
+            invoiceNumber: sale.invoiceNumber,
+            createdAt: typeof sale.createdAt === 'string' ? sale.createdAt : sale.createdAt.toISOString(),
+            cashierName: sale.user?.name || '—',
+            customerName: sale.customer?.name || null,
+            items: (sale.items || []).map((item) => ({
+              name: language === 'mm' && item.product?.nameMm ? item.product.nameMm : item.product?.name || 'Item',
+              quantity: Number(item.quantity),
+              unitPrice: Number(item.unitPrice),
+              discount: Number(item.discount || 0),
+              total: Number(item.total),
+              unit: item.product?.unit,
+            })),
+            subtotal: Number(sale.subtotal),
+            discountAmount: Number(sale.discountAmount),
+            taxAmount: Number(sale.taxAmount),
+            totalAmount: Number(sale.totalAmount),
+            paymentMethod: sale.paymentMethod,
+            paidAmount: Number(sale.paidAmount),
+            dueAmount: Number(sale.dueAmount || 0),
+            changeAmount: Number(sale.changeAmount),
+            pointsEarned: Number(sale.pointsEarned || 0),
+            pointsRedeemed: Number(sale.pointsRedeemed || 0),
+            payments: (sale.payments || []).map((p) => ({
+              method: p.method,
+              amount: Number(p.amount),
+              reference: p.reference,
+            })),
+          }}
+          onNewSale={() => setShowReceipt(false)}
+          closeLabel={t('Close', 'ပိတ်ရန်')}
+        />
       )}
     </div>
   );

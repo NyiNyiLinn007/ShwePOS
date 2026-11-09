@@ -2474,26 +2474,28 @@ kbd {
 }
 
 /* ---- Thermal Receipt & Barcode Print Styles ---- */
-.receipt-container {
-  background: #ffffff;
-  color: #000000;
-  font-family: 'Courier New', Courier, monospace;
+.receipt-container,
+.receipt-printable {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
   padding: 16px;
   border-radius: 6px;
   margin: 0 auto;
   line-height: 1.45;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
-.receipt-container.receipt-80mm {
+.receipt-container.receipt-80mm,
+.receipt-printable.receipt-80mm {
   width: 100%;
-  max-width: 302px; /* ~80mm */
+  max-width: 320px; /* ~80mm */
   font-size: 12px;
 }
 
-.receipt-container.receipt-58mm {
+.receipt-container.receipt-58mm,
+.receipt-printable.receipt-58mm {
   width: 100%;
-  max-width: 210px; /* ~58mm */
+  max-width: 220px; /* ~58mm */
   font-size: 10.5px;
   padding: 10px 8px;
 }
@@ -2540,46 +2542,141 @@ kbd {
 }
 
 @media print {
-  body * {
-    visibility: hidden;
+  @page {
+    margin: 6mm;
   }
 
+  :root,
+  [data-theme='dark'],
+  [data-theme='light'] {
+    --bg-root: #ffffff !important;
+    --bg-primary: #ffffff !important;
+    --bg-secondary: #ffffff !important;
+    --bg-tertiary: #f4f4f5 !important;
+    --text-primary: #000000 !important;
+    --text-secondary: #111111 !important;
+    --text-muted: #333333 !important;
+    --primary: #000000 !important;
+    --border-default: #000000 !important;
+    --border-subtle: #444444 !important;
+    --border-color: #444444 !important;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .sidebar,
+  .mobile-nav-trigger,
+  .mobile-nav-backdrop,
+  .toast-container,
   .no-print {
     display: none !important;
   }
 
+  .app-layout,
+  .main-content,
+  .pos-layout,
+  .page-body {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+  }
+
+  /* When a Receipt or Barcode Print Modal is open, isolate ONLY the receipt/labels */
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) * {
+    visibility: hidden !important;
+  }
+
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pos-products,
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pos-cart,
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pos-mobile-cart-toggle,
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .page-header,
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .toolbar-card,
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .table-container,
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pagination {
+    display: none !important;
+  }
+
+  .modal-backdrop,
+  .print-modal-backdrop,
+  .modal,
+  .print-modal,
+  .modal-body {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    backdrop-filter: none !important;
+    transform: none !important;
+    animation: none !important;
+  }
+
+  .receipt-printable,
+  .receipt-printable *,
   .receipt-container,
   .receipt-container *,
   .barcode-print-grid,
   .barcode-print-grid * {
-    visibility: visible;
+    visibility: visible !important;
   }
 
+  .receipt-printable,
   .receipt-container {
-    position: fixed;
-    left: 0;
-    top: 0;
-    margin: 0;
-    padding: 4px;
-    box-shadow: none;
-    border: none;
+    position: static !important;
+    margin: 0 auto !important;
+    padding: 4px !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
   }
 
+  .receipt-printable *,
+  .receipt-container * {
+    color: #000000 !important;
+    border-color: #000000 !important;
+  }
+
+  .receipt-printable.receipt-80mm,
   .receipt-container.receipt-80mm {
-    width: 76mm;
-    max-width: 76mm;
+    width: 76mm !important;
+    max-width: 76mm !important;
   }
 
+  .receipt-printable.receipt-58mm,
   .receipt-container.receipt-58mm {
-    width: 54mm;
-    max-width: 54mm;
+    width: 54mm !important;
+    max-width: 54mm !important;
   }
 
   .barcode-print-grid {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 100%;
+    position: static !important;
+    width: 100% !important;
     border: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
   }
 }

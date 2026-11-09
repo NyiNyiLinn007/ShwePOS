@@ -40,9 +40,10 @@ export interface ReceiptData {
 interface ReceiptProps {
   data: ReceiptData;
   onNewSale: () => void;
+  closeLabel?: string;
 }
 
-export default function Receipt({ data, onNewSale }: ReceiptProps) {
+export default function Receipt({ data, onNewSale, closeLabel }: ReceiptProps) {
   const { businessName, businessNameMm, address, phone, logo, receiptFooter } = useSettingsStore();
   const { t } = useI18n();
   const [paperSize, setPaperSize] = useState<'80mm' | '58mm'>('80mm');
@@ -64,9 +65,9 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onNewSale}>
+    <div className="modal-backdrop print-modal-backdrop" onClick={onNewSale}>
       <div
-        className="modal"
+        className="modal print-modal"
         style={{ maxWidth: paperSize === '58mm' ? '300px' : '380px' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -107,7 +108,7 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
         </div>
 
         <div
-          className={`receipt-printable receipt-${paperSize}`}
+          className={`receipt-printable receipt-container receipt-${paperSize}`}
           style={{
             padding: 'var(--space-xl)',
             fontFamily: 'var(--font-mono)',
@@ -376,8 +377,8 @@ export default function Receipt({ data, onNewSale }: ReceiptProps) {
             type="button"
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            <Plus size={15} strokeWidth={2} />
-            {t('New Sale', 'အရောင်းအသစ်')}
+            {!closeLabel && <Plus size={15} strokeWidth={2} />}
+            {closeLabel || t('New Sale', 'အရောင်းအသစ်')}
           </button>
         </div>
       </div>

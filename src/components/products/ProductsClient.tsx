@@ -1267,9 +1267,9 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
 
       {/* Barcode Label Print Modal */}
       {labelTarget && (
-        <div className="modal-backdrop" onClick={() => setLabelTarget(null)}>
+        <div className="modal-backdrop print-modal-backdrop" onClick={() => setLabelTarget(null)}>
           <div
-            className="modal modal-lg"
+            className="modal modal-lg print-modal"
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: 640 }}
           >
