@@ -2597,18 +2597,15 @@ kbd {
     background: #ffffff !important;
   }
 
-  /* When a Receipt or Barcode Print Modal is open, isolate ONLY the receipt/labels */
-  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) * {
-    visibility: hidden !important;
-  }
-
+  /* When a Receipt or Barcode Print Modal is open, hide background UI via display: none */
   body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pos-products,
   body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pos-cart,
   body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pos-mobile-cart-toggle,
   body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .page-header,
   body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .toolbar-card,
   body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .table-container,
-  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pagination {
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .pagination,
+  body:has(.receipt-printable, .receipt-container, .barcode-print-grid) .page-body > :not(.print-modal-backdrop) {
     display: none !important;
   }
 

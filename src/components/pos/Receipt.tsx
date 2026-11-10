@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
+import { printElementById } from '@/lib/print';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useI18n } from '@/lib/i18n';
 import { Printer, WifiOff, Plus } from '@/components/ui/Icons';
@@ -50,7 +51,10 @@ export default function Receipt({ data, onNewSale, closeLabel }: ReceiptProps) {
 
   const handlePrint = () => {
     document.body.setAttribute('data-print-size', paperSize);
-    window.print();
+    printElementById('receipt-content', {
+      title: `${businessName} - ${data.invoiceNumber}`,
+      paperSize,
+    });
   };
 
   const getMethodLabel = (method: string) => {

@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/store/settingsStore';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDate, formatQuantity, isFractionalUnit } from '@/lib/utils';
+import { printElementById } from '@/lib/print';
 import {
   ProductMonogram,
   Plus,
@@ -1300,68 +1301,70 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
               </div>
 
               {/* Printable Label Grid */}
-              <div
-                className="barcode-print-grid"
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                  gap: '12px',
-                  padding: '12px',
-                  background: '#fff',
-                  color: '#000',
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--border-color)',
-                }}
-              >
-                {Array.from({ length: labelCount }).map((_, idx) => {
-                  const codeVal = labelTarget.barcode || labelTarget.sku;
-                  const bars = buildCode128Bars(codeVal);
-                  const totalWidth = bars.length > 0 ? bars[bars.length - 1].x + bars[bars.length - 1].w + 10 : 120;
-                  return (
-                    <div
-                      key={idx}
-                      className="barcode-sticker"
-                      style={{
-                        border: '1px dashed #ccc',
-                        borderRadius: '4px',
-                        padding: '8px',
-                        textAlign: 'center',
-                        background: '#fff',
-                        color: '#000',
-                      }}
-                    >
-                      <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        {businessName || 'ShwePOS'}
-                      </div>
+              <div id="barcode-labels-content">
+                <div
+                  className="barcode-print-grid"
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+                    gap: '12px',
+                    padding: '12px',
+                    background: '#fff',
+                    color: '#000',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                  }}
+                >
+                  {Array.from({ length: labelCount }).map((_, idx) => {
+                    const codeVal = labelTarget.barcode || labelTarget.sku;
+                    const bars = buildCode128Bars(codeVal);
+                    const totalWidth = bars.length > 0 ? bars[bars.length - 1].x + bars[bars.length - 1].w + 10 : 120;
+                    return (
                       <div
+                        key={idx}
+                        className="barcode-sticker"
                         style={{
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          whiteSpace: 'nowrap',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          marginBottom: 4,
+                          border: '1px dashed #ccc',
+                          borderRadius: '4px',
+                          padding: '8px',
+                          textAlign: 'center',
+                          background: '#fff',
+                          color: '#000',
                         }}
                       >
-                        {language === 'mm' && labelTarget.nameMm ? labelTarget.nameMm : labelTarget.name}
+                        <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          {businessName || 'ShwePOS'}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            marginBottom: 4,
+                          }}
+                        >
+                          {language === 'mm' && labelTarget.nameMm ? labelTarget.nameMm : labelTarget.name}
+                        </div>
+                        <svg
+                          viewBox={`0 0 ${totalWidth} 42`}
+                          style={{ width: '100%', height: '42px', display: 'block', margin: '0 auto' }}
+                        >
+                          {bars.map((b, bIdx) => (
+                            <rect key={bIdx} x={b.x} y={2} width={b.w} height={38} fill="#000" />
+                          ))}
+                        </svg>
+                        <div style={{ fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', marginTop: 2 }}>
+                          {codeVal}
+                        </div>
+                        <div style={{ fontSize: '13px', fontWeight: 800, marginTop: 2 }}>
+                          {formatCurrency(labelTarget.sellingPrice)}
+                        </div>
                       </div>
-                      <svg
-                        viewBox={`0 0 ${totalWidth} 42`}
-                        style={{ width: '100%', height: '42px', display: 'block', margin: '0 auto' }}
-                      >
-                        {bars.map((b, bIdx) => (
-                          <rect key={bIdx} x={b.x} y={2} width={b.w} height={38} fill="#000" />
-                        ))}
-                      </svg>
-                      <div style={{ fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', marginTop: 2 }}>
-                        {codeVal}
-                      </div>
-                      <div style={{ fontSize: '13px', fontWeight: 800, marginTop: 2 }}>
-                        {formatCurrency(labelTarget.sellingPrice)}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             </div>
             <div className="modal-footer no-print">
@@ -1370,7 +1373,12 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
               </button>
               <button
                 className="btn btn-primary"
-                onClick={() => window.print()}
+                onClick={() =>
+                  printElementById('barcode-labels-content', {
+                    title: `${labelTarget.name} - Barcode Labels`,
+                    paperSize: 'A4',
+                  })
+                }
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
                 <Printer size={15} strokeWidth={1.75} />
