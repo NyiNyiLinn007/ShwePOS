@@ -42,6 +42,44 @@ export default async function DashboardPage() {
   `;
   const actualLowStockCount = lowStockRows[0]?.count ?? 0;
 
+  // Low stock & Expiring within 30 days alert items for Dashboard widget
+  const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const alertProductsRaw = await prisma.$queryRaw<
+    Array<{
+      id: string;
+      name: string;
+      nameMm: string | null;
+      sku: string;
+      stockQuantity: number;
+      lowStockThreshold: number;
+      unit: string;
+      expiryDate: Date | null;
+      batchNumber: string | null;
+    }>
+  >`
+    SELECT "id", "name", "nameMm", "sku",
+           "stockQuantity"::float8 AS "stockQuantity",
+           "lowStockThreshold"::float8 AS "lowStockThreshold",
+           "unit", "expiryDate", "batchNumber"
+    FROM "Product"
+    WHERE "isActive" = true
+      AND ("stockQuantity" <= "lowStockThreshold" OR ("expiryDate" IS NOT NULL AND "expiryDate" <= ${thirtyDaysFromNow}))
+    ORDER BY "stockQuantity" ASC, "expiryDate" ASC NULLS LAST
+    LIMIT 8
+  `;
+
+  const alertProducts = alertProductsRaw.map((p) => ({
+    id: p.id,
+    name: p.name,
+    nameMm: p.nameMm,
+    sku: p.sku,
+    stockQuantity: Number(p.stockQuantity),
+    lowStockThreshold: Number(p.lowStockThreshold),
+    unit: p.unit,
+    expiryDate: p.expiryDate ? p.expiryDate.toISOString() : null,
+    batchNumber: p.batchNumber,
+  }));
+
   // --- Recent 10 sales ---
   const recentSalesRaw = todaySales.slice(0, 10);
   const recentSales = recentSalesRaw.map((sale) => ({
@@ -136,6 +174,7 @@ export default async function DashboardPage() {
       recentSales={recentSales}
       topProducts={topProducts}
       salesChartData={salesChartData}
+      alertProducts={alertProducts}
     />
   );
 }

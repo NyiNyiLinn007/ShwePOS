@@ -5,7 +5,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
-import { ArrowDownToLine, ArrowUpFromLine, Banknote, Clock } from '@/components/ui/Icons';
+import { printElementById } from '@/lib/print';
+import { useSettingsStore } from '@/store/settingsStore';
+import { ArrowDownToLine, ArrowUpFromLine, Banknote, Clock, Printer, X } from '@/components/ui/Icons';
 
 interface ShiftSummary {
   cashSales: number;
@@ -49,6 +51,7 @@ interface ShiftClientProps {
 export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
   const { language, t } = useI18n();
   const { addToast } = useToast();
+  const { businessName, businessNameMm, address, phone } = useSettingsStore();
   const [current, setCurrent] = useState<Shift | null>(null);
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [openingCash, setOpeningCash] = useState('0');
@@ -58,6 +61,8 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showCloseForm, setShowCloseForm] = useState(false);
+  const [reportShift, setReportShift] = useState<Shift | null>(null);
+  const [paperSize, setPaperSize] = useState<'80mm' | '58mm'>('80mm');
 
   // Paid-In / Paid-Out state
   const [movementMode, setMovementMode] = useState<'PAID_IN' | 'PAID_OUT' | null>(null);
@@ -183,6 +188,9 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
       addToast(t('shiftClosed'), 'success');
       setShowCloseForm(false);
       setClosingNotes('');
+      if (data && data.id) {
+        setReportShift(data);
+      }
       await loadShifts();
     } catch (error) {
       addToast(error instanceof Error ? error.message : t('closeShift'), 'error');
@@ -220,6 +228,13 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
                 <p className="shift-muted">{t('opened')}: {formatDateTime(current.openedAt)}</p>
               </div>
               <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setReportShift(current)}
+                >
+                  <Printer size={14} strokeWidth={1.75} /> {t('Print X-Report', 'ကြားဖြတ်စာရင်းပရင့်')}
+                </button>
                 <button
                   type="button"
                   className="btn btn-secondary btn-sm"
@@ -427,7 +442,7 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
           ) : (
             <div className="table-container">
               <table className="table shift-table">
-                <thead><tr><th>{t('cashier')}</th><th>{t('opened')}</th><th>{t('closed')}</th><th>{t('expectedCash')}</th><th>{t('actual')}</th><th>{t('variance')}</th><th>{t('statusLabel')}</th></tr></thead>
+                <thead><tr><th>{t('cashier')}</th><th>{t('opened')}</th><th>{t('closed')}</th><th>{t('expectedCash')}</th><th>{t('actual')}</th><th>{t('variance')}</th><th>{t('statusLabel')}</th><th style={{ textAlign: 'right' }}>{t('actions')}</th></tr></thead>
                 <tbody>
                   {shifts.map((shift) => (
                     <tr key={shift.id}>
@@ -438,6 +453,16 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
                       <td>{shift.actualCash === null ? '—' : formatCurrency(shift.actualCash)}</td>
                       <td className={shift.variance === null ? '' : shift.variance === 0 ? 'text-success' : shift.variance > 0 ? 'text-warning' : 'text-danger'}>{shift.variance === null ? '—' : formatCurrency(shift.variance)}</td>
                       <td><span className={`badge ${shift.status === 'OPEN' ? 'badge-success' : 'badge-neutral'}`}>{shift.status === 'OPEN' ? t('openStatus') : t('closedStatus')}</span></td>
+                      <td style={{ textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setReportShift(shift)}
+                          title={t('Print Shift Report', 'အလုပ်ချိန်စာရင်းချုပ် ပရင့်ထုတ်ရန်')}
+                        >
+                          <Printer size={14} strokeWidth={1.75} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -446,6 +471,191 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
           )}
         </section>
       </div>
+
+      {/* Shift X-Report / Z-Report Thermal Print Modal */}
+      {reportShift && (
+        <div className="modal-backdrop print-modal-backdrop" onClick={() => setReportShift(null)}>
+          <div
+            className="modal print-modal"
+            style={{ maxWidth: paperSize === '58mm' ? '300px' : '380px' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="no-print"
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: 'var(--space-sm) var(--space-md)',
+                borderBottom: '1px solid var(--border-subtle)',
+                background: 'var(--bg-secondary)',
+              }}
+            >
+              <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                <Printer size={13} strokeWidth={1.75} />
+                {t('Paper Size', 'စက္ကူအရွယ်အစား')}:
+              </span>
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${paperSize === '80mm' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setPaperSize('80mm')}
+                  style={{ padding: '2px 8px', fontSize: 11 }}
+                >
+                  80mm
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${paperSize === '58mm' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setPaperSize('58mm')}
+                  style={{ padding: '2px 8px', fontSize: 11 }}
+                >
+                  58mm
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon btn-sm"
+                  onClick={() => setReportShift(null)}
+                >
+                  <X size={14} strokeWidth={1.75} />
+                </button>
+              </div>
+            </div>
+
+            <div
+              id="shift-report-content"
+              className={`receipt-printable receipt-container receipt-${paperSize}`}
+              style={{
+                padding: 'var(--space-xl)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: paperSize === '58mm' ? '11px' : 'var(--text-sm)',
+              }}
+            >
+              <div style={{ textAlign: 'center', marginBottom: 'var(--space-md)' }}>
+                <div style={{ fontSize: 'var(--text-lg)', fontWeight: 800 }}>
+                  {businessName || 'ShwePOS'}
+                </div>
+                {businessNameMm && (
+                  <div className="mm-text" style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                    {businessNameMm}
+                  </div>
+                )}
+                {address && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>{address}</div>}
+                {phone && <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>Tel: {phone}</div>}
+                <div style={{ marginTop: 6, fontWeight: 800, fontSize: 'var(--text-sm)' }}>
+                  {reportShift.status === 'CLOSED'
+                    ? t('SHIFT Z-REPORT (CLOSED)', 'အလုပ်ချိန်ပိတ် စာရင်းချုပ် (Z-REPORT)')
+                    : t('SHIFT X-REPORT (OPEN)', 'ကြားဖြတ် ငွေသေတ္တာစာရင်း (X-REPORT)')}
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px dashed var(--border-default)', margin: '8px 0' }} />
+
+              <div style={{ marginBottom: 'var(--space-sm)' }}>
+                <div className="flex justify-between">
+                  <span style={{ color: 'var(--text-muted)' }}>{t('cashier')}:</span>
+                  <span style={{ fontWeight: 600 }}>{reportShift.user.name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span style={{ color: 'var(--text-muted)' }}>{t('opened')}:</span>
+                  <span>{formatDateTime(reportShift.openedAt)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span style={{ color: 'var(--text-muted)' }}>{t('closed')}:</span>
+                  <span>{reportShift.closedAt ? formatDateTime(reportShift.closedAt) : t('Active', 'ဖွင့်ထားဆဲ')}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span style={{ color: 'var(--text-muted)' }}>{t('transactions')}:</span>
+                  <span>{reportShift.summary?.movementCount ?? 0}</span>
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px dashed var(--border-default)', margin: '8px 0' }} />
+
+              <div style={{ marginBottom: 'var(--space-sm)' }}>
+                <div className="flex justify-between" style={{ marginBottom: 3 }}>
+                  <span>{t('openingCash')}</span>
+                  <span>{formatCurrency(reportShift.openingCash)}</span>
+                </div>
+                <div className="flex justify-between" style={{ marginBottom: 3 }}>
+                  <span>+ {t('cashSales')}</span>
+                  <span>{formatCurrency(reportShift.summary?.cashSales ?? 0)}</span>
+                </div>
+                <div className="flex justify-between" style={{ marginBottom: 3 }}>
+                  <span>+ {t('Paid In', 'ငွေသွင်း')}</span>
+                  <span>{formatCurrency(reportShift.summary?.paidIn ?? 0)}</span>
+                </div>
+                <div className="flex justify-between" style={{ marginBottom: 3 }}>
+                  <span>− {t('Paid Out', 'ငွေထုတ်')}</span>
+                  <span>{formatCurrency(reportShift.summary?.paidOut ?? 0)}</span>
+                </div>
+                <div className="flex justify-between" style={{ marginBottom: 3 }}>
+                  <span>− {t('Refunds', 'ပြန်အမ်းငွေ')}</span>
+                  <span>{formatCurrency(reportShift.summary?.refunds ?? 0)}</span>
+                </div>
+              </div>
+
+              <div style={{ borderTop: '2px solid var(--border-default)', margin: '8px 0', paddingTop: 6 }}>
+                <div className="flex justify-between" style={{ fontWeight: 800, fontSize: 'var(--text-base)' }}>
+                  <span>{t('expectedCash')}</span>
+                  <span>{formatCurrency(reportShift.expectedCash)}</span>
+                </div>
+                {reportShift.actualCash !== null && (
+                  <>
+                    <div className="flex justify-between" style={{ fontWeight: 700, marginTop: 4 }}>
+                      <span>{t('Actual Cash', 'လက်တွေ့ရေတွက်ငွေ')}</span>
+                      <span>{formatCurrency(reportShift.actualCash)}</span>
+                    </div>
+                    <div className="flex justify-between" style={{ fontWeight: 700, marginTop: 4 }}>
+                      <span>{t('variance')}</span>
+                      <span>
+                        {reportShift.variance === 0
+                          ? t('balanced')
+                          : `${(reportShift.variance ?? 0) > 0 ? '+' : ''}${formatCurrency(reportShift.variance ?? 0)}`}
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {reportShift.notes && (
+                <>
+                  <div style={{ borderTop: '1px dashed var(--border-default)', margin: '8px 0' }} />
+                  <div style={{ fontSize: 'var(--text-xs)' }}>
+                    <strong>{t('Notes', 'မှတ်ချက်')}:</strong> {reportShift.notes}
+                  </div>
+                </>
+              )}
+
+              <div style={{ borderTop: '1px dashed var(--border-default)', margin: '12px 0 8px' }} />
+              <div style={{ textAlign: 'center', fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginTop: 18 }}>
+                <div>____________________________</div>
+                <div style={{ marginTop: 4 }}>{t('Cashier / Manager Signature', 'ငွေကိုင် / မန်နေဂျာ လက်မှတ်')}</div>
+              </div>
+            </div>
+
+            <div className="modal-footer no-print" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+              <button className="btn btn-secondary" type="button" onClick={() => setReportShift(null)}>
+                {t('Close', 'ပိတ်ရန်')}
+              </button>
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() =>
+                  printElementById('shift-report-content', {
+                    title: `Shift-${reportShift.status}-Report-${reportShift.user.name}`,
+                    paperSize,
+                  })
+                }
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Printer size={15} strokeWidth={1.75} />
+                {t('print')} ({paperSize})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

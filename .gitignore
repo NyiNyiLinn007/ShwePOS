@@ -44,3 +44,9 @@ next-env.d.ts
 # IDE
 .vscode/
 .idea/
+
+# Local test & audit artifacts
+.playwright-cli/
+output/
+outputs/
+security_best_practices_report.md

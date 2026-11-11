@@ -8,13 +8,15 @@ import { PAYMENT_METHODS, SALE_STATUSES } from '@/lib/constants';
 import {
   PaymentMethodIcon,
   Download,
-  Receipt,
+  Receipt as ReceiptIcon,
   Eye,
+  Printer,
   X,
   Ban,
   Package,
   RotateCcw,
 } from '@/components/ui/Icons';
+import Receipt from '@/components/pos/Receipt';
 
 const paymentMethodTranslationKeys: Record<string, string> = {
   CASH: 'cash',
@@ -111,6 +113,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
   const [paymentFilter, setPaymentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [printTargetSale, setPrintTargetSale] = useState<Sale | null>(null);
   const [voidTarget, setVoidTarget] = useState<Sale | null>(null);
   const [voidAction, setVoidAction] = useState<'VOIDED' | 'REFUNDED' | 'PARTIALLY_REFUNDED'>('VOIDED');
   const [refundMethod, setRefundMethod] = useState<'ORIGINAL' | 'CASH'>('ORIGINAL');
@@ -300,6 +303,63 @@ export function SalesClient({ initialSales }: SalesClientProps) {
     return pages;
   }
 
+  /* ---- Export CSV ---- */
+  function exportSalesCsv() {
+    if (filteredSales.length === 0) {
+      addToast(t('No sales to export', 'ထုတ်ယူရန် အရောင်းမှတ်တမ်း မရှိပါ'), 'warning');
+      return;
+    }
+    const headers = [
+      'Invoice Number',
+      'Date & Time',
+      'Customer',
+      'Cashier',
+      'Items',
+      'Subtotal',
+      'Discount',
+      'Tax',
+      'Total',
+      'Paid',
+      'Due',
+      'Payment Method',
+      'Status',
+    ];
+    const escapeCsv = (val: string | number) => {
+      const str = String(val ?? '');
+      return str.includes(',') || str.includes('"') || str.includes('\n')
+        ? `"${str.replace(/"/g, '""')}"`
+        : str;
+    };
+    const rows = filteredSales.map((s) => [
+      s.invoiceNumber,
+      formatDateTime(s.createdAt),
+      s.customer?.name || 'Walk-in',
+      s.user?.name || '—',
+      s.items?.length || 0,
+      s.subtotal,
+      s.discountAmount,
+      s.taxAmount,
+      s.totalAmount,
+      s.paidAmount,
+      s.dueAmount || 0,
+      s.paymentMethod,
+      s.status,
+    ]);
+    const csvContent =
+      '\uFEFF' +
+      [headers.map(escapeCsv).join(','), ...rows.map((r) => r.map(escapeCsv).join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `shwepos-sales-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addToast(t('Sales exported to CSV', 'အရောင်းစာရင်း CSV ထုတ်ယူပြီးပါပြီ'), 'success');
+  }
+
   /* ---- Render ---- */
 
   return (
@@ -313,11 +373,11 @@ export function SalesClient({ initialSales }: SalesClientProps) {
         <div className="page-actions">
           <button
             className="btn btn-secondary"
-            onClick={() => addToast('Export feature coming soon', 'info')}
+            onClick={exportSalesCsv}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
             <Download size={15} strokeWidth={1.75} />
-            {t('Export', 'ထုတ်ရန်')}
+            {t('Export CSV', 'CSV ထုတ်ရန်')}
           </button>
         </div>
       </div>
@@ -412,7 +472,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               <option value="">{t('All Payments', 'ငွေပေးချေမှုအားလုံး')}</option>
               {PAYMENT_METHODS.map((pm) => (
                 <option key={pm.value} value={pm.value}>
-                  {t(paymentMethodTranslationKeys[pm.value] ?? pm.value)}
+                  {getPaymentBadge(pm.value)}
                 </option>
               ))}
             </select>
@@ -426,7 +486,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               <option value="">{t('All Status', 'အခြေအနေအားလုံး')}</option>
               {SALE_STATUSES.map((s) => (
                 <option key={s.value} value={s.value}>
-                  {t(saleStatusTranslationKeys[s.value] ?? s.value)}
+                  {getStatusLabel(s.value)}
                 </option>
               ))}
             </select>
@@ -456,7 +516,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
         {filteredSales.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
-              <Receipt size={28} strokeWidth={1.5} />
+              <ReceiptIcon size={28} strokeWidth={1.5} />
             </div>
             <div className="empty-state-title">{t('No sales found', 'အရောင်းမတွေ့ပါ')}</div>
             <div className="empty-state-text">
@@ -566,6 +626,16 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                       </td>
                       <td>
                         <div className="table-actions">
+                          <button
+                            className="btn btn-ghost btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPrintTargetSale(sale);
+                            }}
+                            title={t('Print Receipt', 'ဘောင်ချာ ပရင့်ထုတ်ရန်')}
+                          >
+                            <Printer size={15} strokeWidth={1.75} />
+                          </button>
                           <button
                             className="btn btn-ghost btn-sm"
                             onClick={(e) => {
@@ -848,6 +918,14 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               )}
             </div>
             <div className="modal-footer">
+              <button
+                className="btn btn-secondary"
+                onClick={() => setPrintTargetSale(selectedSale)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 'auto' }}
+              >
+                <Printer size={15} strokeWidth={1.75} />
+                {t('Print Receipt', 'ဘောင်ချာ ပရင့်ထုတ်ရန်')}
+              </button>
               {(selectedSale.status === 'COMPLETED' || selectedSale.status === 'PARTIALLY_REFUNDED') && (
                 <>
                   {selectedSale.status === 'COMPLETED' && (
@@ -1071,6 +1149,43 @@ export function SalesClient({ initialSales }: SalesClientProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {printTargetSale && (
+        <Receipt
+          data={{
+            invoiceNumber: printTargetSale.invoiceNumber,
+            createdAt:
+              typeof printTargetSale.createdAt === 'string'
+                ? printTargetSale.createdAt
+                : printTargetSale.createdAt.toISOString(),
+            cashierName: printTargetSale.user?.name || '—',
+            customerName: printTargetSale.customer?.name || null,
+            items: (printTargetSale.items || []).map((item) => ({
+              name:
+                language === 'mm' && item.product?.nameMm
+                  ? item.product.nameMm
+                  : item.product?.name || 'Item',
+              quantity: Number(item.quantity),
+              unitPrice: Number(item.unitPrice),
+              discount: Number(item.discount || 0),
+              total: Number(item.total),
+              unit: item.product?.unit,
+            })),
+            subtotal: Number(printTargetSale.subtotal),
+            discountAmount: Number(printTargetSale.discountAmount),
+            taxAmount: Number(printTargetSale.taxAmount),
+            totalAmount: Number(printTargetSale.totalAmount),
+            paymentMethod: printTargetSale.paymentMethod,
+            paidAmount: Number(printTargetSale.paidAmount),
+            dueAmount: Number(printTargetSale.dueAmount || 0),
+            changeAmount: Number(printTargetSale.changeAmount),
+            pointsEarned: Number(printTargetSale.pointsEarned || 0),
+            pointsRedeemed: Number(printTargetSale.pointsRedeemed || 0),
+          }}
+          onNewSale={() => setPrintTargetSale(null)}
+          closeLabel={t('Close', 'ပိတ်ရန်')}
+        />
       )}
     </>
   );
