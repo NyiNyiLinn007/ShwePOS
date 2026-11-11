@@ -2,11 +2,15 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
-import { useSettingsStore } from '@/store/settingsStore';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatCurrency, formatDate, formatQuantity, isFractionalUnit } from '@/lib/utils';
-import { printElementById } from '@/lib/print';
+import {
+  formatCurrency,
+  formatDate,
+  formatQuantity,
+  getExpiryInfo,
+  isFractionalUnit,
+} from '@/lib/utils';
 import {
   ProductMonogram,
   Plus,
@@ -17,11 +21,16 @@ import {
   Barcode,
   Pencil,
   Trash2,
-  Upload,
-  Printer,
   X,
   Info,
 } from '@/components/ui/Icons';
+import {
+  ProductFormModal,
+  ProductFormInput,
+  emptyProductForm,
+  generateRandomSKU,
+} from '@/components/products/ProductFormModal';
+import { BarcodeStickerModal } from '@/components/products/BarcodeStickerModal';
 
 /* ---------- Types ---------- */
 
@@ -60,135 +69,7 @@ interface Category {
   isActive: boolean;
 }
 
-interface ProductFormData {
-  name: string;
-  nameMm: string;
-  sku: string;
-  barcode: string;
-  categoryId: string;
-  costPrice: string;
-  sellingPrice: string;
-  stockQuantity: string;
-  lowStockThreshold: string;
-  unit: string;
-  batchNumber: string;
-  expiryDate: string;
-  imageUrl: string;
-  isActive: boolean;
-}
-
-/* ---------- Constants ---------- */
-
 const ITEMS_PER_PAGE = 10;
-
-const UNITS = [
-  { value: 'pcs', label: 'Pieces (pcs)' },
-  { value: 'kg', label: 'Kilogram (kg)' },
-  { value: 'g', label: 'Gram (g)' },
-  { value: 'liter', label: 'Liter (L)' },
-  { value: 'ml', label: 'Milliliter (ml)' },
-  { value: 'pack', label: 'Pack' },
-  { value: 'box', label: 'Box' },
-  { value: 'dozen', label: 'Dozen' },
-  { value: 'set', label: 'Set' },
-];
-
-const emptyForm: ProductFormData = {
-  name: '',
-  nameMm: '',
-  sku: '',
-  barcode: '',
-  categoryId: '',
-  costPrice: '0',
-  sellingPrice: '0',
-  stockQuantity: '0',
-  lowStockThreshold: '10',
-  unit: 'pcs',
-  batchNumber: '',
-  expiryDate: '',
-  imageUrl: '',
-  isActive: true,
-};
-
-const CODE128_PATTERNS = [
-  '212222','222122','222221','121223','121322','131222','122213','122312','132212','221213',
-  '221312','231212','112232','122132','122231','113222','123122','123221','223211','221132',
-  '221231','213212','223112','312131','311222','321122','321221','312212','322112','322211',
-  '212123','212321','232121','111323','131123','131321','112313','132113','132311','211313',
-  '231113','231311','112133','112331','132131','113123','113321','133121','313121','211331',
-  '231131','213113','213311','213131','311123','311321','331121','312113','312311','332111',
-  '314111','221411','431111','111224','111422','121124','121421','141122','141221','112214',
-  '112412','122114','122411','142112','142211','241211','221114','413111','241112','134111',
-  '111242','121142','121241','114212','124112','124211','411212','421112','421211','212141',
-  '214121','412121','111143','111341','131141','114113','114311','411113','411311','113141',
-  '114131','311141','411131','211412','211214','211232','2331112',
-];
-
-function buildCode128Bars(rawText: string): { x: number; w: number }[] {
-  const clean = rawText.replace(/[^\x20-\x7E]/g, '') || '000000';
-  const codes: number[] = [104]; // Start B
-  let checksum = 104;
-  for (let i = 0; i < clean.length; i++) {
-    const val = clean.charCodeAt(i) - 32;
-    codes.push(val);
-    checksum += val * (i + 1);
-  }
-  codes.push(checksum % 103);
-  codes.push(106); // Stop
-
-  const bars: { x: number; w: number }[] = [];
-  let cursor = 10; // Quiet zone
-  for (const code of codes) {
-    const pattern = CODE128_PATTERNS[code] || CODE128_PATTERNS[0];
-    for (let i = 0; i < pattern.length; i++) {
-      const width = Number(pattern[i]);
-      if (i % 2 === 0) {
-        bars.push({ x: cursor, w: width });
-      }
-      cursor += width;
-    }
-  }
-  return bars;
-}
-
-function resizeImageToDataUrl(file: File, maxSize = 320): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Failed to read image'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('Invalid image file'));
-      img.onload = () => {
-        const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
-        const width = Math.max(1, Math.round(img.width * scale));
-        const height = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Canvas context unavailable'));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.82));
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function generateSKU(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = 'PRD-';
-  for (let i = 0; i < 6; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
-
-/* ---------- Component ---------- */
 
 interface ProductsClientProps {
   initialProducts: Product[];
@@ -198,28 +79,24 @@ interface ProductsClientProps {
 export function ProductsClient({ initialProducts, categories }: ProductsClientProps) {
   const { addToast } = useToast();
   const { language, t } = useI18n();
-  const businessName = useSettingsStore((s) => s.businessName);
 
-  // State
   const [products, setProducts] = useState<Product[]>(initialProducts);
-  // Sync when server re-renders with fresh data
-  useEffect(() => { setProducts(initialProducts); }, [initialProducts]);
+  useEffect(() => {
+    setProducts(initialProducts);
+  }, [initialProducts]);
+
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [formData, setFormData] = useState<ProductFormData>(emptyForm);
+  const [formData, setFormData] = useState<ProductFormInput>(emptyProductForm);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [deleting, setDeleting] = useState(false);
-
-  // Barcode Label Print State
   const [labelTarget, setLabelTarget] = useState<Product | null>(null);
-  const [labelCount, setLabelCount] = useState(4);
 
-  // Filtered & paginated products
   const filteredProducts = useMemo(() => {
     let result = products;
 
@@ -248,7 +125,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
     safePage * ITEMS_PER_PAGE
   );
 
-  // Reset page when filters change
   const handleSearchChange = useCallback((value: string) => {
     setSearch(value);
     setCurrentPage(1);
@@ -263,7 +139,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
 
   function openAddModal() {
     setEditingProduct(null);
-    setFormData({ ...emptyForm, sku: generateSKU() });
+    setFormData({ ...emptyProductForm, sku: generateRandomSKU() });
     setFormErrors({});
     setShowModal(true);
   }
@@ -296,11 +172,11 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
   function closeModal() {
     setShowModal(false);
     setEditingProduct(null);
-    setFormData(emptyForm);
+    setFormData(emptyProductForm);
     setFormErrors({});
   }
 
-  function handleFormChange(field: keyof ProductFormData, value: string | boolean) {
+  function handleFormChange(field: keyof ProductFormInput, value: string | boolean) {
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (formErrors[field]) {
       setFormErrors((prev) => {
@@ -416,7 +292,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
         return;
       }
 
-      // Soft delete - update in list
       setProducts((prev) =>
         prev.map((p) =>
           p.id === deleteTarget.id ? { ...p, isActive: false } : p
@@ -431,8 +306,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
       setDeleting(false);
     }
   }
-
-  /* ---- Pagination helpers ---- */
 
   function getPageNumbers(): (number | '...')[] {
     const pages: (number | '...')[] = [];
@@ -450,11 +323,8 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
     return pages;
   }
 
-  /* ---- Render ---- */
-
   return (
     <>
-      {/* Page Header */}
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">{t('Products', 'ကုန်ပစ္စည်းများ')}</h1>
@@ -472,7 +342,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
         </div>
       </div>
 
-      {/* Filters Bar */}
       <div className="page-body">
         <div
           className="flex gap-md"
@@ -506,7 +375,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
           </div>
         </div>
 
-        {/* Products Table */}
         {filteredProducts.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
@@ -553,10 +421,10 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                     const stockColor = isLowStock
                       ? 'var(--danger)'
                       : 'var(--success)';
+                    const expiryInfo = getExpiryInfo(product.expiryDate);
 
                     return (
                       <tr key={product.id}>
-                        {/* Image / Monogram */}
                         <td>
                           {product.imageUrl ? (
                             <div
@@ -585,7 +453,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                           )}
                         </td>
 
-                        {/* Name */}
                         <td>
                           <div>
                             <div style={{ fontWeight: 600, marginBottom: 2 }}>
@@ -608,37 +475,28 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                                   Batch: {product.batchNumber}
                                 </span>
                               )}
-                              {product.expiryDate && (() => {
-                                const exp = new Date(product.expiryDate);
-                                const diffDays = Math.ceil((exp.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-                                if (diffDays < 0) {
-                                  return (
-                                    <span className="badge badge-danger" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                                      <AlertTriangle size={10} strokeWidth={2} />
-                                      {t('Expired', 'သက်တမ်းကုန်')} ({formatDate(exp)})
-                                    </span>
-                                  );
-                                }
-                                if (diffDays <= 30) {
-                                  return (
-                                    <span className="badge badge-warning" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                                      <Clock size={10} strokeWidth={2} />
-                                      {t('Exp', 'သက်တမ်း')}: {formatDate(exp)} ({diffDays}d)
-                                    </span>
-                                  );
-                                }
-                                return (
-                                  <span className="badge badge-neutral" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                                    <Calendar size={10} strokeWidth={2} />
-                                    {formatDate(exp)}
-                                  </span>
-                                );
-                              })()}
+                              {expiryInfo && expiryInfo.status === 'expired' && (
+                                <span className="badge badge-danger" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                  <AlertTriangle size={10} strokeWidth={2} />
+                                  {t('Expired', 'သက်တမ်းကုန်')} ({formatDate(expiryInfo.date)})
+                                </span>
+                              )}
+                              {expiryInfo && expiryInfo.status === 'expiring_soon' && (
+                                <span className="badge badge-warning" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                  <Clock size={10} strokeWidth={2} />
+                                  {t('Exp', 'သက်တမ်း')}: {formatDate(expiryInfo.date)} ({expiryInfo.diffDays}d)
+                                </span>
+                              )}
+                              {expiryInfo && expiryInfo.status === 'valid' && (
+                                <span className="badge badge-neutral" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                  <Calendar size={10} strokeWidth={2} />
+                                  {formatDate(expiryInfo.date)}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </td>
 
-                        {/* SKU */}
                         <td>
                           <code
                             style={{
@@ -653,19 +511,16 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                           </code>
                         </td>
 
-                        {/* Category */}
                         <td>
                           <span className="badge badge-primary">
                             {product.category?.name || '—'}
                           </span>
                         </td>
 
-                        {/* Cost Price */}
                         <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' }}>
                           {formatCurrency(product.costPrice)}
                         </td>
 
-                        {/* Selling Price */}
                         <td
                           style={{
                             textAlign: 'right',
@@ -678,7 +533,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                           {formatCurrency(product.sellingPrice)}
                         </td>
 
-                        {/* Stock */}
                         <td style={{ textAlign: 'right' }}>
                           <span
                             style={{
@@ -700,7 +554,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                           </span>
                         </td>
 
-                        {/* Status */}
                         <td>
                           <span
                             className={`badge ${
@@ -711,15 +564,11 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                           </span>
                         </td>
 
-                        {/* Actions */}
                         <td>
                           <div className="table-actions">
                             <button
                               className="btn btn-ghost btn-sm"
-                              onClick={() => {
-                                setLabelTarget(product);
-                                setLabelCount(4);
-                              }}
+                              onClick={() => setLabelTarget(product)}
                               title={t('Print Barcode Labels', 'ဘားကုဒ်စတစ်ကာ ထုတ်ရန်')}
                             >
                               <Barcode size={15} strokeWidth={1.75} />
@@ -748,7 +597,6 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
               </table>
             </div>
 
-            {/* Pagination */}
             {totalPages > 1 && (
               <div className="pagination">
                 <button
@@ -793,407 +641,18 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
         )}
       </div>
 
-      {/* Add/Edit Product Modal */}
-      {showModal && (
-        <div className="modal-backdrop" onClick={closeModal}>
-          <div
-            className="modal modal-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <h2 className="modal-title">
-                {editingProduct ? t('Edit Product', 'ကုန်ပစ္စည်းပြင်ဆင်ရန်') : t('Add Product', 'ကုန်ပစ္စည်းထည့်ရန်')}
-              </h2>
-              <button className="btn btn-ghost btn-icon" onClick={closeModal}>
-                <X size={16} strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="modal-body">
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 'var(--space-md)',
-                }}
-              >
-                {/* Name EN */}
-                <div className="input-group">
-                  <label className="input-label">{t('Name (English) *', 'အမည် (အင်္ဂလိပ်) *')}</label>
-                  <input
-                    type="text"
-                    className={`input ${formErrors.name ? 'input-error' : ''}`}
-                    placeholder="e.g. Coca Cola 330ml"
-                    value={formData.name}
-                    onChange={(e) => handleFormChange('name', e.target.value)}
-                  />
-                  {formErrors.name && (
-                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                      {formErrors.name}
-                    </span>
-                  )}
-                </div>
+      <ProductFormModal
+        isOpen={showModal}
+        isEditing={!!editingProduct}
+        formData={formData}
+        formErrors={formErrors}
+        categories={categories}
+        saving={saving}
+        onChange={handleFormChange}
+        onSave={handleSave}
+        onClose={closeModal}
+      />
 
-                {/* Name MM */}
-                <div className="input-group">
-                  <label className="input-label">{t('Name (Myanmar)', 'အမည် (မြန်မာ)')}</label>
-                  <input
-                    type="text"
-                    className="input mm-text"
-                    placeholder="မြန်မာအမည်"
-                    value={formData.nameMm}
-                    onChange={(e) => handleFormChange('nameMm', e.target.value)}
-                  />
-                </div>
-
-                {/* SKU */}
-                <div className="input-group">
-                  <label className="input-label">
-                    SKU *
-                    {!editingProduct && (
-                      <button
-                        type="button"
-                        style={{
-                          marginLeft: 'var(--space-sm)',
-                          fontSize: 'var(--text-xs)',
-                          color: 'var(--primary)',
-                          background: 'none',
-                          border: 'none',
-                          cursor: 'pointer',
-                          textDecoration: 'underline',
-                        }}
-                        onClick={() => handleFormChange('sku', generateSKU())}
-                      >
-                        Generate
-                      </button>
-                    )}
-                  </label>
-                  <input
-                    type="text"
-                    className={`input ${formErrors.sku ? 'input-error' : ''}`}
-                    placeholder="e.g. PRD-ABC123"
-                    value={formData.sku}
-                    onChange={(e) => handleFormChange('sku', e.target.value)}
-                    style={{ fontFamily: 'var(--font-mono)' }}
-                  />
-                  {formErrors.sku && (
-                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                      {formErrors.sku}
-                    </span>
-                  )}
-                </div>
-
-                {/* Barcode */}
-                <div className="input-group">
-                  <label className="input-label">Barcode</label>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="Optional barcode"
-                    value={formData.barcode}
-                    onChange={(e) => handleFormChange('barcode', e.target.value)}
-                    style={{ fontFamily: 'var(--font-mono)' }}
-                  />
-                </div>
-
-                {/* Category */}
-                <div className="input-group">
-                  <label className="input-label">Category *</label>
-                  <select
-                    className={`input ${formErrors.categoryId ? 'input-error' : ''}`}
-                    value={formData.categoryId}
-                    onChange={(e) => handleFormChange('categoryId', e.target.value)}
-                  >
-                    <option value="">Select category</option>
-                    {categories.map((cat) => (
-                      <option key={cat.id} value={cat.id}>
-                        {cat.name}
-                        {cat.nameMm ? ` (${cat.nameMm})` : ''}
-                      </option>
-                    ))}
-                  </select>
-                  {formErrors.categoryId && (
-                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                      {formErrors.categoryId}
-                    </span>
-                  )}
-                </div>
-
-                {/* Unit */}
-                <div className="input-group">
-                  <label className="input-label">Unit</label>
-                  <select
-                    className="input"
-                    value={formData.unit}
-                    onChange={(e) => handleFormChange('unit', e.target.value)}
-                  >
-                    {UNITS.map((u) => (
-                      <option key={u.value} value={u.value}>
-                        {u.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Cost Price */}
-                <div className="input-group">
-                  <label className="input-label">Cost Price (K) *</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    className={`input ${formErrors.costPrice ? 'input-error' : ''}`}
-                    placeholder="0"
-                    value={formData.costPrice}
-                    onChange={(e) => handleFormChange('costPrice', e.target.value)}
-                    style={{ fontFamily: 'var(--font-mono)' }}
-                  />
-                  {formErrors.costPrice && (
-                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                      {formErrors.costPrice}
-                    </span>
-                  )}
-                </div>
-
-                {/* Selling Price */}
-                <div className="input-group">
-                  <label className="input-label">Selling Price (K) *</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="any"
-                    className={`input ${formErrors.sellingPrice ? 'input-error' : ''}`}
-                    placeholder="0"
-                    value={formData.sellingPrice}
-                    onChange={(e) =>
-                      handleFormChange('sellingPrice', e.target.value)
-                    }
-                    style={{ fontFamily: 'var(--font-mono)' }}
-                  />
-                  {formErrors.sellingPrice && (
-                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                      {formErrors.sellingPrice}
-                    </span>
-                  )}
-                </div>
-
-                {/* Stock Quantity */}
-                <div className="input-group">
-                  <label className="input-label">Stock Quantity ({formData.unit})</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step={isFractionalUnit(formData.unit) ? '0.01' : '1'}
-                    className={`input ${formErrors.stockQuantity ? 'input-error' : ''}`}
-                    placeholder="0"
-                    value={formData.stockQuantity}
-                    onChange={(e) =>
-                      handleFormChange('stockQuantity', e.target.value)
-                    }
-                  />
-                  {formErrors.stockQuantity && (
-                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                      {formErrors.stockQuantity}
-                    </span>
-                  )}
-                </div>
-
-                {/* Low Stock Threshold */}
-                <div className="input-group">
-                  <label className="input-label">{t('Low Stock Threshold', 'ကုန်လက်ကျန်နည်းသတ်မှတ်ချက်')}</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step={isFractionalUnit(formData.unit) ? '0.01' : '1'}
-                    className={`input ${formErrors.lowStockThreshold ? 'input-error' : ''}`}
-                    placeholder="10"
-                    value={formData.lowStockThreshold}
-                    onChange={(e) =>
-                      handleFormChange('lowStockThreshold', e.target.value)
-                    }
-                  />
-                  {formErrors.lowStockThreshold && (
-                    <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                      {formErrors.lowStockThreshold}
-                    </span>
-                  )}
-                </div>
-
-                {/* Batch Number */}
-                <div className="input-group">
-                  <label className="input-label">{t('Batch Number', 'အသုတ်နံပါတ် (Batch No.)')}</label>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="Optional batch / lot number"
-                    value={formData.batchNumber}
-                    onChange={(e) => handleFormChange('batchNumber', e.target.value)}
-                  />
-                </div>
-
-                {/* Expiry Date */}
-                <div className="input-group">
-                  <label className="input-label">{t('Expiry Date', 'သက်တမ်းကုန်ဆုံးရက်')}</label>
-                  <input
-                    type="date"
-                    className="input"
-                    value={formData.expiryDate}
-                    onChange={(e) => handleFormChange('expiryDate', e.target.value)}
-                  />
-                </div>
-
-                {/* Image Upload & URL - full width */}
-                <div className="input-group" style={{ gridColumn: '1 / -1' }}>
-                  <label className="input-label">{t('Product Image (Upload or URL)', 'ကုန်ပစ္စည်းပုံ (ပုံတင်ရန် သို့မဟုတ် လင့်ခ်)')}</label>
-                  <div className="flex gap-sm" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-                    {formData.imageUrl && (
-                      <div
-                        style={{
-                          width: 48,
-                          height: 48,
-                          borderRadius: 'var(--radius-md)',
-                          overflow: 'hidden',
-                          border: '1px solid var(--border-color)',
-                          flexShrink: 0,
-                        }}
-                      >
-                        <img
-                          src={formData.imageUrl}
-                          alt="Preview"
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
-                      </div>
-                    )}
-                    <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <Upload size={14} strokeWidth={1.75} />
-                      {t('Upload Photo', 'ပုံရွေးရန်')}
-                      <input
-                        type="file"
-                        accept="image/*"
-                        style={{ display: 'none' }}
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          try {
-                            const dataUrl = await resizeImageToDataUrl(file, 320);
-                            handleFormChange('imageUrl', dataUrl);
-                          } catch {
-                            addToast(t('Failed to process image', 'ပုံဖတ်မရပါ'), 'error');
-                          }
-                        }}
-                      />
-                    </label>
-                    <input
-                      type="text"
-                      className="input"
-                      style={{ flex: 1, minWidth: 180 }}
-                      placeholder="https://example.com/image.jpg (optional)"
-                      value={formData.imageUrl.startsWith('data:') ? '' : formData.imageUrl}
-                      onChange={(e) => handleFormChange('imageUrl', e.target.value)}
-                    />
-                    {formData.imageUrl && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={() => handleFormChange('imageUrl', '')}
-                        style={{ color: 'var(--danger)' }}
-                      >
-                        <X size={14} strokeWidth={1.75} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Active Toggle - full width */}
-                <div
-                  className="input-group"
-                  style={{ gridColumn: '1 / -1' }}
-                >
-                  <label
-                    className="input-label"
-                    style={{
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 'var(--space-sm)',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={formData.isActive}
-                      onChange={(e) =>
-                        handleFormChange('isActive', e.target.checked)
-                      }
-                      style={{
-                        width: 18,
-                        height: 18,
-                        accentColor: 'var(--primary)',
-                      }}
-                    />
-                    {t('Active Product', 'အသုံးပြုနေသောကုန်ပစ္စည်း')}
-                  </label>
-                </div>
-
-                {/* Price margin info */}
-                {Number(formData.costPrice) > 0 &&
-                  Number(formData.sellingPrice) > 0 && (
-                    <div
-                      style={{
-                        gridColumn: '1 / -1',
-                        padding: 'var(--space-md)',
-                        background: 'var(--primary-light)',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: 'var(--text-sm)',
-                        color: 'var(--primary)',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                      }}
-                    >
-                      <span>
-                        {t('Margin', 'အမြတ်')}:{' '}
-                        {formatCurrency(
-                          Number(formData.sellingPrice) -
-                            Number(formData.costPrice)
-                        )}
-                      </span>
-                      <span>
-                        {t('Markup', 'တန်ဖိုးတင်')}:{' '}
-                        {(
-                          ((Number(formData.sellingPrice) -
-                            Number(formData.costPrice)) /
-                            Number(formData.costPrice)) *
-                          100
-                        ).toFixed(1)}
-                        %
-                      </span>
-                    </div>
-                  )}
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="btn btn-secondary"
-                onClick={closeModal}
-                disabled={saving}
-              >
-                {t('Cancel', 'မလုပ်တော့ပါ')}
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleSave}
-                disabled={saving}
-              >
-                {saving
-                  ? t('Saving...', 'သိမ်းနေသည်...')
-                  : editingProduct
-                  ? t('Update Product', 'ကုန်ပစ္စည်းအချက်အလက်ပြင်ရန်')
-                  : t('Create Product', 'ကုန်ပစ္စည်းဖန်တီးရန်')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
       {deleteTarget && (
         <div
           className="modal-backdrop"
@@ -1266,128 +725,10 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
         </div>
       )}
 
-      {/* Barcode Label Print Modal */}
-      {labelTarget && (
-        <div className="modal-backdrop print-modal-backdrop" onClick={() => setLabelTarget(null)}>
-          <div
-            className="modal modal-lg print-modal"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: 640 }}
-          >
-            <div className="modal-header no-print">
-              <h2 className="modal-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <Barcode size={18} strokeWidth={1.75} />
-                {t('Print Barcode Labels', 'ဘားကုဒ်စတစ်ကာ ထုတ်ရန်')} — {labelTarget.name}
-              </h2>
-              <button className="btn btn-ghost btn-icon" onClick={() => setLabelTarget(null)}>
-                <X size={16} strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="flex gap-md no-print" style={{ marginBottom: 'var(--space-md)', alignItems: 'center' }}>
-                <label className="input-label" style={{ margin: 0 }}>
-                  {t('Number of Stickers:', 'ထုတ်မည့် စတစ်ကာအရေအတွက် -')}
-                </label>
-                {[1, 2, 4, 8, 12, 24].map((cnt) => (
-                  <button
-                    key={cnt}
-                    type="button"
-                    className={`btn btn-sm ${labelCount === cnt ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => setLabelCount(cnt)}
-                  >
-                    {cnt}
-                  </button>
-                ))}
-              </div>
-
-              {/* Printable Label Grid */}
-              <div id="barcode-labels-content">
-                <div
-                  className="barcode-print-grid"
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-                    gap: '12px',
-                    padding: '12px',
-                    background: '#fff',
-                    color: '#000',
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--border-color)',
-                  }}
-                >
-                  {Array.from({ length: labelCount }).map((_, idx) => {
-                    const codeVal = labelTarget.barcode || labelTarget.sku;
-                    const bars = buildCode128Bars(codeVal);
-                    const totalWidth = bars.length > 0 ? bars[bars.length - 1].x + bars[bars.length - 1].w + 10 : 120;
-                    return (
-                      <div
-                        key={idx}
-                        className="barcode-sticker"
-                        style={{
-                          border: '1px dashed #ccc',
-                          borderRadius: '4px',
-                          padding: '8px',
-                          textAlign: 'center',
-                          background: '#fff',
-                          color: '#000',
-                        }}
-                      >
-                        <div style={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          {businessName || 'ShwePOS'}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: '11px',
-                            fontWeight: 600,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            marginBottom: 4,
-                          }}
-                        >
-                          {language === 'mm' && labelTarget.nameMm ? labelTarget.nameMm : labelTarget.name}
-                        </div>
-                        <svg
-                          viewBox={`0 0 ${totalWidth} 42`}
-                          style={{ width: '100%', height: '42px', display: 'block', margin: '0 auto' }}
-                        >
-                          {bars.map((b, bIdx) => (
-                            <rect key={bIdx} x={b.x} y={2} width={b.w} height={38} fill="#000" />
-                          ))}
-                        </svg>
-                        <div style={{ fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', marginTop: 2 }}>
-                          {codeVal}
-                        </div>
-                        <div style={{ fontSize: '13px', fontWeight: 800, marginTop: 2 }}>
-                          {formatCurrency(labelTarget.sellingPrice)}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer no-print">
-              <button className="btn btn-secondary" onClick={() => setLabelTarget(null)}>
-                {t('Close', 'ပိတ်ရန်')}
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={() =>
-                  printElementById('barcode-labels-content', {
-                    title: `${labelTarget.name} - Barcode Labels`,
-                    paperSize: 'A4',
-                  })
-                }
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              >
-                <Printer size={15} strokeWidth={1.75} />
-                {t('Print Labels', 'စတစ်ကာ ပရင့်ထုတ်ရန်')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <BarcodeStickerModal
+        product={labelTarget}
+        onClose={() => setLabelTarget(null)}
+      />
     </>
   );
 }

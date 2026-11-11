@@ -296,3 +296,30 @@ export function formatQuantity(value: number, _unit?: string | null): string {
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
+
+export interface ExpiryInfo {
+  status: 'expired' | 'expiring_soon' | 'valid';
+  diffDays: number;
+  date: Date;
+}
+
+/**
+ * Evaluate product expiry date status and days remaining.
+ */
+export function getExpiryInfo(
+  expiryDate?: Date | string | null,
+  warningDays = 30
+): ExpiryInfo | null {
+  if (!expiryDate) return null;
+  const exp = typeof expiryDate === 'string' ? new Date(expiryDate) : expiryDate;
+  if (Number.isNaN(exp.getTime())) return null;
+  const diffDays = Math.ceil((exp.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) {
+    return { status: 'expired', diffDays, date: exp };
+  }
+  if (diffDays <= warningDays) {
+    return { status: 'expiring_soon', diffDays, date: exp };
+  }
+  return { status: 'valid', diffDays, date: exp };
+}
+

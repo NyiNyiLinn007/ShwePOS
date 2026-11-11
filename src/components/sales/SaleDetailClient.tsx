@@ -2,9 +2,14 @@
 
 import React, { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
-import { useToast } from '@/contexts/ToastContext';
-import { formatCurrency, formatDateTime, formatQuantity, isFractionalUnit } from '@/lib/utils';
-import { PAYMENT_METHODS, SALE_STATUSES } from '@/lib/constants';
+import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
+import {
+  SaleRecord,
+  buildReceiptDataFromSale,
+  getPaymentMethodLabel,
+  getSaleStatusBadgeClass,
+  getSaleStatusLabel,
+} from '@/lib/saleHelpers';
 import {
   PaymentMethodIcon,
   Package,
@@ -14,207 +19,30 @@ import {
   User,
   UserCog,
   FileSpreadsheet,
-  CreditCard,
   Printer,
-  X,
 } from '@/components/ui/Icons';
 import Receipt from '@/components/pos/Receipt';
-
-const paymentMethodTranslationKeys: Record<string, string> = {
-  CASH: 'cash',
-  CARD: 'card',
-  MOBILE_BANKING: 'mobileBanking',
-  CREDIT: 'credit',
-  SPLIT: 'splitPayment',
-};
-
-const saleStatusTranslationKeys: Record<string, string> = {
-  COMPLETED: 'completed',
-  PARTIALLY_REFUNDED: 'partiallyRefunded',
-  REFUNDED: 'refunded',
-  VOIDED: 'voided',
-};
-
-/* ---------- Types ---------- */
-
-interface SaleProduct {
-  id?: string;
-  name: string;
-  nameMm: string | null;
-  sku: string;
-  barcode?: string | null;
-  unit?: string;
-}
-
-interface SaleItem {
-  id: string;
-  productId: string;
-  quantity: number;
-  refundedQuantity?: number;
-  unitPrice: number;
-  costPrice?: number;
-  discount: number;
-  total: number;
-  product?: SaleProduct;
-}
-
-interface SalePaymentItem {
-  id: string;
-  method: string;
-  amount: number;
-  reference?: string | null;
-}
-
-interface SaleCustomer {
-  id: string;
-  name: string;
-  phone: string | null;
-  email?: string | null;
-}
-
-interface SaleUser {
-  id: string;
-  name: string;
-}
-
-interface Sale {
-  id: string;
-  invoiceNumber: string;
-  customerId: string | null;
-  userId: string;
-  subtotal: number;
-  discountAmount: number;
-  taxAmount: number;
-  totalAmount: number;
-  paidAmount: number;
-  changeAmount: number;
-  dueAmount?: number;
-  pointsEarned?: number;
-  pointsRedeemed?: number;
-  paymentMethod: string;
-  status: string;
-  notes: string | null;
-  createdAt: string | Date;
-  customer?: SaleCustomer | null;
-  user?: SaleUser;
-  items?: SaleItem[];
-  payments?: SalePaymentItem[];
-}
-
-/* ---------- Component ---------- */
+import { SaleRefundModal, SaleRefundAction } from '@/components/sales/SaleRefundModal';
 
 export function SaleDetailClient({
   sale: initialSale,
   userRole = 'CASHIER',
 }: {
-  sale: Sale;
+  sale: SaleRecord;
   userRole?: string;
 }) {
   const { language, t } = useI18n();
-  const { addToast } = useToast();
-  const [sale, setSale] = useState<Sale>(initialSale);
+  const [sale, setSale] = useState<SaleRecord>(initialSale);
 
-  // Refund / Void modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
-  const [actionType, setActionType] = useState<'VOIDED' | 'REFUNDED' | 'PARTIALLY_REFUNDED'>('REFUNDED');
-  const [refundMethod, setRefundMethod] = useState<'ORIGINAL' | 'CASH'>('ORIGINAL');
-  const [reason, setReason] = useState('');
-  const [refundQuantities, setRefundQuantities] = useState<Record<string, string>>({});
-  const [processing, setProcessing] = useState(false);
+  const [actionType, setActionType] = useState<SaleRefundAction>('REFUNDED');
 
   const canManageRefund = userRole === 'ADMIN' || userRole === 'MANAGER';
 
-  function getStatusBadgeClass(status: string): string {
-    switch (status) {
-      case 'COMPLETED': return 'badge-success';
-      case 'PARTIALLY_REFUNDED': return 'badge-warning';
-      case 'REFUNDED': return 'badge-warning';
-      case 'VOIDED': return 'badge-danger';
-      default: return 'badge-neutral';
-    }
-  }
-
-  function getStatusLabel(status: string): string {
-    if (status === 'PARTIALLY_REFUNDED') {
-      return t('Partially Refunded', 'တစ်စိတ်တစ်ပိုင်း ပြန်အမ်းပြီး');
-    }
-    return SALE_STATUSES.some((s) => s.value === status)
-      ? t(saleStatusTranslationKeys[status] ?? status)
-      : status;
-  }
-
-  function getPaymentLabel(method: string): string {
-    if (method === 'SPLIT') {
-      return t('Split Payment', 'ပေါင်းစပ်ငွေပေးချေမှု');
-    }
-    const found = PAYMENT_METHODS.find((p) => p.value === method);
-    return found ? t(paymentMethodTranslationKeys[method] ?? method) : method;
-  }
-
-  function openActionModal(type: 'VOIDED' | 'REFUNDED' | 'PARTIALLY_REFUNDED') {
+  function openActionModal(type: SaleRefundAction) {
     setActionType(type);
-    setRefundMethod('ORIGINAL');
-    setReason('');
-    const initialMap: Record<string, string> = {};
-    sale.items?.forEach((item) => {
-      initialMap[item.id] = '0';
-    });
-    setRefundQuantities(initialMap);
     setModalOpen(true);
-  }
-
-  async function handleSubmitAction() {
-    if (!reason.trim()) {
-      addToast(t('reasonRequired'), 'error');
-      return;
-    }
-
-    let itemsPayload: { saleItemId: string; quantity: number }[] | undefined;
-    if (actionType === 'PARTIALLY_REFUNDED') {
-      itemsPayload = Object.entries(refundQuantities)
-        .map(([saleItemId, qtyStr]) => ({
-          saleItemId,
-          quantity: parseFloat(qtyStr) || 0,
-        }))
-        .filter((i) => i.quantity > 0);
-
-      if (itemsPayload.length === 0) {
-        addToast(t('Please enter quantity for at least one item to refund', 'ပြန်အမ်းမည့် ပစ္စည်းအရေအတွက် အနည်းဆုံး ၁ ခု ထည့်ပါ'), 'error');
-        return;
-      }
-    }
-
-    setProcessing(true);
-    try {
-      const res = await fetch(`/api/sales/${sale.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: actionType,
-          reason: reason.trim(),
-          refundMethod,
-          items: itemsPayload,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        addToast(data.error || t('Failed to update sale', 'အရောင်းအခြေအနေပြောင်းမရပါ'), 'error');
-        return;
-      }
-      setSale(data);
-      setModalOpen(false);
-      addToast(
-        actionType === 'VOIDED'
-          ? t('Sale voided successfully', 'အရောင်းပယ်ဖျက်ပြီးပါပြီ')
-          : t('Sale refunded successfully', 'အရောင်းပြန်အမ်းပြီးပါပြီ'),
-        'success'
-      );
-    } catch {
-      addToast(t('Network error. Please try again.', 'ကွန်ရက်ချို့ယွင်းချက်။ ထပ်ကြိုးစားပါ။'), 'error');
-    } finally {
-      setProcessing(false);
-    }
   }
 
   return (
@@ -232,36 +60,37 @@ export function SaleDetailClient({
           <Printer size={14} strokeWidth={1.75} />
           {t('Print Receipt', 'ဘောင်ချာ ပရင့်ထုတ်ရန်')}
         </button>
-        {canManageRefund && (sale.status === 'COMPLETED' || sale.status === 'PARTIALLY_REFUNDED') && (
-          <>
-            <button
-              className="btn btn-warning btn-sm"
-              onClick={() => openActionModal('PARTIALLY_REFUNDED')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <Package size={14} strokeWidth={1.75} />
-              {t('Partial Refund', 'ပစ္စည်းအချို့ ပြန်အမ်းရန်')}
-            </button>
-            <button
-              className="btn btn-warning btn-sm"
-              onClick={() => openActionModal('REFUNDED')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <RotateCcw size={14} strokeWidth={1.75} />
-              {t('Full Refund', 'ဘောင်ချာအပြည့် ပြန်အမ်းရန်')}
-            </button>
-            {sale.status === 'COMPLETED' && (
+        {canManageRefund &&
+          (sale.status === 'COMPLETED' || sale.status === 'PARTIALLY_REFUNDED') && (
+            <>
               <button
-                className="btn btn-danger btn-sm"
-                onClick={() => openActionModal('VOIDED')}
+                className="btn btn-warning btn-sm"
+                onClick={() => openActionModal('PARTIALLY_REFUNDED')}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               >
-                <Ban size={14} strokeWidth={1.75} />
-                {t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')}
+                <Package size={14} strokeWidth={1.75} />
+                {t('Partial Refund', 'ပစ္စည်းအချို့ ပြန်အမ်းရန်')}
               </button>
-            )}
-          </>
-        )}
+              <button
+                className="btn btn-warning btn-sm"
+                onClick={() => openActionModal('REFUNDED')}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <RotateCcw size={14} strokeWidth={1.75} />
+                {t('Full Refund', 'ဘောင်ချာအပြည့် ပြန်အမ်းရန်')}
+              </button>
+              {sale.status === 'COMPLETED' && (
+                <button
+                  className="btn btn-danger btn-sm"
+                  onClick={() => openActionModal('VOIDED')}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Ban size={14} strokeWidth={1.75} />
+                  {t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')}
+                </button>
+              )}
+            </>
+          )}
       </div>
 
       {/* Info Grid */}
@@ -292,15 +121,15 @@ export function SaleDetailClient({
         <InfoCard
           label={t('Status', 'အခြေအနေ')}
           badge={
-            <span className={`badge ${getStatusBadgeClass(sale.status)}`}>
-              {getStatusLabel(sale.status)}
+            <span className={`badge ${getSaleStatusBadgeClass(sale.status)}`}>
+              {getSaleStatusLabel(sale.status, t)}
             </span>
           }
           icon={<FileSpreadsheet size={14} strokeWidth={1.75} />}
         />
         <InfoCard
           label={t('payment')}
-          value={getPaymentLabel(sale.paymentMethod)}
+          value={getPaymentMethodLabel(sale.paymentMethod, t)}
           icon={<PaymentMethodIcon method={sale.paymentMethod} size={14} />}
         />
       </div>
@@ -373,9 +202,18 @@ export function SaleDetailClient({
                     >
                       <div>{formatQuantity(item.quantity, item.product?.unit)}</div>
                       {refunded > 0 && (
-                        <div style={{ fontSize: '11px', color: 'var(--warning)', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <div
+                          style={{
+                            fontSize: '11px',
+                            color: 'var(--warning)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                          }}
+                        >
                           <RotateCcw size={11} strokeWidth={1.75} />
-                          {t('Refunded', 'ပြန်အမ်းပြီး')}: {formatQuantity(refunded, item.product?.unit)}
+                          {t('Refunded', 'ပြန်အမ်းပြီး')}:{' '}
+                          {formatQuantity(refunded, item.product?.unit)}
                         </div>
                       )}
                     </td>
@@ -433,10 +271,7 @@ export function SaleDetailClient({
           marginBottom: 'var(--space-xl)',
         }}
       >
-        <SummaryRow
-          label={t('subtotal')}
-          value={formatCurrency(sale.subtotal)}
-        />
+        <SummaryRow label={t('subtotal')} value={formatCurrency(sale.subtotal)} />
         {sale.discountAmount > 0 && (
           <SummaryRow
             label={t('discount')}
@@ -445,10 +280,7 @@ export function SaleDetailClient({
           />
         )}
         {sale.taxAmount > 0 && (
-          <SummaryRow
-            label={t('Tax', 'အခွန်')}
-            value={formatCurrency(sale.taxAmount)}
-          />
+          <SummaryRow label={t('Tax', 'အခွန်')} value={formatCurrency(sale.taxAmount)} />
         )}
         <div
           style={{
@@ -476,13 +308,20 @@ export function SaleDetailClient({
               borderTop: '1px dashed var(--border-color)',
             }}
           >
-            <div style={{ fontSize: 'var(--text-xs)', fontWeight: 600, color: 'var(--text-muted)', marginBottom: 4 }}>
+            <div
+              style={{
+                fontSize: 'var(--text-xs)',
+                fontWeight: 600,
+                color: 'var(--text-muted)',
+                marginBottom: 4,
+              }}
+            >
               {t('Payment Breakdown', 'ငွေပေးချေမှု အသေးစိတ်')}
             </div>
             {sale.payments.map((p) => (
               <SummaryRow
                 key={p.id}
-                label={`${getPaymentLabel(p.method)}${p.reference ? ` (${p.reference})` : ''}`}
+                label={`${getPaymentMethodLabel(p.method, t)}${p.reference ? ` (${p.reference})` : ''}`}
                 value={formatCurrency(p.amount)}
               />
             ))}
@@ -490,10 +329,7 @@ export function SaleDetailClient({
         )}
 
         <div style={{ marginTop: 'var(--space-md)' }}>
-          <SummaryRow
-            label={t('Paid', 'ပေးငွေ')}
-            value={formatCurrency(sale.paidAmount)}
-          />
+          <SummaryRow label={t('Paid', 'ပေးငွေ')} value={formatCurrency(sale.paidAmount)} />
           {sale.changeAmount > 0 && (
             <SummaryRow
               label={t('Change', 'ပြန်အမ်းငွေ')}
@@ -508,7 +344,13 @@ export function SaleDetailClient({
             />
           )}
           {((sale.pointsEarned ?? 0) > 0 || (sale.pointsRedeemed ?? 0) > 0) && (
-            <div style={{ marginTop: 'var(--space-xs)', paddingTop: 'var(--space-xs)', borderTop: '1px dashed var(--border-color)' }}>
+            <div
+              style={{
+                marginTop: 'var(--space-xs)',
+                paddingTop: 'var(--space-xs)',
+                borderTop: '1px dashed var(--border-color)',
+              }}
+            >
               {(sale.pointsRedeemed ?? 0) > 0 && (
                 <SummaryRow
                   label={t('Points Redeemed', 'သုံးခဲ့သည့်ပွိုင့်')}
@@ -539,175 +381,24 @@ export function SaleDetailClient({
             whiteSpace: 'pre-wrap',
           }}
         >
-          <strong style={{ color: 'var(--text-primary)' }}>
-            {t('notes')}:
-          </strong>
+          <strong style={{ color: 'var(--text-primary)' }}>{t('notes')}:</strong>
           <div style={{ marginTop: 'var(--space-xs)' }}>{sale.notes}</div>
         </div>
       )}
 
-      {/* Refund / Void Modal */}
-      {modalOpen && (
-        <div className="modal-backdrop" onClick={() => setModalOpen(false)}>
-          <div
-            className="modal modal-lg"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: actionType === 'PARTIALLY_REFUNDED' ? 620 : 480 }}
-          >
-            <div className="modal-header">
-              <h2 className="modal-title">
-                {actionType === 'VOIDED'
-                  ? t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')
-                  : actionType === 'PARTIALLY_REFUNDED'
-                  ? t('Partial Item Refund', 'ပစ္စည်းအချို့သာ ပြန်အမ်းရန်')
-                  : t('Full Refund Sale', 'ဘောင်ချာအပြည့် ပြန်အမ်းရန်')}
-              </h2>
-              <button className="btn btn-ghost btn-icon" onClick={() => setModalOpen(false)}>
-                <X size={16} strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="modal-body">
-              {actionType === 'PARTIALLY_REFUNDED' && (
-                <div style={{ marginBottom: 'var(--space-md)' }}>
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 8 }}>
-                    {t('Enter the quantity to refund for each item:', 'ပြန်အမ်းလိုသည့် ပစ္စည်းအရေအတွက်ကို ထည့်သွင်းပါ -')}
-                  </div>
-                  <div className="table-container">
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>{t('Product', 'ကုန်ပစ္စည်း')}</th>
-                          <th style={{ textAlign: 'center' }}>{t('Remaining Qty', 'ကျန်ရှိအရေအတွက်')}</th>
-                          <th style={{ textAlign: 'right' }}>{t('Refund Qty', 'ပြန်အမ်းမည့်အရေအတွက်')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sale.items?.map((item) => {
-                          const remaining = Math.max(0, Number(item.quantity) - Number(item.refundedQuantity || 0));
-                          const fractional = isFractionalUnit(item.product?.unit);
-                          return (
-                            <tr key={item.id}>
-                              <td>
-                                <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                                  {item.product?.name || 'Item'}
-                                </div>
-                                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                                  {formatCurrency(item.unitPrice)} / {item.product?.unit || 'pcs'}
-                                </div>
-                              </td>
-                              <td style={{ textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
-                                {formatQuantity(remaining, item.product?.unit)}
-                              </td>
-                              <td style={{ textAlign: 'right' }}>
-                                <input
-                                  type="number"
-                                  className="input"
-                                  disabled={remaining <= 0}
-                                  min="0"
-                                  max={remaining}
-                                  step={fractional ? '0.01' : '1'}
-                                  value={refundQuantities[item.id] ?? '0'}
-                                  onChange={(e) =>
-                                    setRefundQuantities((prev) => ({
-                                      ...prev,
-                                      [item.id]: e.target.value,
-                                    }))
-                                  }
-                                  style={{ width: 100, textAlign: 'right', marginLeft: 'auto' }}
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              <div className="input-group" style={{ marginBottom: 'var(--space-md)' }}>
-                <label className="input-label">
-                  {t('Refund Method', 'ပြန်အမ်းမည့် ငွေပေးချေမှုနည်းလမ်း')}
-                </label>
-                <select
-                  className="input"
-                  value={refundMethod}
-                  onChange={(e) => setRefundMethod(e.target.value as 'ORIGINAL' | 'CASH')}
-                >
-                  <option value="ORIGINAL">
-                    {t('Original Payment Method', 'မူလငွေပေးချေမှုနည်းလမ်းအတိုင်း')} ({sale.paymentMethod})
-                  </option>
-                  <option value="CASH">
-                    {t('Refund as Cash (Deduct from Cash Drawer)', 'ငွေသားဖြင့် ပြန်အမ်းမည် (အံဆွဲမှနှုတ်မည်)')}
-                  </option>
-                </select>
-              </div>
-
-              <div className="input-group">
-                <label className="input-label">{t('reasonLabel')} *</label>
-                <textarea
-                  className="input"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  placeholder={t('enterReason')}
-                  rows={3}
-                  maxLength={500}
-                />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="btn btn-secondary"
-                onClick={() => setModalOpen(false)}
-                disabled={processing}
-              >
-                {t('Cancel', 'မလုပ်တော့ပါ')}
-              </button>
-              <button
-                className="btn btn-danger"
-                onClick={handleSubmitAction}
-                disabled={processing || !reason.trim()}
-              >
-                {processing
-                  ? t('Processing...', 'ဆောင်ရွက်နေသည်...')
-                  : t('Confirm', 'အတည်ပြုရန်')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SaleRefundModal
+        sale={modalOpen ? sale : null}
+        actionType={actionType}
+        onClose={() => setModalOpen(false)}
+        onSuccess={(updatedSale) => {
+          setSale(updatedSale);
+          setModalOpen(false);
+        }}
+      />
 
       {showReceipt && (
         <Receipt
-          data={{
-            invoiceNumber: sale.invoiceNumber,
-            createdAt: typeof sale.createdAt === 'string' ? sale.createdAt : sale.createdAt.toISOString(),
-            cashierName: sale.user?.name || '—',
-            customerName: sale.customer?.name || null,
-            items: (sale.items || []).map((item) => ({
-              name: language === 'mm' && item.product?.nameMm ? item.product.nameMm : item.product?.name || 'Item',
-              quantity: Number(item.quantity),
-              unitPrice: Number(item.unitPrice),
-              discount: Number(item.discount || 0),
-              total: Number(item.total),
-              unit: item.product?.unit,
-            })),
-            subtotal: Number(sale.subtotal),
-            discountAmount: Number(sale.discountAmount),
-            taxAmount: Number(sale.taxAmount),
-            totalAmount: Number(sale.totalAmount),
-            paymentMethod: sale.paymentMethod,
-            paidAmount: Number(sale.paidAmount),
-            dueAmount: Number(sale.dueAmount || 0),
-            changeAmount: Number(sale.changeAmount),
-            pointsEarned: Number(sale.pointsEarned || 0),
-            pointsRedeemed: Number(sale.pointsRedeemed || 0),
-            payments: (sale.payments || []).map((p) => ({
-              method: p.method,
-              amount: Number(p.amount),
-              reference: p.reference,
-            })),
-          }}
+          data={buildReceiptDataFromSale(sale, language)}
           onNewSale={() => setShowReceipt(false)}
           closeLabel={t('Close', 'ပိတ်ရန်')}
         />

@@ -3,8 +3,16 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatCurrency, formatDateTime, formatQuantity, isFractionalUnit, parseMyanmarDateBoundary } from '@/lib/utils';
+import { formatCurrency, formatDateTime, parseMyanmarDateBoundary } from '@/lib/utils';
 import { PAYMENT_METHODS, SALE_STATUSES } from '@/lib/constants';
+import {
+  SaleRecord,
+  buildReceiptDataFromSale,
+  downloadSalesCsv,
+  getPaymentMethodLabel,
+  getSaleStatusBadgeClass,
+  getSaleStatusLabel,
+} from '@/lib/saleHelpers';
 import {
   PaymentMethodIcon,
   Download,
@@ -12,116 +20,36 @@ import {
   Eye,
   Printer,
   X,
-  Ban,
-  Package,
-  RotateCcw,
 } from '@/components/ui/Icons';
 import Receipt from '@/components/pos/Receipt';
-
-const paymentMethodTranslationKeys: Record<string, string> = {
-  CASH: 'cash',
-  CARD: 'card',
-  MOBILE_BANKING: 'mobileBanking',
-  CREDIT: 'credit',
-  SPLIT: 'splitPayment',
-};
-
-const saleStatusTranslationKeys: Record<string, string> = {
-  COMPLETED: 'completed',
-  PARTIALLY_REFUNDED: 'partiallyRefunded',
-  REFUNDED: 'refunded',
-  VOIDED: 'voided',
-};
-
-/* ---------- Types ---------- */
-
-interface SaleProduct {
-  id?: string;
-  name: string;
-  nameMm: string | null;
-  sku: string;
-  unit?: string;
-}
-
-interface SaleItemData {
-  id: string;
-  saleId: string;
-  productId: string;
-  quantity: number;
-  refundedQuantity?: number;
-  unitPrice: number;
-  discount: number;
-  total: number;
-  product?: SaleProduct;
-}
-
-interface SaleCustomer {
-  id: string;
-  name: string;
-  phone: string | null;
-}
-
-interface SaleUser {
-  id: string;
-  name: string;
-}
-
-interface Sale {
-  id: string;
-  invoiceNumber: string;
-  customerId: string | null;
-  userId: string;
-  subtotal: number;
-  discountAmount: number;
-  taxAmount: number;
-  totalAmount: number;
-  paidAmount: number;
-  changeAmount: number;
-  dueAmount?: number;
-  pointsEarned?: number;
-  pointsRedeemed?: number;
-  paymentMethod: string;
-  status: string;
-  notes: string | null;
-  createdAt: string | Date;
-  customer?: SaleCustomer | null;
-  user?: SaleUser;
-  items?: SaleItemData[];
-}
-
-/* ---------- Constants ---------- */
+import { SaleRefundModal, SaleRefundAction } from '@/components/sales/SaleRefundModal';
+import { SaleQuickViewModal } from '@/components/sales/SaleQuickViewModal';
 
 const ITEMS_PER_PAGE = 15;
 
-/* ---------- Component ---------- */
-
 interface SalesClientProps {
-  initialSales: Sale[];
+  initialSales: SaleRecord[];
 }
 
 export function SalesClient({ initialSales }: SalesClientProps) {
   const { addToast } = useToast();
   const { language, t } = useI18n();
 
-  // State
-  const [sales, setSales] = useState<Sale[]>(initialSales);
-  // Sync when server re-renders with fresh data
-  useEffect(() => { setSales(initialSales); }, [initialSales]);
+  const [sales, setSales] = useState<SaleRecord[]>(initialSales);
+  useEffect(() => {
+    setSales(initialSales);
+  }, [initialSales]);
+
   const [currentPage, setCurrentPage] = useState(1);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
-  const [printTargetSale, setPrintTargetSale] = useState<Sale | null>(null);
-  const [voidTarget, setVoidTarget] = useState<Sale | null>(null);
-  const [voidAction, setVoidAction] = useState<'VOIDED' | 'REFUNDED' | 'PARTIALLY_REFUNDED'>('VOIDED');
-  const [refundMethod, setRefundMethod] = useState<'ORIGINAL' | 'CASH'>('ORIGINAL');
-  const [refundQuantities, setRefundQuantities] = useState<Record<string, string>>({});
-  const [voidReason, setVoidReason] = useState('');
-  const [processing, setProcessing] = useState(false);
+  const [selectedSale, setSelectedSale] = useState<SaleRecord | null>(null);
+  const [printTargetSale, setPrintTargetSale] = useState<SaleRecord | null>(null);
+  const [voidTarget, setVoidTarget] = useState<SaleRecord | null>(null);
+  const [voidAction, setVoidAction] = useState<SaleRefundAction>('VOIDED');
 
-  // Filtered sales
   const filteredSales = useMemo(() => {
     let result = sales;
 
@@ -146,7 +74,6 @@ export function SalesClient({ initialSales }: SalesClientProps) {
     return result;
   }, [sales, dateFrom, dateTo, paymentFilter, statusFilter]);
 
-  // Summary
   const summary = useMemo(() => {
     const completed = filteredSales.filter(
       (s) => s.status === 'COMPLETED' || s.status === 'PARTIALLY_REFUNDED'
@@ -158,7 +85,6 @@ export function SalesClient({ initialSales }: SalesClientProps) {
     };
   }, [filteredSales]);
 
-  // Pagination
   const totalPages = Math.max(1, Math.ceil(filteredSales.length / ITEMS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
   const paginatedSales = filteredSales.slice(
@@ -169,123 +95,6 @@ export function SalesClient({ initialSales }: SalesClientProps) {
   const handleFilterChange = useCallback(() => {
     setCurrentPage(1);
   }, []);
-
-  function setDateFromValue(val: string) {
-    setDateFrom(val);
-    handleFilterChange();
-  }
-
-  function setDateToValue(val: string) {
-    setDateTo(val);
-    handleFilterChange();
-  }
-
-  function setPaymentFilterValue(val: string) {
-    setPaymentFilter(val);
-    handleFilterChange();
-  }
-
-  function setStatusFilterValue(val: string) {
-    setStatusFilter(val);
-    handleFilterChange();
-  }
-
-  // Void/Refund
-  async function handleVoidRefund() {
-    if (!voidTarget) return;
-    const reason = voidReason.trim();
-    if (!reason) {
-      addToast(t('reasonRequired'), 'error');
-      return;
-    }
-
-    let itemsPayload: { saleItemId: string; quantity: number }[] | undefined;
-    if (voidAction === 'PARTIALLY_REFUNDED') {
-      itemsPayload = Object.entries(refundQuantities)
-        .map(([saleItemId, qtyStr]) => ({
-          saleItemId,
-          quantity: parseFloat(qtyStr) || 0,
-        }))
-        .filter((i) => i.quantity > 0);
-      if (itemsPayload.length === 0) {
-        addToast(t('Please enter quantity for at least one item to refund', 'ပြန်အမ်းမည့် ပစ္စည်းအရေအတွက် အနည်းဆုံး ၁ ခု ထည့်ပါ'), 'error');
-        return;
-      }
-    }
-
-    setProcessing(true);
-
-    try {
-      const res = await fetch(`/api/sales/${voidTarget.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: voidAction,
-          reason,
-          refundMethod,
-          items: itemsPayload,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        addToast(data.error || t('Failed to update sale', 'အရောင်းအခြေအနေပြောင်းမရပါ'), 'error');
-        return;
-      }
-
-      setSales((prev) =>
-        prev.map((s) => (s.id === voidTarget.id ? data : s))
-      );
-      addToast(
-        voidAction === 'VOIDED'
-          ? t('Sale voided successfully', 'အရောင်းပယ်ဖျက်ပြီးပါပြီ')
-          : t('Sale refunded successfully', 'အရောင်းပြန်အမ်းပြီးပါပြီ'),
-        'success'
-      );
-      setVoidTarget(null);
-      setVoidReason('');
-      setSelectedSale(null);
-    } catch {
-      addToast(t('Network error. Please try again.', 'ကွန်ရက်ချို့ယွင်းချက်။ ထပ်ကြိုးစားပါ။'), 'error');
-    } finally {
-      setProcessing(false);
-    }
-  }
-
-  // Payment method helpers
-  function getPaymentBadge(method: string): string {
-    if (method === 'SPLIT') {
-      return t('Split Payment', 'ပေါင်းစပ်ငွေပေးချေမှု');
-    }
-    const found = PAYMENT_METHODS.find((p) => p.value === method);
-    return found ? t(paymentMethodTranslationKeys[method] ?? method) : method;
-  }
-
-  function getStatusBadgeClass(status: string): string {
-    switch (status) {
-      case 'COMPLETED':
-        return 'badge-success';
-      case 'PARTIALLY_REFUNDED':
-      case 'REFUNDED':
-        return 'badge-warning';
-      case 'VOIDED':
-        return 'badge-danger';
-      default:
-        return 'badge-neutral';
-    }
-  }
-
-  function getStatusLabel(status: string): string {
-    if (status === 'PARTIALLY_REFUNDED') {
-      return t('Partially Refunded', 'တစ်စိတ်တစ်ပိုင်း ပြန်အမ်းပြီး');
-    }
-    return SALE_STATUSES.some((s) => s.value === status)
-      ? t(saleStatusTranslationKeys[status] ?? status)
-      : status;
-  }
-
-  /* ---- Pagination helpers ---- */
 
   function getPageNumbers(): (number | '...')[] {
     const pages: (number | '...')[] = [];
@@ -303,77 +112,28 @@ export function SalesClient({ initialSales }: SalesClientProps) {
     return pages;
   }
 
-  /* ---- Export CSV ---- */
-  function exportSalesCsv() {
+  function handleExportSalesCsv() {
     if (filteredSales.length === 0) {
       addToast(t('No sales to export', 'ထုတ်ယူရန် အရောင်းမှတ်တမ်း မရှိပါ'), 'warning');
       return;
     }
-    const headers = [
-      'Invoice Number',
-      'Date & Time',
-      'Customer',
-      'Cashier',
-      'Items',
-      'Subtotal',
-      'Discount',
-      'Tax',
-      'Total',
-      'Paid',
-      'Due',
-      'Payment Method',
-      'Status',
-    ];
-    const escapeCsv = (val: string | number) => {
-      const str = String(val ?? '');
-      return str.includes(',') || str.includes('"') || str.includes('\n')
-        ? `"${str.replace(/"/g, '""')}"`
-        : str;
-    };
-    const rows = filteredSales.map((s) => [
-      s.invoiceNumber,
-      formatDateTime(s.createdAt),
-      s.customer?.name || 'Walk-in',
-      s.user?.name || '—',
-      s.items?.length || 0,
-      s.subtotal,
-      s.discountAmount,
-      s.taxAmount,
-      s.totalAmount,
-      s.paidAmount,
-      s.dueAmount || 0,
-      s.paymentMethod,
-      s.status,
-    ]);
-    const csvContent =
-      '\uFEFF' +
-      [headers.map(escapeCsv).join(','), ...rows.map((r) => r.map(escapeCsv).join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `shwepos-sales-${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadSalesCsv(filteredSales);
     addToast(t('Sales exported to CSV', 'အရောင်းစာရင်း CSV ထုတ်ယူပြီးပါပြီ'), 'success');
   }
 
-  /* ---- Render ---- */
-
   return (
     <>
-      {/* Page Header */}
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">{t('Sales History', 'ရောင်းချမှတ်တမ်း')}</h1>
-          <p className="page-subtitle mm-text">{t('Transaction Records', 'ငွေသွင်းငွေထုတ်မှတ်တမ်းများ')}</p>
+          <p className="page-subtitle mm-text">
+            {t('Transaction Records', 'ငွေသွင်းငွေထုတ်မှတ်တမ်းများ')}
+          </p>
         </div>
         <div className="page-actions">
           <button
             className="btn btn-secondary"
-            onClick={exportSalesCsv}
+            onClick={handleExportSalesCsv}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
             <Download size={15} strokeWidth={1.75} />
@@ -383,7 +143,6 @@ export function SalesClient({ initialSales }: SalesClientProps) {
       </div>
 
       <div className="page-body">
-        {/* Summary Cards */}
         <div
           className="flex gap-md"
           style={{ marginBottom: 'var(--space-lg)', flexWrap: 'wrap' }}
@@ -438,28 +197,37 @@ export function SalesClient({ initialSales }: SalesClientProps) {
           </div>
         </div>
 
-        {/* Filters Bar */}
         <div
           className="flex gap-md"
           style={{ marginBottom: 'var(--space-lg)', flexWrap: 'wrap', alignItems: 'flex-end' }}
         >
           <div className="input-group" style={{ flex: '0 0 auto', margin: 0 }}>
-            <label className="input-label" style={{ fontSize: 'var(--text-xs)' }}>{t('From', 'မှ')}</label>
+            <label className="input-label" style={{ fontSize: 'var(--text-xs)' }}>
+              {t('From', 'မှ')}
+            </label>
             <input
               type="date"
               className="input"
               value={dateFrom}
-              onChange={(e) => setDateFromValue(e.target.value)}
+              onChange={(e) => {
+                setDateFrom(e.target.value);
+                handleFilterChange();
+              }}
               style={{ width: 160 }}
             />
           </div>
           <div className="input-group" style={{ flex: '0 0 auto', margin: 0 }}>
-            <label className="input-label" style={{ fontSize: 'var(--text-xs)' }}>{t('To', 'ထိ')}</label>
+            <label className="input-label" style={{ fontSize: 'var(--text-xs)' }}>
+              {t('To', 'ထိ')}
+            </label>
             <input
               type="date"
               className="input"
               value={dateTo}
-              onChange={(e) => setDateToValue(e.target.value)}
+              onChange={(e) => {
+                setDateTo(e.target.value);
+                handleFilterChange();
+              }}
               style={{ width: 160 }}
             />
           </div>
@@ -467,12 +235,15 @@ export function SalesClient({ initialSales }: SalesClientProps) {
             <select
               className="input"
               value={paymentFilter}
-              onChange={(e) => setPaymentFilterValue(e.target.value)}
+              onChange={(e) => {
+                setPaymentFilter(e.target.value);
+                handleFilterChange();
+              }}
             >
               <option value="">{t('All Payments', 'ငွေပေးချေမှုအားလုံး')}</option>
               {PAYMENT_METHODS.map((pm) => (
                 <option key={pm.value} value={pm.value}>
-                  {getPaymentBadge(pm.value)}
+                  {getPaymentMethodLabel(pm.value, t)}
                 </option>
               ))}
             </select>
@@ -481,12 +252,15 @@ export function SalesClient({ initialSales }: SalesClientProps) {
             <select
               className="input"
               value={statusFilter}
-              onChange={(e) => setStatusFilterValue(e.target.value)}
+              onChange={(e) => {
+                setStatusFilter(e.target.value);
+                handleFilterChange();
+              }}
             >
               <option value="">{t('All Status', 'အခြေအနေအားလုံး')}</option>
               {SALE_STATUSES.map((s) => (
                 <option key={s.value} value={s.value}>
-                  {getStatusLabel(s.value)}
+                  {getSaleStatusLabel(s.value, t)}
                 </option>
               ))}
             </select>
@@ -508,11 +282,11 @@ export function SalesClient({ initialSales }: SalesClientProps) {
             </button>
           )}
           <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
-            {filteredSales.length} {t('sale', 'ခု')}{language !== 'mm' && filteredSales.length !== 1 ? 's' : ''}
+            {filteredSales.length} {t('sale', 'ခု')}
+            {language !== 'mm' && filteredSales.length !== 1 ? 's' : ''}
           </div>
         </div>
 
-        {/* Sales Table */}
         {filteredSales.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">
@@ -522,7 +296,10 @@ export function SalesClient({ initialSales }: SalesClientProps) {
             <div className="empty-state-text">
               {dateFrom || dateTo || paymentFilter || statusFilter
                 ? t('Try adjusting your filter criteria', 'စစ်ထုတ်မှုကို ပြန်ပြင်ကြည့်ပါ')
-                : t('Sales will appear here after transactions are completed', 'အရောင်းပြီးမြောက်ပါက ဤနေရာတွင်ပေါ်ပါမည်')}
+                : t(
+                    'Sales will appear here after transactions are completed',
+                    'အရောင်းပြီးမြောက်ပါက ဤနေရာတွင်ပေါ်ပါမည်'
+                  )}
             </div>
           </div>
         ) : (
@@ -613,15 +390,20 @@ export function SalesClient({ initialSales }: SalesClientProps) {
                       <td>
                         <span
                           className="badge badge-primary"
-                          style={{ fontSize: 'var(--text-xs)', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                          style={{
+                            fontSize: 'var(--text-xs)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                          }}
                         >
                           <PaymentMethodIcon method={sale.paymentMethod} size={13} />
-                          {getPaymentBadge(sale.paymentMethod)}
+                          {getPaymentMethodLabel(sale.paymentMethod, t)}
                         </span>
                       </td>
                       <td>
-                        <span className={`badge ${getStatusBadgeClass(sale.status)}`}>
-                          {getStatusLabel(sale.status)}
+                        <span className={`badge ${getSaleStatusBadgeClass(sale.status)}`}>
+                          {getSaleStatusLabel(sale.status, t)}
                         </span>
                       </td>
                       <td>
@@ -654,7 +436,6 @@ export function SalesClient({ initialSales }: SalesClientProps) {
               </table>
             </div>
 
-            {/* Pagination */}
             {totalPages > 1 && (
               <div className="pagination">
                 <button
@@ -699,490 +480,30 @@ export function SalesClient({ initialSales }: SalesClientProps) {
         )}
       </div>
 
-      {/* Sale Detail Modal */}
-      {selectedSale && (
-        <div className="modal-backdrop" onClick={() => setSelectedSale(null)}>
-          <div
-            className="modal modal-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header">
-              <h2 className="modal-title">
-                {t('Sale Details', 'အရောင်းအသေးစိတ်')} — {selectedSale.invoiceNumber}
-              </h2>
-              <button
-                className="btn btn-ghost btn-icon"
-                onClick={() => setSelectedSale(null)}
-              >
-                <X size={16} strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="modal-body">
-              {/* Sale Info */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1fr 1fr',
-                  gap: 'var(--space-md)',
-                  marginBottom: 'var(--space-lg)',
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {t('Date & Time', 'ရက်စွဲနှင့်အချိန်')}
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                    {formatDateTime(selectedSale.createdAt)}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {t('customer')}
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                    {selectedSale.customer?.name || t('walkIn')}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {t('cashier')}
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                    {selectedSale.user?.name || '—'}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 2 }}>
-                    {t('Status', 'အခြေအနေ')}
-                  </div>
-                  <span className={`badge ${getStatusBadgeClass(selectedSale.status)}`}>
-                    {getStatusLabel(selectedSale.status)}
-                  </span>
-                </div>
-              </div>
+      <SaleQuickViewModal
+        sale={selectedSale}
+        onClose={() => setSelectedSale(null)}
+        onPrint={(sale) => setPrintTargetSale(sale)}
+        onRequestAction={(sale, action) => {
+          setVoidTarget(sale);
+          setVoidAction(action);
+        }}
+      />
 
-              {/* Items Table */}
-              <div style={{ marginBottom: 'var(--space-lg)' }}>
-                <h3 style={{ fontSize: 'var(--text-sm)', fontWeight: 700, marginBottom: 'var(--space-sm)', color: 'var(--text-secondary)' }}>
-                  {t('items')}
-                </h3>
-                <div className="table-container">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>{t('Product', 'ကုန်ပစ္စည်း')}</th>
-                        <th style={{ textAlign: 'center' }}>{t('Qty', 'အရေအတွက်')}</th>
-                        <th style={{ textAlign: 'right' }}>{t('Unit Price', 'တစ်ခုဈေး')}</th>
-                        <th style={{ textAlign: 'right' }}>{t('discount')}</th>
-                        <th style={{ textAlign: 'right' }}>{t('Total', 'စုစုပေါင်း')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedSale.items?.map((item) => (
-                        <tr key={item.id}>
-                          <td>
-                            <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                              {item.product?.name || 'Unknown Product'}
-                            </div>
-                            {item.product?.sku && (
-                              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                                {item.product.sku}
-                              </div>
-                            )}
-                          </td>
-                          <td style={{ textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
-                            {item.quantity}
-                          </td>
-                          <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' }}>
-                            {formatCurrency(item.unitPrice)}
-                          </td>
-                          <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' }}>
-                            {item.discount > 0 ? (
-                              <span style={{ color: 'var(--danger)' }}>
-                                -{formatCurrency(item.discount)}
-                              </span>
-                            ) : (
-                              '—'
-                            )}
-                          </td>
-                          <td style={{ textAlign: 'right', fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' }}>
-                            {formatCurrency(item.total)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Payment Summary */}
-              <div
-                style={{
-                  padding: 'var(--space-md)',
-                  background: 'var(--bg-tertiary)',
-                  borderRadius: 'var(--radius-md)',
-                }}
-              >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    marginBottom: 'var(--space-xs)',
-                    fontSize: 'var(--text-sm)',
-                  }}
-                >
-                  <span style={{ color: 'var(--text-muted)' }}>{t('subtotal')}</span>
-                  <span style={{ fontFamily: 'var(--font-mono)' }}>{formatCurrency(selectedSale.subtotal)}</span>
-                </div>
-                {selectedSale.discountAmount > 0 && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginBottom: 'var(--space-xs)',
-                      fontSize: 'var(--text-sm)',
-                    }}
-                  >
-                    <span style={{ color: 'var(--danger)' }}>{t('discount')}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--danger)' }}>
-                      -{formatCurrency(selectedSale.discountAmount)}
-                    </span>
-                  </div>
-                )}
-                {selectedSale.taxAmount > 0 && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginBottom: 'var(--space-xs)',
-                      fontSize: 'var(--text-sm)',
-                    }}
-                  >
-                    <span style={{ color: 'var(--text-muted)' }}>{t('Tax', 'အခွန်')}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)' }}>
-                      {formatCurrency(selectedSale.taxAmount)}
-                    </span>
-                  </div>
-                )}
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    paddingTop: 'var(--space-sm)',
-                    borderTop: '1px solid var(--border-color)',
-                    fontWeight: 700,
-                    fontSize: 'var(--text-base)',
-                  }}
-                >
-                  <span>{t('Total', 'စုစုပေါင်း')}</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary)' }}>
-                    {formatCurrency(selectedSale.totalAmount)}
-                  </span>
-                </div>
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    marginTop: 'var(--space-sm)',
-                    fontSize: 'var(--text-sm)',
-                  }}
-                >
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    {t('payment')}: {getPaymentBadge(selectedSale.paymentMethod)}
-                  </span>
-                  <span style={{ fontFamily: 'var(--font-mono)' }}>
-                    {t('Paid', 'ပေးငွေ')}: {formatCurrency(selectedSale.paidAmount)}
-                  </span>
-                </div>
-                {selectedSale.changeAmount > 0 && (
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: 'var(--text-sm)',
-                    }}
-                  >
-                    <span style={{ color: 'var(--text-muted)' }}>{t('Change', 'ပြန်အမ်းငွေ')}</span>
-                    <span style={{ fontFamily: 'var(--font-mono)' }}>
-                      {formatCurrency(selectedSale.changeAmount)}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Notes */}
-              {selectedSale.notes && (
-                <div style={{ marginTop: 'var(--space-md)', fontSize: 'var(--text-sm)', color: 'var(--text-secondary)' }}>
-                  <strong>{t('notes')}:</strong> {selectedSale.notes}
-                </div>
-              )}
-            </div>
-            <div className="modal-footer">
-              <button
-                className="btn btn-secondary"
-                onClick={() => setPrintTargetSale(selectedSale)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginRight: 'auto' }}
-              >
-                <Printer size={15} strokeWidth={1.75} />
-                {t('Print Receipt', 'ဘောင်ချာ ပရင့်ထုတ်ရန်')}
-              </button>
-              {(selectedSale.status === 'COMPLETED' || selectedSale.status === 'PARTIALLY_REFUNDED') && (
-                <>
-                  {selectedSale.status === 'COMPLETED' && (
-                    <button
-                      className="btn btn-danger"
-                      onClick={() => {
-                        setVoidTarget(selectedSale);
-                        setVoidAction('VOIDED');
-                        setRefundMethod('ORIGINAL');
-                        setVoidReason('');
-                      }}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    >
-                      <Ban size={15} strokeWidth={1.75} />
-                      {t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')}
-                    </button>
-                  )}
-                  <button
-                    className="btn btn-warning"
-                    onClick={() => {
-                      setVoidTarget(selectedSale);
-                      setVoidAction('PARTIALLY_REFUNDED');
-                      setRefundMethod('ORIGINAL');
-                      const initialMap: Record<string, string> = {};
-                      selectedSale.items?.forEach((i) => { initialMap[i.id] = '0'; });
-                      setRefundQuantities(initialMap);
-                      setVoidReason('');
-                    }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    <Package size={15} strokeWidth={1.75} />
-                    {t('Partial Refund', 'ပစ္စည်းအချို့ ပြန်အမ်းရန်')}
-                  </button>
-                  <button
-                    className="btn btn-warning"
-                    onClick={() => {
-                      setVoidTarget(selectedSale);
-                      setVoidAction('REFUNDED');
-                      setRefundMethod('ORIGINAL');
-                      setVoidReason('');
-                    }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                  >
-                    <RotateCcw size={15} strokeWidth={1.75} />
-                    {t('Refund', 'ပြန်အမ်းရန်')}
-                  </button>
-                </>
-              )}
-              <button
-                className="btn btn-secondary"
-                onClick={() => setSelectedSale(null)}
-              >
-                {t('Close', 'ပိတ်ရန်')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Void/Refund Confirmation Modal */}
-      {voidTarget && (
-        <div
-          className="modal-backdrop"
-          onClick={() => {
-            setVoidTarget(null);
-            setVoidReason('');
-          }}
-        >
-          <div
-            className="modal modal-lg"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: voidAction === 'PARTIALLY_REFUNDED' ? 600 : 480 }}
-          >
-            <div className="modal-header">
-              <h2 className="modal-title">
-                {voidAction === 'VOIDED'
-                  ? t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')
-                  : voidAction === 'PARTIALLY_REFUNDED'
-                  ? t('Partial Item Refund', 'ပစ္စည်းအချို့သာ ပြန်အမ်းရန်')
-                  : t('Refund Sale', 'အရောင်းပြန်အမ်းရန်')}
-              </h2>
-              <button
-                className="btn btn-ghost btn-icon"
-                onClick={() => {
-                  setVoidTarget(null);
-                  setVoidReason('');
-                }}
-              >
-                <X size={16} strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="modal-body">
-              {voidAction === 'PARTIALLY_REFUNDED' ? (
-                <div style={{ marginBottom: 'var(--space-md)' }}>
-                  <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 8 }}>
-                    {t('Enter the quantity to refund for each item:', 'ပြန်အမ်းလိုသည့် ပစ္စည်းအရေအတွက်ကို ထည့်သွင်းပါ -')}
-                  </div>
-                  <div className="table-container">
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>{t('Product', 'ကုန်ပစ္စည်း')}</th>
-                          <th style={{ textAlign: 'center' }}>{t('Remaining', 'ကျန်ရှိ')}</th>
-                          <th style={{ textAlign: 'right' }}>{t('Refund Qty', 'ပြန်အမ်းမည့်အရေအတွက်')}</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {voidTarget.items?.map((item) => {
-                          const remaining = Math.max(0, Number(item.quantity) - Number(item.refundedQuantity || 0));
-                          const fractional = isFractionalUnit(item.product?.unit);
-                          return (
-                            <tr key={item.id}>
-                              <td>
-                                <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                                  {item.product?.name || 'Item'}
-                                </div>
-                              </td>
-                              <td style={{ textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
-                                {formatQuantity(remaining, item.product?.unit)}
-                              </td>
-                              <td style={{ textAlign: 'right' }}>
-                                <input
-                                  type="number"
-                                  className="input"
-                                  disabled={remaining <= 0}
-                                  min="0"
-                                  max={remaining}
-                                  step={fractional ? '0.01' : '1'}
-                                  value={refundQuantities[item.id] ?? '0'}
-                                  onChange={(e) =>
-                                    setRefundQuantities((prev) => ({
-                                      ...prev,
-                                      [item.id]: e.target.value,
-                                    }))
-                                  }
-                                  style={{ width: 90, textAlign: 'right', marginLeft: 'auto' }}
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : (
-                <p
-                  style={{
-                    fontSize: 'var(--text-sm)',
-                    color: 'var(--text-secondary)',
-                    lineHeight: 1.6,
-                  }}
-                >
-                  {t('Are you sure you want to', 'သေချာပါသလား')}{' '}
-                  {voidAction === 'VOIDED' ? t('void', 'ပယ်ဖျက်') : t('refund', 'ပြန်အမ်း')} {t('sale', 'အရောင်း')}{' '}
-                  <strong style={{ color: 'var(--text-primary)' }}>
-                    {voidTarget.invoiceNumber}
-                  </strong>{' '}
-                  for{' '}
-                  <strong style={{ color: 'var(--primary)' }}>
-                    {formatCurrency(voidTarget.totalAmount)}
-                  </strong>
-                  ?
-                </p>
-              )}
-
-              <div className="input-group" style={{ marginTop: 'var(--space-md)' }}>
-                <label className="input-label">
-                  {t('Refund Method', 'ပြန်အမ်းမည့် ငွေပေးချေမှုနည်းလမ်း')}
-                </label>
-                <select
-                  className="input"
-                  value={refundMethod}
-                  onChange={(e) => setRefundMethod(e.target.value as 'ORIGINAL' | 'CASH')}
-                >
-                  <option value="ORIGINAL">
-                    {t('Original Payment Method', 'မူလငွေပေးချေမှုနည်းလမ်းအတိုင်း')} ({voidTarget.paymentMethod})
-                  </option>
-                  <option value="CASH">
-                    {t('Refund as Cash (Deduct from Cash Drawer)', 'ငွေသားဖြင့် ပြန်အမ်းမည် (အံဆွဲမှနှုတ်မည်)')}
-                  </option>
-                </select>
-              </div>
-
-              <div className="input-group" style={{ marginTop: 'var(--space-md)' }}>
-                <label className="input-label">
-                  {t('reasonLabel')} *
-                </label>
-                <textarea
-                  className="input"
-                  value={voidReason}
-                  onChange={(e) => setVoidReason(e.target.value)}
-                  placeholder={t('enterReason')}
-                  rows={3}
-                  maxLength={500}
-                />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  setVoidTarget(null);
-                  setVoidReason('');
-                }}
-                disabled={processing}
-              >
-                {t('Cancel', 'မလုပ်တော့ပါ')}
-              </button>
-              <button
-                className="btn btn-danger"
-                onClick={handleVoidRefund}
-                disabled={processing || !voidReason.trim()}
-              >
-                {processing
-                  ? t('Processing...', 'ဆောင်ရွက်နေသည်...')
-                  : voidAction === 'VOIDED'
-                  ? t('Void Sale', 'အရောင်းပယ်ဖျက်ရန်')
-                  : t('Refund Sale', 'အရောင်းပြန်အမ်းရန်')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SaleRefundModal
+        sale={voidTarget}
+        actionType={voidAction}
+        onClose={() => setVoidTarget(null)}
+        onSuccess={(updatedSale) => {
+          setSales((prev) => prev.map((s) => (s.id === updatedSale.id ? updatedSale : s)));
+          setVoidTarget(null);
+          setSelectedSale(null);
+        }}
+      />
 
       {printTargetSale && (
         <Receipt
-          data={{
-            invoiceNumber: printTargetSale.invoiceNumber,
-            createdAt:
-              typeof printTargetSale.createdAt === 'string'
-                ? printTargetSale.createdAt
-                : printTargetSale.createdAt.toISOString(),
-            cashierName: printTargetSale.user?.name || '—',
-            customerName: printTargetSale.customer?.name || null,
-            items: (printTargetSale.items || []).map((item) => ({
-              name:
-                language === 'mm' && item.product?.nameMm
-                  ? item.product.nameMm
-                  : item.product?.name || 'Item',
-              quantity: Number(item.quantity),
-              unitPrice: Number(item.unitPrice),
-              discount: Number(item.discount || 0),
-              total: Number(item.total),
-              unit: item.product?.unit,
-            })),
-            subtotal: Number(printTargetSale.subtotal),
-            discountAmount: Number(printTargetSale.discountAmount),
-            taxAmount: Number(printTargetSale.taxAmount),
-            totalAmount: Number(printTargetSale.totalAmount),
-            paymentMethod: printTargetSale.paymentMethod,
-            paidAmount: Number(printTargetSale.paidAmount),
-            dueAmount: Number(printTargetSale.dueAmount || 0),
-            changeAmount: Number(printTargetSale.changeAmount),
-            pointsEarned: Number(printTargetSale.pointsEarned || 0),
-            pointsRedeemed: Number(printTargetSale.pointsRedeemed || 0),
-          }}
+          data={buildReceiptDataFromSale(printTargetSale, language)}
           onNewSale={() => setPrintTargetSale(null)}
           closeLabel={t('Close', 'ပိတ်ရန်')}
         />

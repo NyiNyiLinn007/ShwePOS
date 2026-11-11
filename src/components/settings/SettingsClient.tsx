@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '@/lib/store';
 import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useToast } from '@/contexts/ToastContext';
-import { formatDate } from '@/lib/utils';
+import { resizeImageToDataUrl } from '@/lib/image';
 import {
   Settings,
   DollarSign,
@@ -13,22 +13,19 @@ import {
   Receipt,
   Sun,
   Moon,
-  Users,
-  User,
-  Plus,
-  Pencil,
-  Trash2,
-  Package,
-  Download,
   Upload,
-  FileSpreadsheet,
   Info,
   X,
 } from '@/components/ui/Icons';
+import {
+  UserManagementSection,
+  UserRecord,
+} from '@/components/settings/UserManagementSection';
+import { DataMigrationSection } from '@/components/settings/DataMigrationSection';
 
 /* ---------- Types ---------- */
 
-interface Settings {
+interface SettingsData {
   id: string;
   businessName: string;
   businessNameMm: string | null;
@@ -44,47 +41,8 @@ interface Settings {
   loyaltyRedeemRate?: number;
 }
 
-interface UserRecord {
-  id: string;
-  name: string;
-  email: string;
-  role: string;
-  phone: string | null;
-  isActive: boolean;
-  createdAt: string | Date;
-  updatedAt: string | Date;
-}
-
-interface UserFormData {
-  name: string;
-  email: string;
-  password: string;
-  role: string;
-  phone: string;
-  isActive: boolean;
-}
-
-/* ---------- Constants ---------- */
-
-const ROLES = [
-  { value: 'ADMIN' },
-  { value: 'MANAGER' },
-  { value: 'CASHIER' },
-];
-
-const emptyUserForm: UserFormData = {
-  name: '',
-  email: '',
-  password: '',
-  role: 'CASHIER',
-  phone: '',
-  isActive: true,
-};
-
-/* ---------- Component ---------- */
-
 interface SettingsClientProps {
-  initialSettings: Settings;
+  initialSettings: SettingsData;
   initialUsers: UserRecord[];
 }
 
@@ -123,20 +81,6 @@ export function SettingsClient({
 
   // ── Users ─────────────────────────────────────────────────
   const [users, setUsers] = useState<UserRecord[]>(initialUsers);
-  const [showUserModal, setShowUserModal] = useState(false);
-  const [editingUser, setEditingUser] = useState<UserRecord | null>(null);
-  const [userForm, setUserForm] = useState<UserFormData>(emptyUserForm);
-  const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
-  const [savingUser, setSavingUser] = useState(false);
-  const [deleteUserTarget, setDeleteUserTarget] = useState<UserRecord | null>(null);
-  const [deletingUser, setDeletingUser] = useState(false);
-
-  // ── Data Migration ────────────────────────────────────────────────────────
-  const migrationFileInput = useRef<HTMLInputElement>(null);
-  const [migrationFile, setMigrationFile] = useState<File | null>(null);
-  const [importingData, setImportingData] = useState(false);
-
-  /* ---- Save Handlers ---- */
 
   async function saveProfile() {
     setSavingProfile(true);
@@ -159,7 +103,6 @@ export function SettingsClient({
         addToast(data.error || t('saveFailed'), 'error');
         return;
       }
-      // Sync global store so Sidebar, Receipt, POS all update
       updateSettings({
         businessName,
         businessNameMm: businessNameMm || null,
@@ -264,193 +207,8 @@ export function SettingsClient({
     }
   }
 
-  /* ---- User Modal Handlers ---- */
-
-  function openAddUser() {
-    setEditingUser(null);
-    setUserForm(emptyUserForm);
-    setUserFormErrors({});
-    setShowUserModal(true);
-  }
-
-  function openEditUser(user: UserRecord) {
-    setEditingUser(user);
-    setUserForm({
-      name: user.name,
-      email: user.email,
-      password: '',
-      role: user.role,
-      phone: user.phone || '',
-      isActive: user.isActive,
-    });
-    setUserFormErrors({});
-    setShowUserModal(true);
-  }
-
-  function closeUserModal() {
-    setShowUserModal(false);
-    setEditingUser(null);
-    setUserForm(emptyUserForm);
-    setUserFormErrors({});
-  }
-
-  function handleUserFormChange(field: keyof UserFormData, value: string | boolean) {
-    setUserForm((prev) => ({ ...prev, [field]: value }));
-    if (userFormErrors[field]) {
-      setUserFormErrors((prev) => {
-        const next = { ...prev };
-        delete next[field];
-        return next;
-      });
-    }
-  }
-
-  function validateUserForm(): boolean {
-    const errors: Record<string, string> = {};
-    if (!userForm.name.trim()) errors.name = 'Name is required';
-    if (!userForm.email.trim()) errors.email = 'Email is required';
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (userForm.email && !emailRegex.test(userForm.email)) {
-      errors.email = 'Invalid email format';
-    }
-    if (!editingUser && !userForm.password) {
-      errors.password = 'Password is required for new users';
-    }
-    if (userForm.password && userForm.password.length > 0 && userForm.password.length < 6) {
-      errors.password = 'Password must be at least 6 characters';
-    }
-    setUserFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  }
-
-  async function handleSaveUser() {
-    if (!validateUserForm()) return;
-    setSavingUser(true);
-
-    try {
-      const payload: Record<string, unknown> = {
-        name: userForm.name.trim(),
-        email: userForm.email.trim(),
-        role: userForm.role,
-        phone: userForm.phone.trim() || null,
-        isActive: userForm.isActive,
-      };
-      if (userForm.password) {
-        payload.password = userForm.password;
-      }
-
-      const url = editingUser ? `/api/users/${editingUser.id}` : '/api/users';
-      const method = editingUser ? 'PUT' : 'POST';
-
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        addToast(data.error || t('saveUserFailed'), 'error');
-        return;
-      }
-
-      if (editingUser) {
-        setUsers((prev) =>
-          prev.map((u) => (u.id === editingUser.id ? data : u))
-        );
-        addToast(t('User updated', 'အသုံးပြုသူအပ်ဒိတ်ပြီး'), 'success');
-      } else {
-        setUsers((prev) => [data, ...prev]);
-        addToast(t('User created', 'အသုံးပြုသူအသစ်ဖန်တီးပြီး'), 'success');
-      }
-
-      closeUserModal();
-    } catch {
-      addToast(t('networkError'), 'error');
-    } finally {
-      setSavingUser(false);
-    }
-  }
-
-  function downloadMigrationWorkbook(mode: 'template' | 'export') {
-    window.location.href = `/api/data-migration?mode=${mode}`;
-  }
-
-  async function importMigrationWorkbook() {
-    if (!migrationFile) {
-      addToast(t('Please choose an Excel file first', 'Excel ဖိုင်ကို အရင်ရွေးပေးပါ'), 'error');
-      return;
-    }
-
-    setImportingData(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', migrationFile);
-      const res = await fetch('/api/data-migration', {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        const detail = data.details?.[0]?.message;
-        addToast(detail ? `${data.error}: ${detail}` : data.error || 'Import failed', 'error');
-        return;
-      }
-
-      addToast(data.message || t('Data imported successfully', 'Data များကို အောင်မြင်စွာ ထည့်သွင်းပြီးပါပြီ'), 'success');
-      setMigrationFile(null);
-      if (migrationFileInput.current) migrationFileInput.current.value = '';
-    } catch {
-      addToast(t('importNetworkError'), 'error');
-    } finally {
-      setImportingData(false);
-    }
-  }
-
-  async function handleDeleteUser() {
-    if (!deleteUserTarget) return;
-    setDeletingUser(true);
-
-    try {
-      const res = await fetch(`/api/users/${deleteUserTarget.id}`, {
-        method: 'DELETE',
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        addToast(data.error || t('deactivateUserFailed'), 'error');
-        return;
-      }
-
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.id === deleteUserTarget.id ? { ...u, isActive: false } : u
-        )
-      );
-      addToast(t('userDeactivated'), 'success');
-      setDeleteUserTarget(null);
-    } catch {
-      addToast(t('networkError'), 'error');
-    } finally {
-      setDeletingUser(false);
-    }
-  }
-
-  function getRoleLabel(role: string): string {
-    return t(role.toLowerCase());
-  }
-
-  function getRoleBadgeClass(role: string): string {
-    if (role === 'ADMIN') return 'badge-primary';
-    if (role === 'MANAGER') return 'badge-success';
-    return 'badge-neutral';
-  }
-
   return (
     <>
-      {/* Page Header */}
       <div className="page-header">
         <div className="page-title-group">
           <h1 className="page-title">{t('Settings', 'ဆက်တင်များ')}</h1>
@@ -540,36 +298,39 @@ export function SettingsClient({
                   <img
                     src={logo}
                     alt="Logo"
-                    style={{ width: 44, height: 44, objectFit: 'contain', borderRadius: 6, border: '1px solid var(--border-color)', background: '#fff' }}
+                    style={{
+                      width: 44,
+                      height: 44,
+                      objectFit: 'contain',
+                      borderRadius: 6,
+                      border: '1px solid var(--border-color)',
+                      background: '#fff',
+                    }}
                   />
                 )}
-                <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <label
+                  className="btn btn-secondary btn-sm"
+                  style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
                   <Upload size={14} strokeWidth={1.75} />
                   {t('Upload Logo', 'လိုဂိုတင်ရန်')}
                   <input
                     type="file"
                     accept="image/*"
                     style={{ display: 'none' }}
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        const img = new Image();
-                        img.onload = () => {
-                          const scale = Math.min(1, 200 / Math.max(img.width, img.height));
-                          const canvas = document.createElement('canvas');
-                          canvas.width = Math.max(1, Math.round(img.width * scale));
-                          canvas.height = Math.max(1, Math.round(img.height * scale));
-                          const ctx = canvas.getContext('2d');
-                          if (ctx) {
-                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                            setLogo(canvas.toDataURL('image/png', 0.9));
-                          }
-                        };
-                        img.src = String(reader.result);
-                      };
-                      reader.readAsDataURL(file);
+                      try {
+                        const dataUrl = await resizeImageToDataUrl(file, {
+                          maxSize: 200,
+                          mimeType: 'image/png',
+                          quality: 0.9,
+                        });
+                        setLogo(dataUrl);
+                      } catch {
+                        addToast(t('Failed to process image', 'ပုံဖတ်မရပါ'), 'error');
+                      }
                     }}
                   />
                 </label>
@@ -888,239 +649,10 @@ export function SettingsClient({
         </div>
 
         {/* Section 5: User Management */}
-        <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'flex-start',
-              marginBottom: 'var(--space-lg)',
-            }}
-          >
-            <div>
-              <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                <Users size={18} strokeWidth={1.75} />
-                {t('User Management', 'အသုံးပြုသူစီမံခန့်ခွဲရေး')}
-              </h3>
-              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
-                {t('Manage system users and roles', 'အသုံးပြုသူနှင့်ရာထူးများစီမံပါ')}
-              </p>
-            </div>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={openAddUser}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <Plus size={15} strokeWidth={2} />
-              {t('Add User', 'အသုံးပြုသူထည့်ရန်')}
-            </button>
-          </div>
-
-          {users.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">
-                <User size={28} strokeWidth={1.5} />
-              </div>
-              <div className="empty-state-title">
-                {t('No users found', 'အသုံးပြုသူမတွေ့ပါ')}
-              </div>
-            </div>
-          ) : (
-            <div className="table-container">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>{t('Name', 'အမည်')}</th>
-                    <th>{t('Email', 'အီးမေးလ်')}</th>
-                    <th>{t('Role', 'ရာထူး')}</th>
-                    <th>{t('Status', 'အခြေအနေ')}</th>
-                    <th>{t('Created', 'ဖန်တီးသည့်ရက်')}</th>
-                    <th style={{ width: 100 }}>{t('Actions', 'လုပ်ဆောင်ချက်')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((user) => (
-                    <tr key={user.id}>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
-                          <div
-                            style={{
-                              width: 32,
-                              height: 32,
-                              borderRadius: '50%',
-                              background: 'var(--bg-tertiary)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 14,
-                              fontWeight: 700,
-                              color: 'var(--primary)',
-                            }}
-                          >
-                            {user.name
-                              .split(' ')
-                              .map((p) => p[0])
-                              .join('')
-                              .toUpperCase()
-                              .slice(0, 2)}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 600 }}>{user.name}</div>
-                            {user.phone && (
-                              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                                {user.phone}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ fontSize: 'var(--text-sm)' }}>{user.email}</td>
-                      <td>
-                        <span className={`badge ${getRoleBadgeClass(user.role)}`}>
-                          {getRoleLabel(user.role)}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={`badge ${user.isActive ? 'badge-success' : 'badge-neutral'}`}
-                        >
-                          {user.isActive
-                            ? t('Active', 'အသုံးပြုနေဆဲ')
-                            : t('Inactive', 'ပိတ်ထားသည်')}
-                        </span>
-                      </td>
-                      <td style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
-                        {formatDate(user.createdAt)}
-                      </td>
-                      <td>
-                        <div className="table-actions">
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => openEditUser(user)}
-                            title={t('edit')}
-                          >
-                            <Pencil size={15} strokeWidth={1.75} />
-                          </button>
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => setDeleteUserTarget(user)}
-                            title={t('deactivate')}
-                            style={{ color: 'var(--danger)' }}
-                          >
-                            <Trash2 size={15} strokeWidth={1.75} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <UserManagementSection users={users} setUsers={setUsers} />
 
         {/* Section 6: Data Migration */}
-        <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
-          <div style={{ marginBottom: 'var(--space-lg)' }}>
-            <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              <Package size={18} strokeWidth={1.75} />
-              {t('dataMigration')}
-            </h3>
-            <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
-              {t(
-                'Download an Excel template, fill all data sheets, and import the workbook. You can also export all current data for backup or migration.',
-                'Excel Format ကို Download လုပ်ပြီး Data ဖြည့်ကာ ပြန်လည် Import လုပ်နိုင်ပါသည်။ လက်ရှိ Data အားလုံးကိုလည်း Backup သို့မဟုတ် Migration အတွက် Export လုပ်နိုင်ပါသည်။'
-              )}
-            </p>
-          </div>
-
-          <div className="migration-steps" aria-label="Data migration steps">
-            <div className="migration-step is-ready"><span>1</span><strong>{t('downloadTemplate')}</strong></div>
-            <div className="migration-step"><span>2</span><strong>{t('fillExcel')}</strong></div>
-            <div className="migration-step"><span>3</span><strong>{t('chooseFile')}</strong></div>
-            <div className="migration-step"><span>4</span><strong>{t('importReview')}</strong></div>
-          </div>
-
-          <div
-            className="migration-actions"
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 'var(--space-sm)',
-              alignItems: 'center',
-            }}
-          >
-            <button
-              className="btn btn-secondary"
-              onClick={() => downloadMigrationWorkbook('template')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <FileSpreadsheet size={15} strokeWidth={1.75} />
-              {t('downloadExcelTemplate')}
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => downloadMigrationWorkbook('export')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <Download size={15} strokeWidth={1.75} />
-              {t('exportAllData')}
-            </button>
-            <input
-              ref={migrationFileInput}
-              type="file"
-              accept=".xlsx"
-              style={{ display: 'none' }}
-              onChange={(event) => setMigrationFile(event.target.files?.[0] || null)}
-            />
-            <button
-              className="btn btn-secondary"
-              onClick={() => migrationFileInput.current?.click()}
-              disabled={importingData}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-            >
-              <Upload size={15} strokeWidth={1.75} />
-              {t('chooseExcelFile')}
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={importMigrationWorkbook}
-              disabled={!migrationFile || importingData}
-            >
-              {importingData
-                ? t('importing')
-                : t('importData')}
-            </button>
-          </div>
-
-          {migrationFile && (
-            <div
-              style={{
-                marginTop: 'var(--space-md)',
-                padding: 'var(--space-sm) var(--space-md)',
-                background: 'var(--bg-tertiary)',
-                borderRadius: 'var(--radius-md)',
-                fontSize: 'var(--text-sm)',
-                color: 'var(--text-muted)',
-              }}
-            >
-              {t('Selected file', 'ရွေးထားသောဖိုင်')}: <strong style={{ color: 'var(--text-primary)' }}>{migrationFile.name}</strong>
-            </div>
-          )}
-
-          <p
-            style={{
-              marginTop: 'var(--space-md)',
-              fontSize: 'var(--text-xs)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            {t(
-              'Import uses upsert and does not delete records. User passwords are not included in exports; existing users keep their current password.',
-              'Import သည် ရှိပြီးသား Record များကို Update/Create လုပ်ပြီး မပါသော Record များကို မဖျက်ပါ။ Export ဖိုင်တွင် Password များမပါပါ။ ရှိပြီးသား User များ၏ password ကို မပြောင်းပါ။'
-            )}
-          </p>
-        </div>
+        <DataMigrationSection />
 
         {/* Section 7: About */}
         <div className="glass-card">
@@ -1159,7 +691,7 @@ export function SettingsClient({
               <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: 4 }}>
                 {t('Framework', 'ဖရိမ်ဝပ်')}
               </div>
-              <div style={{ fontWeight: 600 }}>Next.js 15 (App Router)</div>
+              <div style={{ fontWeight: 600 }}>Next.js 16 (App Router)</div>
             </div>
             <div>
               <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: 4 }}>
@@ -1176,217 +708,6 @@ export function SettingsClient({
           </div>
         </div>
       </div>
-
-      {/* Add/Edit User Modal */}
-      {showUserModal && (
-        <div className="modal-backdrop" onClick={closeUserModal}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 className="modal-title">
-                {editingUser
-                  ? t('Edit User', 'အသုံးပြုသူပြင်ဆင်ရန်')
-                  : t('Add User', 'အသုံးပြုသူထည့်ရန်')}
-              </h2>
-              <button className="btn btn-ghost btn-icon" onClick={closeUserModal}>
-                <X size={16} strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="modal-body">
-              {/* Name */}
-              <div className="input-group">
-                <label className="input-label">{t('Name', 'အမည်')} *</label>
-                <input
-                  type="text"
-                  className={`input ${userFormErrors.name ? 'input-error' : ''}`}
-                  placeholder={t('Full name', 'နာမည်အပြည့်အစုံ')}
-                  value={userForm.name}
-                  onChange={(e) => handleUserFormChange('name', e.target.value)}
-                />
-                {userFormErrors.name && (
-                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                    {userFormErrors.name}
-                  </span>
-                )}
-              </div>
-
-              {/* Email */}
-              <div className="input-group">
-                <label className="input-label">{t('Email', 'အီးမေးလ်')} *</label>
-                <input
-                  type="email"
-                  className={`input ${userFormErrors.email ? 'input-error' : ''}`}
-                  placeholder="user@example.com"
-                  value={userForm.email}
-                  onChange={(e) => handleUserFormChange('email', e.target.value)}
-                />
-                {userFormErrors.email && (
-                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                    {userFormErrors.email}
-                  </span>
-                )}
-              </div>
-
-              {/* Password */}
-              <div className="input-group">
-                <label className="input-label">
-                  {t('Password', 'စကားဝှက်')} {editingUser ? '' : '*'}
-                </label>
-                <input
-                  type="password"
-                  className={`input ${userFormErrors.password ? 'input-error' : ''}`}
-                  placeholder={
-                    editingUser
-                      ? t('Leave blank to keep current', 'လက်ရှိအတိုင်းထားရန် ဗလာထားပါ')
-                      : t('Minimum 6 characters', 'အနည်းဆုံး ၆ လုံး')
-                  }
-                  value={userForm.password}
-                  onChange={(e) => handleUserFormChange('password', e.target.value)}
-                />
-                {userFormErrors.password && (
-                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                    {userFormErrors.password}
-                  </span>
-                )}
-              </div>
-
-              {/* Role */}
-              <div className="input-group">
-                <label className="input-label">{t('Role', 'ရာထူး')}</label>
-                <select
-                  className="input"
-                  value={userForm.role}
-                  onChange={(e) => handleUserFormChange('role', e.target.value)}
-                >
-                  {ROLES.map((role) => (
-                    <option key={role.value} value={role.value}>
-                      {t(role.value.toLowerCase())}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Phone */}
-              <div className="input-group">
-                <label className="input-label">{t('phone')}</label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="+95 9xxxxxxxx"
-                  value={userForm.phone}
-                  onChange={(e) => handleUserFormChange('phone', e.target.value)}
-                />
-              </div>
-
-              {/* Active Toggle */}
-              <div className="input-group">
-                <label
-                  className="input-label"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 'var(--space-sm)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={userForm.isActive}
-                    onChange={(e) => handleUserFormChange('isActive', e.target.checked)}
-                    style={{ width: 18, height: 18, accentColor: 'var(--primary)' }}
-                  />
-                  {t('Active', 'အသုံးပြုနေဆဲ')}
-                </label>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closeUserModal}>
-                {t('Cancel', 'ပယ်ဖျက်ရန်')}
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleSaveUser}
-                disabled={savingUser}
-              >
-                {savingUser
-                  ? t('Saving...', 'သိမ်းနေသည်...')
-                  : editingUser
-                    ? t('Update User', 'အသုံးပြုသူအပ်ဒိတ်ရန်')
-                    : t('Create User', 'အသုံးပြုသူဖန်တီးရန်')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete User Confirmation Modal */}
-      {deleteUserTarget && (
-        <div className="modal-backdrop" onClick={() => setDeleteUserTarget(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2 className="modal-title">
-                {t('Deactivate User', 'အသုံးပြုသူပိတ်ရန်')}
-              </h2>
-              <button
-                className="btn btn-ghost btn-icon"
-                onClick={() => setDeleteUserTarget(null)}
-              >
-                <X size={16} strokeWidth={1.75} />
-              </button>
-            </div>
-            <div className="modal-body">
-              <p>
-                {t(
-                  'Are you sure you want to deactivate this user?',
-                  'ဤအသုံးပြုသူကိုပိတ်ရန်သေချာပါသလား?'
-                )}
-              </p>
-              <div
-                style={{
-                  marginTop: 'var(--space-md)',
-                  padding: 'var(--space-md)',
-                  background: 'var(--bg-tertiary)',
-                  borderRadius: 'var(--radius-md)',
-                }}
-              >
-                <div style={{ fontWeight: 600 }}>{deleteUserTarget.name}</div>
-                <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
-                  {deleteUserTarget.email} — {getRoleLabel(deleteUserTarget.role)}
-                </div>
-              </div>
-              <p
-                style={{
-                  marginTop: 'var(--space-md)',
-                  fontSize: 'var(--text-sm)',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                {t(
-                  'The user will be deactivated but their data will be preserved.',
-                  'အသုံးပြုသူကိုပိတ်ထားမည်ဖြစ်သော်လည်း ၎င်းတို့၏ဒေတာကိုထိန်းသိမ်းထားမည်။'
-                )}
-              </p>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="btn btn-secondary"
-                onClick={() => setDeleteUserTarget(null)}
-              >
-                {t('Cancel', 'ပယ်ဖျက်ရန်')}
-              </button>
-              <button
-                className="btn btn-primary"
-                style={{ background: 'var(--danger)' }}
-                onClick={handleDeleteUser}
-                disabled={deletingUser}
-              >
-                {deletingUser
-                  ? t('Deactivating...', 'ပိတ်နေသည်...')
-                  : t('Deactivate', 'ပိတ်ရန်')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </>
   );
 }

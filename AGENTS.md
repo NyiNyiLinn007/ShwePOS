@@ -137,7 +137,12 @@
 | Path | Responsibility |
 | :--- | :--- |
 | `prisma/schema.prisma` | Database models: `User`, `Category`, `Product`, `Customer`, `Sale`, `SaleItem`, `SalePayment`, `Shift`, `CashDrawerMovement`, `SaleAdjustment`, `StockMovement`, `Expense`, `Settings`, `InvoiceCounter`, `RateLimitBucket`, `DataMigrationAudit` |
-| `src/lib/utils.ts` | Currency/quantity formatting (`formatCurrency`, `formatQuantity`, `isFractionalUnit`) & Myanmar `UTC+6:30` date/time utilities |
+| `src/services/saleService.ts` | Domain service for Sales listing, single sale lookup, atomic Checkout (`createSale` with invoice counter retry, stock deduction, split/credit/cash legs, loyalty points, drawer movements), and Partial/Full Refund & Void (`refundOrVoidSale`) |
+| `src/services/reportService.ts` | Domain service for Revenue, COGS, Gross Profit, Expenses, Net Profit, Myanmar daily/hourly sales buckets, top products, and category breakdown (`generateSalesAndProfitReport`) |
+| `src/lib/utils.ts` | Currency/quantity formatting (`formatCurrency`, `formatQuantity`, `isFractionalUnit`), expiry evaluation (`getExpiryInfo`), & Myanmar `UTC+6:30` date/time utilities |
+| `src/lib/image.ts` | Shared client-side `<canvas>` image compression (`resizeImageToDataUrl`) for product photos and shop logos |
+| `src/lib/barcode.ts` | Shared Code-128B barcode encoder (`encodeCode128BCodes`, `buildCode128Bars`) for SVG thermal sticker rendering |
+| `src/lib/saleHelpers.ts` | Shared Sale DTO interfaces, payment/status badge helpers, receipt data mapper (`buildReceiptDataFromSale`), and UTF-8 BOM CSV exporter (`downloadSalesCsv`) |
 | `src/lib/print.ts` | Dedicated hidden `<iframe>` print engine (`printElementById`) for 80mm/58mm receipts, Shift X/Z-Reports, and Barcode labels |
 | `src/lib/i18n.ts` | Bilingual (`EN` / `MM`) dictionary and `useI18n()` hook |
 | `src/lib/validations.ts` | Zod schemas for all API payloads |
@@ -147,12 +152,13 @@
 | `src/store/offlineQueueStore.ts` | Offline POS sale queue (`localStorage`) & automatic background sync when internet reconnects |
 | `src/components/pos/*` | `POSClient.tsx`, `ProductGrid.tsx`, `Cart.tsx`, `PaymentModal.tsx`, `Receipt.tsx` |
 | `src/components/shifts/ShiftClient.tsx` | Cashier shift open/close, Paid-In/Paid-Out drawer movements, 80mm/58mm Shift X-Report & Z-Report printing |
-| `src/components/sales/*` | `SalesClient.tsx` (filters, CSV export, 1-click reprint, void/refund modals) & `SaleDetailClient.tsx` |
-| `src/components/products/ProductsClient.tsx` | Product CRUD, fractional units, batch/expiry badges, client-side `<canvas>` image compression, Code-128B Barcode sticker printing |
+| `src/components/sales/*` | `SalesClient.tsx`, `SaleDetailClient.tsx`, `SaleQuickViewModal.tsx`, `SaleRefundModal.tsx` |
+| `src/components/products/*` | `ProductsClient.tsx`, `ProductFormModal.tsx`, `BarcodeStickerModal.tsx` |
 | `src/components/inventory/InventoryClient.tsx` | Stock In/Out/Adjustment/Return movements, low-stock & expiry alerts |
-| `src/components/customers/CustomersClient.tsx` | Customer CRUD, Loyalty points, Credit balance/limit, Debt repayment (`POST /api/customers/[id]/repay`) |
+| `src/components/customers/*` | `CustomersClient.tsx` & `CustomerModals.tsx` (Customer CRUD, Loyalty points, Credit balance/limit, Debt repayment) |
 | `src/components/reports/ReportsClient.tsx` | Revenue, Gross Profit, Expenses, Net Profit, payment breakdown, top products, hourly distribution |
-| `src/components/settings/SettingsClient.tsx` | Business info, compressed logo upload, tax/currency, Loyalty program settings, Excel Data Migration |
+| `src/components/settings/*` | `SettingsClient.tsx`, `UserManagementSection.tsx`, `DataMigrationSection.tsx` |
+| `src/__tests__/domain.test.ts` | Automated unit tests for Myanmar `UTC+6:30` timezone boundaries, currency/fractional quantities, shift cash drawer math, Code-128B barcode encoding, and POS cart discounts/tax/hold queue |
 
 ---
 
@@ -167,7 +173,10 @@ npm run i18n:audit
 # 2. Verify zero TypeScript compilation errors
 npm run lint
 
-# 3. Verify production Next.js build (when routes, types, or schema change)
+# 3. Run automated domain unit tests
+npm test
+
+# 4. Verify production Next.js build (when routes, types, or schema change)
 npx next build
 ```
 
@@ -191,3 +200,8 @@ npx next build
   - Added **Stock & 30-Day Expiry Alerts Widget** on Dashboard (`src/app/(dashboard)/page.tsx`, `src/components/dashboard/DashboardClient.tsx`).
   - Added PWA installability (`public/manifest.json`, `src/app/layout.tsx`, `src/proxy.ts`) and cleaned up `.gitignore`.
   - Created `AGENTS.md` as the self-updating project rules and architecture reference (Rules 1–14, including Enterprise Clean Code, SRP, DRY, Service Layer, Canonical DTOs, Error Handling, Unit Testing, and Semantic CSS rules).
+- **2026-11-11 — Enterprise Clean Code Architecture Refactoring:**
+  - **DRY Shared Domain Utilities (Rule 9):** Extracted `src/lib/image.ts` (`resizeImageToDataUrl`), `src/lib/barcode.ts` (`encodeCode128BCodes`, `buildCode128Bars`), `src/lib/saleHelpers.ts` (`getPaymentMethodLabel`, `getSaleStatusBadgeClass`, `getSaleStatusLabel`, `buildReceiptDataFromSale`, `downloadSalesCsv`), and `getExpiryInfo` in `src/lib/utils.ts`.
+  - **Thin API Route Controllers & Domain Service Layer (Rule 10):** Extracted `src/services/saleService.ts` and `src/services/reportService.ts`, reducing `src/app/api/sales/route.ts` (`617 -> 50 lines`), `src/app/api/sales/[id]/route.ts` (`362 -> 43 lines`), and `src/app/api/reports/route.ts` (`319 -> 17 lines`) into clean HTTP controllers.
+  - **SRP Component Modularization (Rule 8):** Decomposed monolithic `1,000+` line client components into focused sub-components: `ProductFormModal.tsx` & `BarcodeStickerModal.tsx` (`ProductsClient.tsx`: `1,393 -> 438 lines`), `UserManagementSection.tsx` & `DataMigrationSection.tsx` (`SettingsClient.tsx`: `1,392 -> 502 lines`), `SaleRefundModal.tsx` & `SaleQuickViewModal.tsx` (`SalesClient.tsx`: `1,192 -> 383 lines`, `SaleDetailClient.tsx`: `801 -> 399 lines`), and `CustomerModals.tsx` (`CustomersClient.tsx`: `1,134 -> 434 lines`).
+  - **Automated Domain Unit Tests (Rule 13):** Added `src/__tests__/domain.test.ts` (`npm test`) covering Myanmar `UTC+6:30` timezone boundaries, currency/fractional quantity formatting, product expiry evaluation, Shift `expectedCash` accounting, Code-128B barcode encoding, and POS cart discounts/tax/hold queue.
