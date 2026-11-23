@@ -22,7 +22,7 @@ export function SaleRefundModal({
   onClose,
   onSuccess,
 }: SaleRefundModalProps) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const { addToast } = useToast();
 
   const [refundMethod, setRefundMethod] = useState<'ORIGINAL' | 'CASH'>('ORIGINAL');
@@ -154,19 +154,22 @@ export function SaleRefundModal({
                         0,
                         Number(item.quantity) - Number(item.refundedQuantity || 0)
                       );
-                      const fractional = isFractionalUnit(item.product?.unit);
+                      const soldUnit = item.unitName || item.product?.unit || 'pcs';
+                      const fractional = isFractionalUnit(soldUnit);
                       return (
                         <tr key={item.id}>
                           <td>
                             <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                              {item.product?.name || 'Item'}
+                              {language === 'mm' && item.product?.nameMm
+                                ? item.product.nameMm
+                                : item.product?.name || 'Item'}
                             </div>
                             <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                              {formatCurrency(item.unitPrice)} / {item.product?.unit || 'pcs'}
+                              {formatCurrency(item.unitPrice)} / {soldUnit}
                             </div>
                           </td>
                           <td style={{ textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
-                            {formatQuantity(remaining, item.product?.unit)}
+                            {formatQuantity(remaining, soldUnit)} {soldUnit}
                           </td>
                           <td style={{ textAlign: 'right' }}>
                             <input
@@ -201,14 +204,26 @@ export function SaleRefundModal({
                 lineHeight: 1.6,
               }}
             >
-              {t('Are you sure you want to', 'သေချာပါသလား')}{' '}
-              {actionType === 'VOIDED' ? t('void', 'ပယ်ဖျက်') : t('refund', 'ပြန်အမ်း')}{' '}
-              {t('sale', 'အရောင်း')}{' '}
-              <strong style={{ color: 'var(--text-primary)' }}>{sale.invoiceNumber}</strong> for{' '}
-              <strong style={{ color: 'var(--primary)' }}>
-                {formatCurrency(sale.totalAmount)}
-              </strong>
-              ?
+              {language === 'mm' ? (
+                <>
+                  ဘောင်ချာ <strong style={{ color: 'var(--text-primary)' }}>{sale.invoiceNumber}</strong>{' '}
+                  (စုစုပေါင်း{' '}
+                  <strong style={{ color: 'var(--primary)' }}>
+                    {formatCurrency(sale.totalAmount)}
+                  </strong>
+                  ) ကို{' '}
+                  {actionType === 'VOIDED' ? 'ပယ်ဖျက်' : 'ပြန်အမ်း'}ရန် သေချာပါသလား?
+                </>
+              ) : (
+                <>
+                  Are you sure you want to {actionType === 'VOIDED' ? 'void' : 'refund'} sale{' '}
+                  <strong style={{ color: 'var(--text-primary)' }}>{sale.invoiceNumber}</strong> for{' '}
+                  <strong style={{ color: 'var(--primary)' }}>
+                    {formatCurrency(sale.totalAmount)}
+                  </strong>
+                  ?
+                </>
+              )}
             </p>
           )}
 

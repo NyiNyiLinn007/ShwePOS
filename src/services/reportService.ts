@@ -55,6 +55,7 @@ export async function generateSalesAndProfitReport(
           select: {
             quantity: true,
             refundedQuantity: true,
+            unitFactor: true,
             unitPrice: true,
             total: true,
             costPrice: true,
@@ -221,6 +222,7 @@ export async function generateSalesAndProfitReport(
       );
       if (netQty <= 0) continue;
       const ratio = toNumber(item.quantity) > 0 ? netQty / toNumber(item.quantity) : 1;
+      const baseUnits = netQty * (toNumber(item.unitFactor) || 1);
       const existing = productMap.get(item.product.id) || {
         id: item.product.id,
         name: item.product.name,
@@ -230,7 +232,7 @@ export async function generateSalesAndProfitReport(
         revenue: 0,
         cost: 0,
       };
-      existing.qtySold = Math.round((existing.qtySold + netQty) * 1000) / 1000;
+      existing.qtySold = Math.round((existing.qtySold + baseUnits) * 1000) / 1000;
       existing.revenue += toNumber(item.total) * ratio;
       existing.cost += toNumber(item.costPrice) * netQty;
       productMap.set(item.product.id, existing);
@@ -262,6 +264,7 @@ export async function generateSalesAndProfitReport(
       );
       if (netQty <= 0) continue;
       const ratio = toNumber(item.quantity) > 0 ? netQty / toNumber(item.quantity) : 1;
+      const baseUnits = netQty * (toNumber(item.unitFactor) || 1);
       const cat = item.product.category;
       const existing = categoryMap.get(cat.id) || {
         name: cat.name,
@@ -270,7 +273,7 @@ export async function generateSalesAndProfitReport(
         count: 0,
       };
       existing.revenue += toNumber(item.total) * ratio;
-      existing.count = Math.round((existing.count + netQty) * 1000) / 1000;
+      existing.count = Math.round((existing.count + baseUnits) * 1000) / 1000;
       categoryMap.set(cat.id, existing);
     }
   }

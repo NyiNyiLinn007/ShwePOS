@@ -1,10 +1,26 @@
 export const dynamic = 'force-dynamic';
 
 import { prisma } from '@/lib/prisma';
-import { getTodayRange, getLastNDayLabels, formatShortDate } from '@/lib/utils';
+import {
+  getTodayRange,
+  getLastNDayLabels,
+  formatShortDate,
+  getMyanmarDateParts,
+  parseMyanmarDateBoundary,
+  roundQuantity,
+} from '@/lib/utils';
 import { requirePageAuth } from '@/lib/pageAuth';
 import DashboardClient from '@/components/dashboard/DashboardClient';
 import { toNumber } from '@/lib/number';
+
+const ACTIVE_SALE_STATUSES = ['COMPLETED', 'PARTIALLY_REFUNDED'];
+
+function getMyanmarDaysAgoStart(daysAgo: number): Date {
+  const { year, month, day } = getMyanmarDateParts();
+  const target = new Date(Date.UTC(year, month, day - daysAgo));
+  const key = `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, '0')}-${String(target.getUTCDate()).padStart(2, '0')}`;
+  return parseMyanmarDateBoundary(key, false) ?? new Date(Date.now() - daysAgo * 86400_000);
+}
 
 export default async function DashboardPage() {
   const session = await requirePageAuth();
@@ -12,12 +28,12 @@ export default async function DashboardPage() {
   const saleScope = isCashier ? { userId: session.user.id } : {};
   const { start: todayStart, end: todayEnd } = getTodayRange();
 
-  // --- Fetch today's sales data ---
+  // --- Fetch today's active sales data (includes COMPLETED & PARTIALLY_REFUNDED) ---
   const todaySales = await prisma.sale.findMany({
     where: {
       ...saleScope,
       createdAt: { gte: todayStart, lte: todayEnd },
-      status: 'COMPLETED',
+      status: { in: ACTIVE_SALE_STATUSES },
     },
     include: {
       customer: { select: { name: true } },
@@ -92,56 +108,67 @@ export default async function DashboardPage() {
     createdAt: sale.createdAt.toISOString(),
   }));
 
-  // --- Top 5 selling products (all time for meaningful data, scoped to last 30 days) ---
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  thirtyDaysAgo.setHours(0, 0, 0, 0);
+  // --- Top 5 selling products (last 30 days in Myanmar UTC+6:30, net of refunds, base-unit qty) ---
+  const thirtyDaysAgo = getMyanmarDaysAgoStart(30);
 
-  const topProductsRaw = await prisma.saleItem.groupBy({
-    by: ['productId'],
+  const topSaleItems = await prisma.saleItem.findMany({
     where: {
       sale: {
         ...saleScope,
-        status: 'COMPLETED',
+        status: { in: ACTIVE_SALE_STATUSES },
         createdAt: { gte: thirtyDaysAgo },
       },
     },
-    _sum: {
+    select: {
+      productId: true,
       quantity: true,
+      refundedQuantity: true,
+      unitFactor: true,
       total: true,
+      product: { select: { name: true } },
     },
-    orderBy: {
-      _sum: { total: 'desc' },
-    },
-    take: 5,
   });
 
-  // Fetch product names for the top products
-  const topProductIds = topProductsRaw.map((tp) => tp.productId);
-  const productNames = await prisma.product.findMany({
-    where: { id: { in: topProductIds } },
-    select: { id: true, name: true },
-  });
-  const productNameMap = new Map(productNames.map((p) => [p.id, p.name]));
+  const topProductAgg = new Map<
+    string,
+    { productId: string; productName: string; totalQuantity: number; totalRevenue: number }
+  >();
+  for (const item of topSaleItems) {
+    const origQty = toNumber(item.quantity);
+    const netQty = Math.max(0, origQty - toNumber(item.refundedQuantity));
+    if (netQty <= 0) continue;
+    const ratio = origQty > 0 ? netQty / origQty : 1;
+    const baseUnits = roundQuantity(netQty * (toNumber(item.unitFactor) || 1));
+    const netRevenue = toNumber(item.total) * ratio;
 
-  const topProducts = topProductsRaw.map((tp) => ({
-    productId: tp.productId,
-    productName: productNameMap.get(tp.productId) ?? 'Unknown Product',
-    totalQuantity: toNumber(tp._sum.quantity),
-    totalRevenue: toNumber(tp._sum.total),
-  }));
+    const existing = topProductAgg.get(item.productId) ?? {
+      productId: item.productId,
+      productName: item.product?.name ?? 'Unknown Product',
+      totalQuantity: 0,
+      totalRevenue: 0,
+    };
+    existing.totalQuantity = roundQuantity(existing.totalQuantity + baseUnits);
+    existing.totalRevenue += netRevenue;
+    topProductAgg.set(item.productId, existing);
+  }
 
-  // --- Sales chart data (last 7 days) ---
+  const topProducts = Array.from(topProductAgg.values())
+    .map((tp) => ({
+      ...tp,
+      totalRevenue: Math.round(tp.totalRevenue),
+    }))
+    .sort((a, b) => b.totalRevenue - a.totalRevenue)
+    .slice(0, 5);
+
+  // --- Sales chart data (last 7 days in Myanmar UTC+6:30) ---
   const dayLabels = getLastNDayLabels(7);
-  const sevenDaysAgo = new Date();
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
-  sevenDaysAgo.setHours(0, 0, 0, 0);
+  const sevenDaysAgo = getMyanmarDaysAgoStart(6);
 
   const last7DaysSales = await prisma.sale.findMany({
     where: {
       ...saleScope,
       createdAt: { gte: sevenDaysAgo },
-      status: 'COMPLETED',
+      status: { in: ACTIVE_SALE_STATUSES },
     },
     select: {
       totalAmount: true,

@@ -1,104 +1,46 @@
 import readXlsxFile from 'read-excel-file/node';
-import writeXlsxFile, { type SheetData } from 'write-excel-file/node';
 import bcrypt from 'bcryptjs';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import {
+  ADJUSTMENT_TYPES,
+  CASH_MOVEMENT_TYPES,
+  DATA_MIGRATION_SHEETS,
+  DataMigrationError,
+  INSTRUCTIONS_SHEET,
+  MOVEMENT_TYPES,
+  PAYMENT_METHODS,
+  PAYMENT_STATUSES,
+  PRODUCT_UNITS,
+  PURCHASE_PAYMENT_METHODS,
+  PURCHASE_STATUSES,
+  REVERSAL_STATUSES,
+  SALE_PAYMENT_METHODS,
+  SALE_PAYMENT_TYPES,
+  SALE_STATUSES,
+  SHIFT_STATUSES,
+  SUPPLIER_PAYMENT_METHODS,
+  USER_ROLES,
+  type MigrationRows,
+  type MigrationSheetName,
+} from '@/lib/dataMigrationSchema';
+import {
+  createDataMigrationWorkbook,
+  workbookBuffer,
+  type MigrationWorkbook,
+} from '@/lib/dataMigrationWorkbook';
 
-export const DATA_MIGRATION_SHEETS = {
-  Users: {
-    headers: ['id', 'name', 'email', 'password', 'role', 'phone', 'isActive', 'sessionVersion', 'lastLoginAt', 'createdAt', 'updatedAt'],
-    required: ['name', 'email'],
-    description: 'System users. Password is not exported. Existing users keep their current password; new users require a strong password.',
-  },
-  Categories: {
-    headers: ['id', 'name', 'nameMm', 'description', 'slug', 'isActive', 'createdAt'],
-    required: ['name', 'slug'],
-    description: 'Product categories. Products can refer to category id, slug, or name.',
-  },
-  Products: {
-    headers: ['id', 'name', 'nameMm', 'sku', 'barcode', 'categoryId', 'costPrice', 'sellingPrice', 'stockQuantity', 'lowStockThreshold', 'unit', 'imageUrl', 'isActive', 'createdAt', 'updatedAt'],
-    required: ['name', 'sku', 'categoryId'],
-    description: 'Products. categoryId accepts a category id, slug, or exact name.',
-  },
-  Customers: {
-    headers: ['id', 'name', 'phone', 'email', 'address', 'totalPurchases', 'loyaltyPoints', 'createdAt', 'updatedAt'],
-    required: ['name'],
-    description: 'Customers. Phone is used as the unique key when id is blank.',
-  },
-  Sales: {
-    headers: ['id', 'invoiceNumber', 'clientSaleId', 'customerId', 'userId', 'subtotal', 'discountAmount', 'taxAmount', 'totalAmount', 'paidAmount', 'changeAmount', 'paymentMethod', 'paymentStatus', 'paymentReference', 'paymentProviderResponse', 'status', 'notes', 'createdAt'],
-    required: ['invoiceNumber', 'userId'],
-    description: 'Sales. userId accepts a user id or email; customerId accepts a customer id or phone.',
-  },
-  SaleItems: {
-    headers: ['id', 'saleId', 'productId', 'quantity', 'unitPrice', 'costPrice', 'discount', 'total'],
-    required: ['saleId', 'productId', 'quantity'],
-    description: 'Sale line items. saleId accepts a sale id or invoice number; productId accepts a product id or SKU.',
-  },
-  StockMovements: {
-    headers: ['id', 'productId', 'userId', 'saleId', 'quantity', 'type', 'reason', 'previousStock', 'newStock', 'createdAt'],
-    required: ['productId', 'userId', 'quantity', 'type', 'previousStock', 'newStock'],
-    description: 'Inventory movement history. Importing this sheet does not recalculate product stock.',
-  },
-  Expenses: {
-    headers: ['id', 'category', 'amount', 'description', 'userId', 'date', 'createdAt'],
-    required: ['category', 'amount', 'userId'],
-    description: 'Expenses. userId accepts a user id or email.',
-  },
-  Shifts: {
-    headers: ['id', 'userId', 'openingCash', 'closingCash', 'expectedCash', 'actualCash', 'variance', 'status', 'openedAt', 'closedAt', 'notes'],
-    required: ['userId', 'openingCash', 'status', 'openedAt'],
-    description: 'Cashier shifts. userId accepts a user id or email.',
-  },
-  CashDrawerMovements: {
-    headers: ['id', 'shiftId', 'saleId', 'expenseId', 'userId', 'type', 'amount', 'reason', 'createdAt'],
-    required: ['userId', 'type', 'amount'],
-    description: 'Cash drawer movements. saleId accepts a sale id or invoice number.',
-  },
-  SaleAdjustments: {
-    headers: ['id', 'saleId', 'approverUserId', 'type', 'reason', 'amount', 'paymentMethod', 'paymentReversalStatus', 'createdAt'],
-    required: ['saleId', 'approverUserId', 'type', 'reason', 'amount', 'paymentMethod'],
-    description: 'Sale refunds and void adjustments. saleId accepts a sale id or invoice number.',
-  },
-  Settings: {
-    headers: ['id', 'businessName', 'businessNameMm', 'address', 'phone', 'email', 'taxRate', 'currencySymbol', 'logo', 'receiptFooter'],
-    required: ['businessName', 'taxRate', 'currencySymbol'],
-    description: 'Business settings. The default settings row uses id = default.',
-  },
-  InvoiceCounters: {
-    headers: ['date', 'counter'],
-    required: ['date', 'counter'],
-    description: 'Invoice number counters. date format is YYYYMMDD.',
-  },
-} as const;
+export {
+  DATA_MIGRATION_SHEETS,
+  DataMigrationError,
+  createDataMigrationWorkbook,
+  workbookBuffer,
+  type MigrationRows,
+  type MigrationSheetName,
+  type MigrationWorkbook,
+};
 
-export type MigrationSheetName = keyof typeof DATA_MIGRATION_SHEETS;
-export type MigrationRows = Partial<Record<MigrationSheetName, Record<string, unknown>[]>>;
-
-export class DataMigrationError extends Error {
-  status = 400;
-  details?: Array<{ sheet?: string; row?: number; message: string }>;
-
-  constructor(message: string, details?: DataMigrationError['details']) {
-    super(message);
-    this.name = 'DataMigrationError';
-    this.details = details;
-  }
-}
-
-const INSTRUCTIONS_SHEET = 'Instructions';
 const MAX_IMPORT_ROWS = 100_000;
 const MAX_IMPORT_COLUMNS = 64;
-
-const USER_ROLES = new Set(['ADMIN', 'MANAGER', 'CASHIER']);
-const PAYMENT_METHODS = new Set(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT', 'SPLIT']);
-const PAYMENT_STATUSES = new Set(['PAID', 'PARTIAL', 'PENDING', 'FAILED', 'REVERSED']);
-const SALE_STATUSES = new Set(['COMPLETED', 'PARTIALLY_REFUNDED', 'REFUNDED', 'VOIDED']);
-const MOVEMENT_TYPES = new Set(['IN', 'OUT', 'ADJUSTMENT', 'RETURN']);
-const SHIFT_STATUSES = new Set(['OPEN', 'CLOSED']);
-const CASH_MOVEMENT_TYPES = new Set(['OPENING', 'CASH_SALE', 'REFUND', 'VOID', 'PAID_IN', 'PAID_OUT', 'CLOSING']);
-const ADJUSTMENT_TYPES = new Set(['REFUND', 'PARTIAL_REFUND', 'VOID']);
-const REVERSAL_STATUSES = new Set(['PENDING', 'COMPLETED', 'FAILED', 'NOT_REQUIRED']);
-const PRODUCT_UNITS = new Set(['pcs', 'kg', 'g', 'liter', 'ml', 'pack', 'box', 'bottle', 'dozen', 'set']);
 const MAX_MIGRATION_MONEY = 1_000_000_000_000;
 const MAX_MIGRATION_INTEGER = 1_000_000_000;
 const MAX_XLSX_ENTRIES = 2_000;
@@ -162,6 +104,8 @@ export function validateXlsxContainer(buffer: Buffer): void {
   }
 }
 
+/* ---------- Cell Parsing & Validation Helpers ---------- */
+
 function isBlank(value: unknown): boolean {
   return value === null || value === undefined || (typeof value === 'string' && value.trim() === '');
 }
@@ -169,12 +113,16 @@ function isBlank(value: unknown): boolean {
 function stringValue(value: unknown): string | null {
   if (isBlank(value)) return null;
   const text = String(value).trim();
-  // Excel commonly prefixes formula-like text with an apostrophe. Remove only
-  // the protection marker we add on export, never arbitrary user apostrophes.
+  // Remove only the leading apostrophe protection marker we add on export.
   return /^'[=+\-@]/.test(text) ? text.slice(1) : text;
 }
 
-function requiredString(row: Record<string, unknown>, field: string, sheet: string, rowNumber: number): string {
+function requiredString(
+  row: Record<string, unknown>,
+  field: string,
+  sheet: string,
+  rowNumber: number
+): string {
   const value = stringValue(row[field]);
   if (!value) {
     throw new DataMigrationError(`Missing required value: ${field}`, [
@@ -182,6 +130,10 @@ function requiredString(row: Record<string, unknown>, field: string, sheet: stri
     ]);
   }
   return value;
+}
+
+function migrationError(field: string, message: string, sheet: string, rowNumber: number): never {
+  throw new DataMigrationError(`Invalid ${field}`, [{ sheet, row: rowNumber, message }]);
 }
 
 function numberValue(
@@ -232,12 +184,6 @@ function integerValue(
   return value;
 }
 
-function migrationError(field: string, message: string, sheet: string, rowNumber: number): never {
-  throw new DataMigrationError(`Invalid ${field}`, [
-    { sheet, row: rowNumber, message },
-  ]);
-}
-
 function nonNegativeNumberValue(
   row: Record<string, unknown>,
   field: string,
@@ -246,7 +192,9 @@ function nonNegativeNumberValue(
   required = false
 ): number | null {
   const value = numberValue(row, field, sheet, rowNumber, required);
-  if (value !== null && value < 0) migrationError(field, `${field} cannot be negative`, sheet, rowNumber);
+  if (value !== null && value < 0) {
+    migrationError(field, `${field} cannot be negative`, sheet, rowNumber);
+  }
   return value;
 }
 
@@ -258,7 +206,9 @@ function positiveNumberValue(
   required = false
 ): number | null {
   const value = numberValue(row, field, sheet, rowNumber, required);
-  if (value !== null && value <= 0) migrationError(field, `${field} must be positive`, sheet, rowNumber);
+  if (value !== null && value <= 0) {
+    migrationError(field, `${field} must be positive`, sheet, rowNumber);
+  }
   return value;
 }
 
@@ -270,19 +220,9 @@ function nonNegativeIntegerValue(
   required = false
 ): number | null {
   const value = integerValue(row, field, sheet, rowNumber, required);
-  if (value !== null && value < 0) migrationError(field, `${field} cannot be negative`, sheet, rowNumber);
-  return value;
-}
-
-function positiveIntegerValue(
-  row: Record<string, unknown>,
-  field: string,
-  sheet: string,
-  rowNumber: number,
-  required = false
-): number | null {
-  const value = integerValue(row, field, sheet, rowNumber, required);
-  if (value !== null && value <= 0) migrationError(field, `${field} must be positive`, sheet, rowNumber);
+  if (value !== null && value < 0) {
+    migrationError(field, `${field} cannot be negative`, sheet, rowNumber);
+  }
   return value;
 }
 
@@ -296,7 +236,12 @@ function enumValue(
 ): string {
   const value = stringValue(row[field]) || defaultValue;
   if (!value || !allowed.has(value)) {
-    migrationError(field, `${field} must be one of: ${Array.from(allowed).join(', ')}`, sheet, rowNumber);
+    migrationError(
+      field,
+      `${field} must be one of: ${Array.from(allowed).join(', ')}`,
+      sheet,
+      rowNumber
+    );
   }
   return value;
 }
@@ -364,10 +309,6 @@ function dateValue(
   return value;
 }
 
-function nullableString(row: Record<string, unknown>, field: string): string | null {
-  return stringValue(row[field]);
-}
-
 function inputId(row: Record<string, unknown>): string | null {
   return stringValue(row.id);
 }
@@ -376,20 +317,15 @@ function isEmptyRow(row: Record<string, unknown>): boolean {
   return Object.values(row).every(isBlank);
 }
 
-type SpreadsheetCell = string | number | boolean | Date | null;
-type MigrationWorkbook = Array<{
-  data: SheetData;
-  sheet: string;
-  columns: Array<{ width: number }>;
-  stickyRowsCount?: number;
-  dateFormat?: string;
-}>;
+/* ---------- Workbook Parser (Backward Compatible with Legacy Exports) ---------- */
 
-function workbookRows(workbook: Array<{ sheet: string; data: Array<Array<unknown>> }>): MigrationRows {
+function workbookRows(
+  workbook: Array<{ sheet: string; data: Array<Array<unknown>> }>
+): MigrationRows {
   const knownNames = new Set<string>(Object.keys(DATA_MIGRATION_SHEETS));
-  const unknownSheets = workbook.map(({ sheet }) => sheet).filter(
-    (name) => name !== INSTRUCTIONS_SHEET && !knownNames.has(name)
-  );
+  const unknownSheets = workbook
+    .map(({ sheet }) => sheet)
+    .filter((name) => name !== INSTRUCTIONS_SHEET && !knownNames.has(name));
   if (unknownSheets.length > 0) {
     throw new DataMigrationError(`Unsupported sheet(s): ${unknownSheets.join(', ')}`);
   }
@@ -402,16 +338,28 @@ function workbookRows(workbook: Array<{ sheet: string; data: Array<Array<unknown
     const definition = DATA_MIGRATION_SHEETS[sheetName as MigrationSheetName];
 
     if (matrix.length === 0) continue;
-    const headerRow = (matrix[0] ?? []).map((value) => String(value ?? '').trim().replace(/^\uFEFF/, ''));
+    const headerRow = (matrix[0] ?? []).map((value) =>
+      String(value ?? '')
+        .trim()
+        .replace(/^\uFEFF/, '')
+    );
     if (headerRow.length > MAX_IMPORT_COLUMNS) {
-      throw new DataMigrationError(`A sheet cannot contain more than ${MAX_IMPORT_COLUMNS} columns`, [
-        { sheet: sheetName, row: 1, message: 'Too many columns' },
-      ]);
+      throw new DataMigrationError(
+        `A sheet cannot contain more than ${MAX_IMPORT_COLUMNS} columns`,
+        [{ sheet: sheetName, row: 1, message: 'Too many columns' }]
+      );
     }
-    const missingHeaders = definition.headers.filter((header) => !headerRow.includes(header));
-    if (missingHeaders.length > 0) {
+
+    // Require only mandatory columns so legacy v1 exports without newer optional
+    // columns (e.g. batchNumber, creditLimit, unitFactor) remain 100% importable.
+    const missingRequired = definition.required.filter((header) => !headerRow.includes(header));
+    if (missingRequired.length > 0) {
       throw new DataMigrationError(`Invalid ${sheetName} sheet headers`, [
-        { sheet: sheetName, row: 1, message: `Missing columns: ${missingHeaders.join(', ')}` },
+        {
+          sheet: sheetName,
+          row: 1,
+          message: `Missing required columns: ${missingRequired.join(', ')}`,
+        },
       ]);
     }
 
@@ -429,7 +377,9 @@ function workbookRows(workbook: Array<{ sheet: string; data: Array<Array<unknown
     }
 
     if (totalRows > MAX_IMPORT_ROWS) {
-      throw new DataMigrationError(`Import is limited to ${MAX_IMPORT_ROWS.toLocaleString()} rows`);
+      throw new DataMigrationError(
+        `Import is limited to ${MAX_IMPORT_ROWS.toLocaleString()} rows`
+      );
     }
     result[sheetName as MigrationSheetName] = rows;
   }
@@ -444,80 +394,16 @@ function workbookRows(workbook: Array<{ sheet: string; data: Array<Array<unknown
 export async function parseDataMigrationWorkbook(buffer: Buffer): Promise<MigrationRows> {
   try {
     const workbook = await readXlsxFile(buffer);
-    return workbookRows(workbook as unknown as Array<{ sheet: string; data: Array<Array<unknown>> }>);
+    return workbookRows(
+      workbook as unknown as Array<{ sheet: string; data: Array<Array<unknown>> }>
+    );
   } catch (error) {
     if (error instanceof DataMigrationError) throw error;
     throw new DataMigrationError('The uploaded file is not a readable Excel workbook');
   }
 }
 
-function exportValue(value: unknown): SpreadsheetCell {
-  if (value === null || value === undefined) return null;
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'object' && 'toNumber' in value && typeof (value as { toNumber?: unknown }).toNumber === 'function') {
-    return (value as { toNumber: () => number }).toNumber();
-  }
-  if (typeof value === 'string') {
-    // Prevent spreadsheet formula injection when data originated from users.
-    return /^[=+\-@]/.test(value) ? `'${value}` : value;
-  }
-  if (typeof value === 'number' || typeof value === 'boolean') return value;
-  return String(value);
-}
-
-function rowsForSheet(rows: unknown[], headers: readonly string[]): Array<Array<SpreadsheetCell>> {
-  return rows.map((row) => headers.map((header) => exportValue((row as Record<string, unknown>)[header])));
-}
-
-export function createDataMigrationWorkbook(data: MigrationRows = {}): MigrationWorkbook {
-  const workbook: MigrationWorkbook = [];
-  const instructions = [
-    ['ShwePOS Data Migration Workbook'],
-    ['How to use'],
-    ['1. For a new migration, download the template, fill the data sheets, and keep the column names unchanged.'],
-    ['2. For a complete backup/migration, use Export All Data and import that workbook into another ShwePOS database.'],
-    ['3. Blank id cells are allowed for new records. Existing ids can be kept to update/migrate the same records.'],
-    ['4. Relation fields accept ids and selected natural keys (category slug/name, product SKU, invoice number, user email).'],
-    ['5. Import is additive/upsert. It does not delete records that are not included in the workbook.'],
-    ['6. Users: password is blank in exports. Existing users keep their current password; enter a password only for a new user.'],
-    ['7. Do not place passwords, payment secrets, or other sensitive data in this workbook.'],
-    [],
-    ['Sheet', 'Required fields', 'Notes'],
-    ...Object.entries(DATA_MIGRATION_SHEETS).map(([name, definition]) => [
-      name,
-      definition.required.join(', '),
-      definition.description,
-    ]),
-  ];
-  workbook.push({
-    data: instructions,
-    sheet: INSTRUCTIONS_SHEET,
-    columns: [{ width: 24 }, { width: 42 }, { width: 110 }],
-    stickyRowsCount: 1,
-  });
-
-  for (const [sheetName, definition] of Object.entries(DATA_MIGRATION_SHEETS)) {
-    const rows = data[sheetName as MigrationSheetName] ?? [];
-    workbook.push({
-      data: [
-        [...definition.headers],
-        ...rowsForSheet(rows, definition.headers),
-      ],
-      sheet: sheetName,
-      columns: definition.headers.map((header) => ({
-        width: Math.min(34, Math.max(14, header.length + 3)),
-      })),
-      stickyRowsCount: 1,
-      dateFormat: 'yyyy-mm-dd hh:mm:ss',
-    });
-  }
-
-  return workbook;
-}
-
-export async function workbookBuffer(workbook: MigrationWorkbook): Promise<Buffer> {
-  return writeXlsxFile(workbook).toBuffer();
-}
+/* ---------- Natural-Key Resolution Maps ---------- */
 
 type ImportClient = Prisma.TransactionClient;
 
@@ -531,6 +417,10 @@ interface ImportMaps {
   productsBySku: Map<string, string>;
   customersById: Map<string, string>;
   customersByPhone: Map<string, string>;
+  suppliersById: Map<string, string>;
+  suppliersByName: Map<string, string>;
+  purchaseOrdersById: Map<string, string>;
+  purchaseOrdersByPoNumber: Map<string, string>;
   salesById: Map<string, string>;
   salesByInvoice: Map<string, string>;
   expensesById: Map<string, string>;
@@ -548,6 +438,10 @@ function createImportMaps(): ImportMaps {
     productsBySku: new Map(),
     customersById: new Map(),
     customersByPhone: new Map(),
+    suppliersById: new Map(),
+    suppliersByName: new Map(),
+    purchaseOrdersById: new Map(),
+    purchaseOrdersByPoNumber: new Map(),
     salesById: new Map(),
     salesByInvoice: new Map(),
     expensesById: new Map(),
@@ -561,7 +455,17 @@ function relationError(field: string, value: string, sheet: string, row: number)
   ]);
 }
 
-async function resolveUser(tx: ImportClient, raw: unknown, maps: ImportMaps, sheet: string, row: number): Promise<string> {
+function track(map: Map<string, string>, input: string | null, actual: string): void {
+  if (input) map.set(input, actual);
+}
+
+async function resolveUser(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
   const value = stringValue(raw);
   if (!value) return relationError('userId', '', sheet, row);
   const byMap = maps.usersById.get(value) ?? maps.usersByEmail.get(value.toLowerCase());
@@ -573,10 +477,19 @@ async function resolveUser(tx: ImportClient, raw: unknown, maps: ImportMaps, she
   return user.id;
 }
 
-async function resolveCategory(tx: ImportClient, raw: unknown, maps: ImportMaps, sheet: string, row: number): Promise<string> {
+async function resolveCategory(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
   const value = stringValue(raw);
   if (!value) return relationError('categoryId', '', sheet, row);
-  const byMap = maps.categoriesById.get(value) ?? maps.categoriesBySlug.get(value) ?? maps.categoriesByName.get(value);
+  const byMap =
+    maps.categoriesById.get(value) ??
+    maps.categoriesBySlug.get(value) ??
+    maps.categoriesByName.get(value);
   if (byMap) return byMap;
   const category = await tx.category.findFirst({
     where: { OR: [{ id: value }, { slug: value }, { name: value }] },
@@ -586,7 +499,13 @@ async function resolveCategory(tx: ImportClient, raw: unknown, maps: ImportMaps,
   return category.id;
 }
 
-async function resolveProduct(tx: ImportClient, raw: unknown, maps: ImportMaps, sheet: string, row: number): Promise<string> {
+async function resolveProduct(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
   const value = stringValue(raw);
   if (!value) return relationError('productId', '', sheet, row);
   const byMap = maps.productsById.get(value) ?? maps.productsBySku.get(value);
@@ -599,7 +518,13 @@ async function resolveProduct(tx: ImportClient, raw: unknown, maps: ImportMaps, 
   return product.id;
 }
 
-async function resolveCustomer(tx: ImportClient, raw: unknown, maps: ImportMaps, sheet: string, row: number): Promise<string> {
+async function resolveCustomer(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
   const value = stringValue(raw);
   if (!value) return relationError('customerId', '', sheet, row);
   const byMap = maps.customersById.get(value) ?? maps.customersByPhone.get(value);
@@ -612,7 +537,52 @@ async function resolveCustomer(tx: ImportClient, raw: unknown, maps: ImportMaps,
   return customer.id;
 }
 
-async function resolveSale(tx: ImportClient, raw: unknown, maps: ImportMaps, sheet: string, row: number): Promise<string> {
+async function resolveSupplier(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
+  const value = stringValue(raw);
+  if (!value) return relationError('supplierId', '', sheet, row);
+  const byMap = maps.suppliersById.get(value) ?? maps.suppliersByName.get(value.toLowerCase());
+  if (byMap) return byMap;
+  const supplier = await tx.supplier.findFirst({
+    where: { OR: [{ id: value }, { name: value }] },
+    select: { id: true },
+  });
+  if (!supplier) return relationError('supplierId', value, sheet, row);
+  return supplier.id;
+}
+
+async function resolvePurchaseOrder(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
+  const value = stringValue(raw);
+  if (!value) return relationError('purchaseOrderId', '', sheet, row);
+  const byMap =
+    maps.purchaseOrdersById.get(value) ?? maps.purchaseOrdersByPoNumber.get(value);
+  if (byMap) return byMap;
+  const po = await tx.purchaseOrder.findFirst({
+    where: { OR: [{ id: value }, { poNumber: value }] },
+    select: { id: true },
+  });
+  if (!po) return relationError('purchaseOrderId', value, sheet, row);
+  return po.id;
+}
+
+async function resolveSale(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
   const value = stringValue(raw);
   if (!value) return relationError('saleId', '', sheet, row);
   const byMap = maps.salesById.get(value) ?? maps.salesByInvoice.get(value);
@@ -625,7 +595,13 @@ async function resolveSale(tx: ImportClient, raw: unknown, maps: ImportMaps, she
   return sale.id;
 }
 
-async function resolveShift(tx: ImportClient, raw: unknown, maps: ImportMaps, sheet: string, row: number): Promise<string> {
+async function resolveShift(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
   const value = stringValue(raw);
   if (!value) return relationError('shiftId', '', sheet, row);
   const byMap = maps.shiftsById.get(value);
@@ -635,7 +611,13 @@ async function resolveShift(tx: ImportClient, raw: unknown, maps: ImportMaps, sh
   return shift.id;
 }
 
-async function resolveExpense(tx: ImportClient, raw: unknown, maps: ImportMaps, sheet: string, row: number): Promise<string> {
+async function resolveExpense(
+  tx: ImportClient,
+  raw: unknown,
+  maps: ImportMaps,
+  sheet: string,
+  row: number
+): Promise<string> {
   const value = stringValue(raw);
   if (!value) return relationError('expenseId', '', sheet, row);
   const byMap = maps.expensesById.get(value);
@@ -645,21 +627,12 @@ async function resolveExpense(tx: ImportClient, raw: unknown, maps: ImportMaps, 
   return expense.id;
 }
 
-function optionalDecimal(value: number | null): number | null {
-  return value === null ? null : value;
-}
-
-function signedMoneyValue(
-  row: Record<string, unknown>,
+function assertEmail(
+  value: string | null,
   field: string,
   sheet: string,
-  rowNumber: number,
-  required = false
-): number | null {
-  return numberValue(row, field, sheet, rowNumber, required);
-}
-
-function assertEmail(value: string | null, field: string, sheet: string, rowNumber: number): string | null {
+  rowNumber: number
+): string | null {
   if (value && (!/^\S+@\S+\.\S+$/.test(value) || value.length > 200)) {
     migrationError(field, 'email must be a valid address', sheet, rowNumber);
   }
@@ -673,26 +646,41 @@ function assertMoneyBalance(
   totalAmount: number,
   paidAmount: number,
   changeAmount: number,
+  status: string,
   sheet: string,
   rowNumber: number
 ): void {
-  if (discountAmount > subtotal) migrationError('discountAmount', 'discount cannot exceed subtotal', sheet, rowNumber);
-  const expectedTotal = Math.round((subtotal - discountAmount + taxAmount) * 100) / 100;
-  if (Math.abs(totalAmount - expectedTotal) > 0.01) {
-    migrationError('totalAmount', 'totalAmount must equal subtotal - discountAmount + taxAmount', sheet, rowNumber);
+  if (discountAmount > subtotal + 0.01) {
+    migrationError('discountAmount', 'discount cannot exceed subtotal', sheet, rowNumber);
   }
-  if (changeAmount > paidAmount) migrationError('changeAmount', 'changeAmount cannot exceed paidAmount', sheet, rowNumber);
+  // Partially refunded sales may have a reduced totalAmount while preserving original subtotal/discount
+  if (status !== 'PARTIALLY_REFUNDED') {
+    const expectedTotal = Math.round((subtotal - discountAmount + taxAmount) * 100) / 100;
+    if (Math.abs(totalAmount - expectedTotal) > 0.01) {
+      migrationError(
+        'totalAmount',
+        'totalAmount must equal subtotal - discountAmount + taxAmount',
+        sheet,
+        rowNumber
+      );
+    }
+  }
+  if (changeAmount > paidAmount + 0.01) {
+    migrationError('changeAmount', 'changeAmount cannot exceed paidAmount', sheet, rowNumber);
+  }
 }
 
 function passwordIsHash(value: string): boolean {
   return /^\$2[aby]\$\d{2}\$/.test(value);
 }
 
-function track(map: Map<string, string>, input: string | null, actual: string): void {
-  if (input) map.set(input, actual);
-}
+/* ---------- Per-Sheet Importers ---------- */
 
-async function importUsers(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
+async function importUsers(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -703,22 +691,30 @@ async function importUsers(tx: ImportClient, rows: Record<string, unknown>[], ma
       migrationError('email', 'email must be a valid address', 'Users', rowNumber);
     }
     const password = boundedString(row, 'password', 'Users', rowNumber, 256);
-    const existing = (id
-      ? await tx.user.findUnique({ where: { id }, select: { id: true, password: true } })
-      : null) ?? await tx.user.findUnique({ where: { email }, select: { id: true, password: true } });
+    const existing =
+      (id ? await tx.user.findUnique({ where: { id }, select: { id: true, password: true } }) : null) ??
+      (await tx.user.findUnique({ where: { email }, select: { id: true, password: true } }));
     if (!existing && !password) {
       migrationError('password', 'password is required for a new user', 'Users', rowNumber);
     }
     if (password && !passwordIsHash(password) && !/^(?=.*[A-Za-z])(?=.*\d).{8,256}$/.test(password)) {
-      migrationError('password', 'plain passwords must be 8-256 characters and contain a letter and number', 'Users', rowNumber);
+      migrationError(
+        'password',
+        'plain passwords must be 8-256 characters and contain a letter and number',
+        'Users',
+        rowNumber
+      );
     }
     if (password && passwordIsHash(password) && !/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(password)) {
       migrationError('password', 'password hash is not a valid bcrypt hash', 'Users', rowNumber);
     }
     const hashedPassword = password
-      ? (passwordIsHash(password) ? password : await bcrypt.hash(password, 10))
+      ? passwordIsHash(password)
+        ? password
+        : await bcrypt.hash(password, 10)
       : existing?.password;
     if (!hashedPassword) migrationError('password', 'password is required', 'Users', rowNumber);
+
     const data = {
       name,
       email,
@@ -742,16 +738,20 @@ async function importUsers(tx: ImportClient, rows: Record<string, unknown>[], ma
   return rows.length;
 }
 
-async function importCategories(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
+async function importCategories(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
     const id = inputId(row);
     const name = boundedString(row, 'name', 'Categories', rowNumber, 100, true) as string;
     const slug = boundedString(row, 'slug', 'Categories', rowNumber, 100, true) as string;
-    const existing = (id
-      ? await tx.category.findUnique({ where: { id }, select: { id: true } })
-      : null) ?? await tx.category.findUnique({ where: { slug }, select: { id: true } });
+    const existing =
+      (id ? await tx.category.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.category.findUnique({ where: { slug }, select: { id: true } }));
     const data = {
       name,
       nameMm: boundedString(row, 'nameMm', 'Categories', rowNumber, 100),
@@ -770,38 +770,11 @@ async function importCategories(tx: ImportClient, rows: Record<string, unknown>[
   return rows.length;
 }
 
-async function importCustomers(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    const rowNumber = index + 2;
-    const id = inputId(row);
-    const name = boundedString(row, 'name', 'Customers', rowNumber, 200, true) as string;
-    const phone = boundedString(row, 'phone', 'Customers', rowNumber, 20);
-    const existing = (id
-      ? await tx.customer.findUnique({ where: { id }, select: { id: true } })
-      : null) ?? (phone
-        ? await tx.customer.findUnique({ where: { phone }, select: { id: true } })
-        : null);
-    const data = {
-      name,
-      phone,
-      email: assertEmail(boundedString(row, 'email', 'Customers', rowNumber, 200), 'email', 'Customers', rowNumber),
-      address: boundedString(row, 'address', 'Customers', rowNumber, 500),
-      totalPurchases: nonNegativeNumberValue(row, 'totalPurchases', 'Customers', rowNumber) ?? 0,
-      loyaltyPoints: nonNegativeIntegerValue(row, 'loyaltyPoints', 'Customers', rowNumber) ?? 0,
-      createdAt: dateValue(row, 'createdAt', 'Customers', rowNumber) ?? new Date(),
-      updatedAt: dateValue(row, 'updatedAt', 'Customers', rowNumber) ?? new Date(),
-    };
-    const customer = existing
-      ? await tx.customer.update({ where: { id: existing.id }, data })
-      : await tx.customer.create({ data: id ? { id, ...data } : data });
-    track(maps.customersById, id, customer.id);
-    if (phone) maps.customersByPhone.set(phone, customer.id);
-  }
-  return rows.length;
-}
-
-async function importProducts(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
+async function importProducts(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -809,9 +782,9 @@ async function importProducts(tx: ImportClient, rows: Record<string, unknown>[],
     const name = boundedString(row, 'name', 'Products', rowNumber, 200, true) as string;
     const sku = boundedString(row, 'sku', 'Products', rowNumber, 50, true) as string;
     const categoryId = await resolveCategory(tx, row.categoryId, maps, 'Products', rowNumber);
-    const existing = (id
-      ? await tx.product.findUnique({ where: { id }, select: { id: true } })
-      : null) ?? await tx.product.findUnique({ where: { sku }, select: { id: true } });
+    const existing =
+      (id ? await tx.product.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.product.findUnique({ where: { sku }, select: { id: true } }));
     const data = {
       name,
       nameMm: boundedString(row, 'nameMm', 'Products', rowNumber, 200),
@@ -823,9 +796,9 @@ async function importProducts(tx: ImportClient, rows: Record<string, unknown>[],
       stockQuantity: nonNegativeNumberValue(row, 'stockQuantity', 'Products', rowNumber) ?? 0,
       lowStockThreshold: nonNegativeNumberValue(row, 'lowStockThreshold', 'Products', rowNumber) ?? 10,
       unit: enumValue(row, 'unit', PRODUCT_UNITS, 'Products', rowNumber, 'pcs'),
-      imageUrl: boundedString(row, 'imageUrl', 'Products', rowNumber, 500000),
       batchNumber: boundedString(row, 'batchNumber', 'Products', rowNumber, 100),
       expiryDate: dateValue(row, 'expiryDate', 'Products', rowNumber),
+      imageUrl: boundedString(row, 'imageUrl', 'Products', rowNumber, 500_000),
       isActive: booleanValue(row, 'isActive', 'Products', rowNumber, true),
       createdAt: dateValue(row, 'createdAt', 'Products', rowNumber) ?? new Date(),
       updatedAt: dateValue(row, 'updatedAt', 'Products', rowNumber) ?? new Date(),
@@ -839,7 +812,357 @@ async function importProducts(tx: ImportClient, rows: Record<string, unknown>[],
   return rows.length;
 }
 
-async function importSales(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
+async function importProductUnits(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const productId = await resolveProduct(tx, row.productId, maps, 'ProductUnits', rowNumber);
+    const unitName = boundedString(row, 'unitName', 'ProductUnits', rowNumber, 50, true) as string;
+    const existing =
+      (id ? await tx.productUnit.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.productUnit.findUnique({
+        where: { productId_unitName: { productId, unitName } },
+        select: { id: true },
+      }));
+    const data = {
+      productId,
+      unitName,
+      nameMm: boundedString(row, 'nameMm', 'ProductUnits', rowNumber, 100),
+      conversionFactor: positiveNumberValue(
+        row,
+        'conversionFactor',
+        'ProductUnits',
+        rowNumber,
+        true
+      ) as number,
+      sellingPrice: nonNegativeNumberValue(
+        row,
+        'sellingPrice',
+        'ProductUnits',
+        rowNumber,
+        true
+      ) as number,
+      barcode: boundedString(row, 'barcode', 'ProductUnits', rowNumber, 50),
+      createdAt: dateValue(row, 'createdAt', 'ProductUnits', rowNumber) ?? new Date(),
+      updatedAt: dateValue(row, 'updatedAt', 'ProductUnits', rowNumber) ?? new Date(),
+    };
+    if (existing) {
+      await tx.productUnit.update({ where: { id: existing.id }, data });
+    } else {
+      await tx.productUnit.create({ data: id ? { id, ...data } : data });
+    }
+  }
+  return rows.length;
+}
+
+async function importCustomers(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const name = boundedString(row, 'name', 'Customers', rowNumber, 200, true) as string;
+    const phone = boundedString(row, 'phone', 'Customers', rowNumber, 20);
+    const existing =
+      (id ? await tx.customer.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (phone ? await tx.customer.findUnique({ where: { phone }, select: { id: true } }) : null);
+    const data = {
+      name,
+      phone,
+      email: assertEmail(
+        boundedString(row, 'email', 'Customers', rowNumber, 200),
+        'email',
+        'Customers',
+        rowNumber
+      ),
+      address: boundedString(row, 'address', 'Customers', rowNumber, 500),
+      totalPurchases: nonNegativeNumberValue(row, 'totalPurchases', 'Customers', rowNumber) ?? 0,
+      creditBalance: nonNegativeNumberValue(row, 'creditBalance', 'Customers', rowNumber) ?? 0,
+      creditLimit: nonNegativeNumberValue(row, 'creditLimit', 'Customers', rowNumber),
+      loyaltyPoints: nonNegativeIntegerValue(row, 'loyaltyPoints', 'Customers', rowNumber) ?? 0,
+      createdAt: dateValue(row, 'createdAt', 'Customers', rowNumber) ?? new Date(),
+      updatedAt: dateValue(row, 'updatedAt', 'Customers', rowNumber) ?? new Date(),
+    };
+    const customer = existing
+      ? await tx.customer.update({ where: { id: existing.id }, data })
+      : await tx.customer.create({ data: id ? { id, ...data } : data });
+    track(maps.customersById, id, customer.id);
+    if (phone) maps.customersByPhone.set(phone, customer.id);
+  }
+  return rows.length;
+}
+
+async function importSuppliers(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const name = boundedString(row, 'name', 'Suppliers', rowNumber, 200, true) as string;
+    const existing =
+      (id ? await tx.supplier.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.supplier.findFirst({ where: { name }, select: { id: true } }));
+    const data = {
+      name,
+      contactPerson: boundedString(row, 'contactPerson', 'Suppliers', rowNumber, 120),
+      phone: boundedString(row, 'phone', 'Suppliers', rowNumber, 30),
+      email: assertEmail(
+        boundedString(row, 'email', 'Suppliers', rowNumber, 200),
+        'email',
+        'Suppliers',
+        rowNumber
+      ),
+      address: boundedString(row, 'address', 'Suppliers', rowNumber, 500),
+      creditBalance: nonNegativeNumberValue(row, 'creditBalance', 'Suppliers', rowNumber) ?? 0,
+      notes: boundedString(row, 'notes', 'Suppliers', rowNumber, 500),
+      isActive: booleanValue(row, 'isActive', 'Suppliers', rowNumber, true),
+      createdAt: dateValue(row, 'createdAt', 'Suppliers', rowNumber) ?? new Date(),
+      updatedAt: dateValue(row, 'updatedAt', 'Suppliers', rowNumber) ?? new Date(),
+    };
+    const supplier = existing
+      ? await tx.supplier.update({ where: { id: existing.id }, data })
+      : await tx.supplier.create({ data: id ? { id, ...data } : data });
+    track(maps.suppliersById, id, supplier.id);
+    maps.suppliersByName.set(name.toLowerCase(), supplier.id);
+  }
+  return rows.length;
+}
+
+async function importPurchaseOrders(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const poNumber = boundedString(row, 'poNumber', 'PurchaseOrders', rowNumber, 50, true) as string;
+    const supplierId = await resolveSupplier(
+      tx,
+      row.supplierId,
+      maps,
+      'PurchaseOrders',
+      rowNumber
+    );
+    const userId = await resolveUser(tx, row.userId, maps, 'PurchaseOrders', rowNumber);
+    const existing =
+      (id ? await tx.purchaseOrder.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.purchaseOrder.findUnique({ where: { poNumber }, select: { id: true } }));
+
+    const subtotal = nonNegativeNumberValue(row, 'subtotal', 'PurchaseOrders', rowNumber) ?? 0;
+    const discountAmount =
+      nonNegativeNumberValue(row, 'discountAmount', 'PurchaseOrders', rowNumber) ?? 0;
+    const totalAmount =
+      nonNegativeNumberValue(row, 'totalAmount', 'PurchaseOrders', rowNumber) ??
+      Math.max(0, Math.round((subtotal - discountAmount) * 100) / 100);
+    const paidAmount = nonNegativeNumberValue(row, 'paidAmount', 'PurchaseOrders', rowNumber) ?? 0;
+    const dueAmount =
+      nonNegativeNumberValue(row, 'dueAmount', 'PurchaseOrders', rowNumber) ??
+      Math.max(0, Math.round((totalAmount - paidAmount) * 100) / 100);
+
+    if (discountAmount > subtotal + 0.01) {
+      migrationError(
+        'discountAmount',
+        'discountAmount cannot exceed subtotal',
+        'PurchaseOrders',
+        rowNumber
+      );
+    }
+    const expectedTotal = Math.round((subtotal - discountAmount) * 100) / 100;
+    if (Math.abs(totalAmount - expectedTotal) > 0.01) {
+      migrationError(
+        'totalAmount',
+        'totalAmount must equal subtotal - discountAmount',
+        'PurchaseOrders',
+        rowNumber
+      );
+    }
+
+    const data = {
+      poNumber,
+      supplierId,
+      userId,
+      subtotal,
+      discountAmount,
+      totalAmount,
+      paidAmount,
+      dueAmount,
+      paymentMethod: enumValue(
+        row,
+        'paymentMethod',
+        PURCHASE_PAYMENT_METHODS,
+        'PurchaseOrders',
+        rowNumber,
+        'CASH'
+      ),
+      status: enumValue(row, 'status', PURCHASE_STATUSES, 'PurchaseOrders', rowNumber, 'RECEIVED'),
+      notes: boundedString(row, 'notes', 'PurchaseOrders', rowNumber, 500),
+      createdAt: dateValue(row, 'createdAt', 'PurchaseOrders', rowNumber) ?? new Date(),
+    };
+    const po = existing
+      ? await tx.purchaseOrder.update({ where: { id: existing.id }, data })
+      : await tx.purchaseOrder.create({ data: id ? { id, ...data } : data });
+    track(maps.purchaseOrdersById, id, po.id);
+    maps.purchaseOrdersByPoNumber.set(poNumber, po.id);
+  }
+  return rows.length;
+}
+
+async function importPurchaseItems(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const purchaseOrderId = await resolvePurchaseOrder(
+      tx,
+      row.purchaseOrderId,
+      maps,
+      'PurchaseItems',
+      rowNumber
+    );
+    const productId = await resolveProduct(tx, row.productId, maps, 'PurchaseItems', rowNumber);
+    const quantity = positiveNumberValue(
+      row,
+      'quantity',
+      'PurchaseItems',
+      rowNumber,
+      true
+    ) as number;
+    const unitCost = nonNegativeNumberValue(
+      row,
+      'unitCost',
+      'PurchaseItems',
+      rowNumber,
+      true
+    ) as number;
+    const expectedLineTotal = Math.round(quantity * unitCost * 100) / 100;
+    const total =
+      nonNegativeNumberValue(row, 'total', 'PurchaseItems', rowNumber) ?? expectedLineTotal;
+    if (Math.abs(total - expectedLineTotal) > 0.01) {
+      migrationError('total', 'line total must equal quantity * unitCost', 'PurchaseItems', rowNumber);
+    }
+    const data = {
+      purchaseOrderId,
+      productId,
+      quantity,
+      unitCost,
+      total,
+      batchNumber: boundedString(row, 'batchNumber', 'PurchaseItems', rowNumber, 100),
+      expiryDate: dateValue(row, 'expiryDate', 'PurchaseItems', rowNumber),
+    };
+    if (id) {
+      await tx.purchaseItem.upsert({ where: { id }, create: { id, ...data }, update: data });
+    } else {
+      await tx.purchaseItem.create({ data });
+    }
+  }
+  return rows.length;
+}
+
+async function importSupplierPayments(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const supplierId = await resolveSupplier(
+      tx,
+      row.supplierId,
+      maps,
+      'SupplierPayments',
+      rowNumber
+    );
+    const userId = await resolveUser(tx, row.userId, maps, 'SupplierPayments', rowNumber);
+    const data = {
+      supplierId,
+      userId,
+      amount: positiveNumberValue(row, 'amount', 'SupplierPayments', rowNumber, true) as number,
+      method: enumValue(
+        row,
+        'method',
+        SUPPLIER_PAYMENT_METHODS,
+        'SupplierPayments',
+        rowNumber,
+        'CASH'
+      ),
+      reference: boundedString(row, 'reference', 'SupplierPayments', rowNumber, 100),
+      notes: boundedString(row, 'notes', 'SupplierPayments', rowNumber, 500),
+      createdAt: dateValue(row, 'createdAt', 'SupplierPayments', rowNumber) ?? new Date(),
+    };
+    if (id) {
+      await tx.supplierPayment.upsert({ where: { id }, create: { id, ...data }, update: data });
+    } else {
+      await tx.supplierPayment.create({ data });
+    }
+  }
+  return rows.length;
+}
+
+async function importShifts(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const userId = await resolveUser(tx, row.userId, maps, 'Shifts', rowNumber);
+    const status = enumValue(row, 'status', SHIFT_STATUSES, 'Shifts', rowNumber);
+    const closedAt = dateValue(row, 'closedAt', 'Shifts', rowNumber);
+    if (status === 'OPEN' && closedAt) {
+      migrationError('closedAt', 'an OPEN shift cannot have closedAt', 'Shifts', rowNumber);
+    }
+    if (status === 'CLOSED' && !closedAt) {
+      migrationError('closedAt', 'a CLOSED shift must have closedAt', 'Shifts', rowNumber);
+    }
+    const data = {
+      userId,
+      openingCash: nonNegativeNumberValue(row, 'openingCash', 'Shifts', rowNumber, true) as number,
+      closingCash: nonNegativeNumberValue(row, 'closingCash', 'Shifts', rowNumber),
+      expectedCash: nonNegativeNumberValue(row, 'expectedCash', 'Shifts', rowNumber),
+      actualCash: nonNegativeNumberValue(row, 'actualCash', 'Shifts', rowNumber),
+      variance: numberValue(row, 'variance', 'Shifts', rowNumber),
+      status,
+      openedAt: dateValue(row, 'openedAt', 'Shifts', rowNumber, true) as Date,
+      closedAt,
+      notes: boundedString(row, 'notes', 'Shifts', rowNumber, 500),
+    };
+    if (id) {
+      await tx.shift.upsert({ where: { id }, create: { id, ...data }, update: data });
+      maps.shiftsById.set(id, id);
+    } else {
+      const shift = await tx.shift.create({ data });
+      maps.shiftsById.set(shift.id, shift.id);
+    }
+  }
+  return rows.length;
+}
+
+async function importSales(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -847,11 +1170,15 @@ async function importSales(tx: ImportClient, rows: Record<string, unknown>[], ma
     const invoiceNumber = boundedString(row, 'invoiceNumber', 'Sales', rowNumber, 50, true) as string;
     const userId = await resolveUser(tx, row.userId, maps, 'Sales', rowNumber);
     const rawCustomerId = stringValue(row.customerId);
-    const customerId = rawCustomerId ? await resolveCustomer(tx, rawCustomerId, maps, 'Sales', rowNumber) : null;
+    const customerId = rawCustomerId
+      ? await resolveCustomer(tx, rawCustomerId, maps, 'Sales', rowNumber)
+      : null;
     const clientSaleId = boundedString(row, 'clientSaleId', 'Sales', rowNumber, 100);
-    const existing = (id
-      ? await tx.sale.findUnique({ where: { id }, select: { id: true } })
-      : null) ?? await tx.sale.findUnique({ where: { invoiceNumber }, select: { id: true } });
+    const existing =
+      (id ? await tx.sale.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.sale.findUnique({ where: { invoiceNumber }, select: { id: true } }));
+
+    const status = enumValue(row, 'status', SALE_STATUSES, 'Sales', rowNumber, 'COMPLETED');
     const data = {
       invoiceNumber,
       clientSaleId,
@@ -862,12 +1189,15 @@ async function importSales(tx: ImportClient, rows: Record<string, unknown>[], ma
       taxAmount: nonNegativeNumberValue(row, 'taxAmount', 'Sales', rowNumber) ?? 0,
       totalAmount: nonNegativeNumberValue(row, 'totalAmount', 'Sales', rowNumber) ?? 0,
       paidAmount: nonNegativeNumberValue(row, 'paidAmount', 'Sales', rowNumber) ?? 0,
+      dueAmount: nonNegativeNumberValue(row, 'dueAmount', 'Sales', rowNumber) ?? 0,
       changeAmount: nonNegativeNumberValue(row, 'changeAmount', 'Sales', rowNumber) ?? 0,
+      pointsEarned: nonNegativeIntegerValue(row, 'pointsEarned', 'Sales', rowNumber) ?? 0,
+      pointsRedeemed: nonNegativeIntegerValue(row, 'pointsRedeemed', 'Sales', rowNumber) ?? 0,
       paymentMethod: enumValue(row, 'paymentMethod', PAYMENT_METHODS, 'Sales', rowNumber, 'CASH'),
       paymentStatus: enumValue(row, 'paymentStatus', PAYMENT_STATUSES, 'Sales', rowNumber, 'PAID'),
       paymentReference: boundedString(row, 'paymentReference', 'Sales', rowNumber, 100),
       paymentProviderResponse: boundedString(row, 'paymentProviderResponse', 'Sales', rowNumber, 2000),
-      status: enumValue(row, 'status', SALE_STATUSES, 'Sales', rowNumber, 'COMPLETED'),
+      status,
       notes: boundedString(row, 'notes', 'Sales', rowNumber, 500),
       createdAt: dateValue(row, 'createdAt', 'Sales', rowNumber) ?? new Date(),
     };
@@ -878,6 +1208,7 @@ async function importSales(tx: ImportClient, rows: Record<string, unknown>[], ma
       data.totalAmount,
       data.paidAmount,
       data.changeAmount,
+      status,
       'Sales',
       rowNumber
     );
@@ -890,7 +1221,11 @@ async function importSales(tx: ImportClient, rows: Record<string, unknown>[], ma
   return rows.length;
 }
 
-async function importSaleItems(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
+async function importSaleItems(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -898,18 +1233,38 @@ async function importSaleItems(tx: ImportClient, rows: Record<string, unknown>[]
     const saleId = await resolveSale(tx, row.saleId, maps, 'SaleItems', rowNumber);
     const productId = await resolveProduct(tx, row.productId, maps, 'SaleItems', rowNumber);
     const quantity = positiveNumberValue(row, 'quantity', 'SaleItems', rowNumber, true) as number;
+    const refundedQuantity =
+      nonNegativeNumberValue(row, 'refundedQuantity', 'SaleItems', rowNumber) ?? 0;
+    if (refundedQuantity > quantity + 0.001) {
+      migrationError(
+        'refundedQuantity',
+        'refundedQuantity cannot exceed quantity',
+        'SaleItems',
+        rowNumber
+      );
+    }
+    const unitFactor = positiveNumberValue(row, 'unitFactor', 'SaleItems', rowNumber) ?? 1;
     const data = {
       saleId,
       productId,
       quantity,
+      refundedQuantity,
+      unitName: boundedString(row, 'unitName', 'SaleItems', rowNumber, 50),
+      unitFactor,
       unitPrice: nonNegativeNumberValue(row, 'unitPrice', 'SaleItems', rowNumber) ?? 0,
       costPrice: nonNegativeNumberValue(row, 'costPrice', 'SaleItems', rowNumber) ?? 0,
       discount: nonNegativeNumberValue(row, 'discount', 'SaleItems', rowNumber) ?? 0,
       total: nonNegativeNumberValue(row, 'total', 'SaleItems', rowNumber) ?? 0,
     };
-    const expectedLineTotal = Math.round(Math.max(0, data.unitPrice * quantity - data.discount) * 100) / 100;
+    const expectedLineTotal =
+      Math.round(Math.max(0, data.unitPrice * quantity - data.discount) * 100) / 100;
     if (Math.abs(data.total - expectedLineTotal) > 0.01) {
-      migrationError('total', 'line total must equal unitPrice * quantity - discount', 'SaleItems', rowNumber);
+      migrationError(
+        'total',
+        'line total must equal unitPrice * quantity - discount',
+        'SaleItems',
+        rowNumber
+      );
     }
     if (id) {
       await tx.saleItem.upsert({ where: { id }, create: { id, ...data }, update: data });
@@ -920,7 +1275,88 @@ async function importSaleItems(tx: ImportClient, rows: Record<string, unknown>[]
   return rows.length;
 }
 
-async function importStockMovements(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
+async function importSalePayments(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const rawSaleId = stringValue(row.saleId);
+    const rawCustomerId = stringValue(row.customerId);
+    const rawShiftId = stringValue(row.shiftId);
+    const saleId = rawSaleId ? await resolveSale(tx, rawSaleId, maps, 'SalePayments', rowNumber) : null;
+    const customerId = rawCustomerId
+      ? await resolveCustomer(tx, rawCustomerId, maps, 'SalePayments', rowNumber)
+      : null;
+    const shiftId = rawShiftId
+      ? await resolveShift(tx, rawShiftId, maps, 'SalePayments', rowNumber)
+      : null;
+    const userId = await resolveUser(tx, row.userId, maps, 'SalePayments', rowNumber);
+
+    const data = {
+      saleId,
+      customerId,
+      userId,
+      shiftId,
+      method: enumValue(row, 'method', SALE_PAYMENT_METHODS, 'SalePayments', rowNumber),
+      amount: positiveNumberValue(row, 'amount', 'SalePayments', rowNumber, true) as number,
+      reference: boundedString(row, 'reference', 'SalePayments', rowNumber, 100),
+      type: enumValue(row, 'type', SALE_PAYMENT_TYPES, 'SalePayments', rowNumber, 'CHECKOUT'),
+      notes: boundedString(row, 'notes', 'SalePayments', rowNumber, 500),
+      createdAt: dateValue(row, 'createdAt', 'SalePayments', rowNumber) ?? new Date(),
+    };
+    if (id) {
+      await tx.salePayment.upsert({ where: { id }, create: { id, ...data }, update: data });
+    } else {
+      await tx.salePayment.create({ data });
+    }
+  }
+  return rows.length;
+}
+
+async function importSaleAdjustments(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const data = {
+      saleId: await resolveSale(tx, row.saleId, maps, 'SaleAdjustments', rowNumber),
+      approverUserId: await resolveUser(tx, row.approverUserId, maps, 'SaleAdjustments', rowNumber),
+      type: enumValue(row, 'type', ADJUSTMENT_TYPES, 'SaleAdjustments', rowNumber),
+      reason: boundedString(row, 'reason', 'SaleAdjustments', rowNumber, 500, true) as string,
+      amount: positiveNumberValue(row, 'amount', 'SaleAdjustments', rowNumber, true) as number,
+      paymentMethod: enumValue(row, 'paymentMethod', PAYMENT_METHODS, 'SaleAdjustments', rowNumber),
+      paymentReversalStatus: enumValue(
+        row,
+        'paymentReversalStatus',
+        REVERSAL_STATUSES,
+        'SaleAdjustments',
+        rowNumber,
+        'PENDING'
+      ),
+      createdAt: dateValue(row, 'createdAt', 'SaleAdjustments', rowNumber) ?? new Date(),
+    };
+    if (id) {
+      await tx.saleAdjustment.upsert({ where: { id }, create: { id, ...data }, update: data });
+    } else {
+      await tx.saleAdjustment.create({ data });
+    }
+  }
+  return rows.length;
+}
+
+async function importStockMovements(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -928,28 +1364,56 @@ async function importStockMovements(tx: ImportClient, rows: Record<string, unkno
     const productId = await resolveProduct(tx, row.productId, maps, 'StockMovements', rowNumber);
     const userId = await resolveUser(tx, row.userId, maps, 'StockMovements', rowNumber);
     const rawSaleId = stringValue(row.saleId);
-    const saleId = rawSaleId ? await resolveSale(tx, rawSaleId, maps, 'StockMovements', rowNumber) : null;
+    const saleId = rawSaleId
+      ? await resolveSale(tx, rawSaleId, maps, 'StockMovements', rowNumber)
+      : null;
+    const type = enumValue(row, 'type', MOVEMENT_TYPES, 'StockMovements', rowNumber);
+    const quantity =
+      type === 'ADJUSTMENT'
+        ? (nonNegativeNumberValue(row, 'quantity', 'StockMovements', rowNumber, true) as number)
+        : (positiveNumberValue(row, 'quantity', 'StockMovements', rowNumber, true) as number);
+
     const data = {
       productId,
       userId,
       saleId,
-      quantity: positiveNumberValue(row, 'quantity', 'StockMovements', rowNumber, true) as number,
-      type: enumValue(row, 'type', MOVEMENT_TYPES, 'StockMovements', rowNumber),
+      quantity,
+      type,
       reason: boundedString(row, 'reason', 'StockMovements', rowNumber, 500),
-      previousStock: nonNegativeNumberValue(row, 'previousStock', 'StockMovements', rowNumber, true) as number,
-      newStock: nonNegativeNumberValue(row, 'newStock', 'StockMovements', rowNumber, true) as number,
+      previousStock: nonNegativeNumberValue(
+        row,
+        'previousStock',
+        'StockMovements',
+        rowNumber,
+        true
+      ) as number,
+      newStock: nonNegativeNumberValue(
+        row,
+        'newStock',
+        'StockMovements',
+        rowNumber,
+        true
+      ) as number,
       createdAt: dateValue(row, 'createdAt', 'StockMovements', rowNumber) ?? new Date(),
     };
     if (data.type === 'IN' || data.type === 'RETURN') {
       if (Math.abs(data.newStock - (data.previousStock + data.quantity)) > 0.001) {
-        migrationError('newStock', 'IN/RETURN movement must increase stock by quantity', 'StockMovements', rowNumber);
+        migrationError(
+          'newStock',
+          'IN/RETURN movement must increase stock by quantity',
+          'StockMovements',
+          rowNumber
+        );
       }
     } else if (data.type === 'OUT') {
       if (Math.abs(data.newStock - (data.previousStock - data.quantity)) > 0.001) {
-        migrationError('newStock', 'OUT movement must decrease stock by quantity', 'StockMovements', rowNumber);
+        migrationError(
+          'newStock',
+          'OUT movement must decrease stock by quantity',
+          'StockMovements',
+          rowNumber
+        );
       }
-    } else if (Math.abs(data.newStock - data.quantity) > 0.001) {
-      migrationError('newStock', 'ADJUSTMENT quantity must equal newStock', 'StockMovements', rowNumber);
     }
     if (id) {
       await tx.stockMovement.upsert({ where: { id }, create: { id, ...data }, update: data });
@@ -960,7 +1424,11 @@ async function importStockMovements(tx: ImportClient, rows: Record<string, unkno
   return rows.length;
 }
 
-async function importExpenses(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
+async function importExpenses(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -985,63 +1453,11 @@ async function importExpenses(tx: ImportClient, rows: Record<string, unknown>[],
   return rows.length;
 }
 
-async function importShifts(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    const rowNumber = index + 2;
-    const id = inputId(row);
-    const userId = await resolveUser(tx, row.userId, maps, 'Shifts', rowNumber);
-    const status = enumValue(row, 'status', SHIFT_STATUSES, 'Shifts', rowNumber);
-    const closedAt = dateValue(row, 'closedAt', 'Shifts', rowNumber);
-    if (status === 'OPEN' && closedAt) migrationError('closedAt', 'an OPEN shift cannot have closedAt', 'Shifts', rowNumber);
-    if (status === 'CLOSED' && !closedAt) migrationError('closedAt', 'a CLOSED shift must have closedAt', 'Shifts', rowNumber);
-    const data = {
-      userId,
-      openingCash: nonNegativeNumberValue(row, 'openingCash', 'Shifts', rowNumber, true) as number,
-      closingCash: optionalDecimal(nonNegativeNumberValue(row, 'closingCash', 'Shifts', rowNumber)),
-      expectedCash: optionalDecimal(nonNegativeNumberValue(row, 'expectedCash', 'Shifts', rowNumber)),
-      actualCash: optionalDecimal(nonNegativeNumberValue(row, 'actualCash', 'Shifts', rowNumber)),
-      variance: optionalDecimal(signedMoneyValue(row, 'variance', 'Shifts', rowNumber)),
-      openedAt: dateValue(row, 'openedAt', 'Shifts', rowNumber, true) as Date,
-      closedAt,
-      notes: boundedString(row, 'notes', 'Shifts', rowNumber, 500),
-    };
-    if (id) {
-      await tx.shift.upsert({ where: { id }, create: { id, ...data }, update: data });
-      maps.shiftsById.set(id, id);
-    } else {
-      const shift = await tx.shift.create({ data });
-      maps.shiftsById.set(shift.id, shift.id);
-    }
-  }
-  return rows.length;
-}
-
-async function importSaleAdjustments(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    const rowNumber = index + 2;
-      const id = inputId(row);
-      const data = {
-        saleId: await resolveSale(tx, row.saleId, maps, 'SaleAdjustments', rowNumber),
-        approverUserId: await resolveUser(tx, row.approverUserId, maps, 'SaleAdjustments', rowNumber),
-        type: enumValue(row, 'type', ADJUSTMENT_TYPES, 'SaleAdjustments', rowNumber),
-        reason: boundedString(row, 'reason', 'SaleAdjustments', rowNumber, 500, true) as string,
-        amount: positiveNumberValue(row, 'amount', 'SaleAdjustments', rowNumber, true) as number,
-        paymentMethod: enumValue(row, 'paymentMethod', PAYMENT_METHODS, 'SaleAdjustments', rowNumber),
-        paymentReversalStatus: enumValue(row, 'paymentReversalStatus', REVERSAL_STATUSES, 'SaleAdjustments', rowNumber, 'PENDING'),
-        createdAt: dateValue(row, 'createdAt', 'SaleAdjustments', rowNumber) ?? new Date(),
-      };
-    if (id) {
-      await tx.saleAdjustment.upsert({ where: { id }, create: { id, ...data }, update: data });
-    } else {
-      await tx.saleAdjustment.create({ data });
-    }
-  }
-  return rows.length;
-}
-
-async function importCashDrawerMovements(tx: ImportClient, rows: Record<string, unknown>[], maps: ImportMaps): Promise<number> {
+async function importCashDrawerMovements(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -1049,25 +1465,80 @@ async function importCashDrawerMovements(tx: ImportClient, rows: Record<string, 
     const rawShiftId = stringValue(row.shiftId);
     const rawSaleId = stringValue(row.saleId);
     const rawExpenseId = stringValue(row.expenseId);
-    const shiftId = rawShiftId ? await resolveShift(tx, rawShiftId, maps, 'CashDrawerMovements', rowNumber) : null;
-    const saleId = rawSaleId ? await resolveSale(tx, rawSaleId, maps, 'CashDrawerMovements', rowNumber) : null;
-    const expenseId = rawExpenseId ? await resolveExpense(tx, rawExpenseId, maps, 'CashDrawerMovements', rowNumber) : null;
-      const data = {
+    const shiftId = rawShiftId
+      ? await resolveShift(tx, rawShiftId, maps, 'CashDrawerMovements', rowNumber)
+      : null;
+    const saleId = rawSaleId
+      ? await resolveSale(tx, rawSaleId, maps, 'CashDrawerMovements', rowNumber)
+      : null;
+    const expenseId = rawExpenseId
+      ? await resolveExpense(tx, rawExpenseId, maps, 'CashDrawerMovements', rowNumber)
+      : null;
+    const data = {
       shiftId,
       saleId,
-        expenseId,
-        userId: await resolveUser(tx, row.userId, maps, 'CashDrawerMovements', rowNumber),
-        type: enumValue(row, 'type', CASH_MOVEMENT_TYPES, 'CashDrawerMovements', rowNumber),
-        amount: signedMoneyValue(row, 'amount', 'CashDrawerMovements', rowNumber, true) as number,
-        reason: boundedString(row, 'reason', 'CashDrawerMovements', rowNumber, 500),
-        createdAt: dateValue(row, 'createdAt', 'CashDrawerMovements', rowNumber) ?? new Date(),
-      };
-      if (!shiftId) migrationError('shiftId', 'cash drawer movements must belong to a shift', 'CashDrawerMovements', rowNumber);
-      if (data.type === 'CASH_SALE' && !saleId) migrationError('saleId', 'CASH_SALE movement must reference a sale', 'CashDrawerMovements', rowNumber);
-      if ((data.type === 'REFUND' || data.type === 'VOID') && !saleId) migrationError('saleId', `${data.type} movement must reference a sale`, 'CashDrawerMovements', rowNumber);
-      if ((data.type === 'REFUND' || data.type === 'VOID') && data.amount >= 0) migrationError('amount', `${data.type} movement amount must be negative`, 'CashDrawerMovements', rowNumber);
-      if (data.type !== 'REFUND' && data.type !== 'VOID' && data.amount <= 0) migrationError('amount', `${data.type} movement amount must be positive`, 'CashDrawerMovements', rowNumber);
-      if (data.type === 'PAID_OUT' && !expenseId && !data.reason) migrationError('reason', 'PAID_OUT movement needs an expense or reason', 'CashDrawerMovements', rowNumber);
+      expenseId,
+      userId: await resolveUser(tx, row.userId, maps, 'CashDrawerMovements', rowNumber),
+      type: enumValue(row, 'type', CASH_MOVEMENT_TYPES, 'CashDrawerMovements', rowNumber),
+      amount: numberValue(row, 'amount', 'CashDrawerMovements', rowNumber, true) as number,
+      reason: boundedString(row, 'reason', 'CashDrawerMovements', rowNumber, 500),
+      createdAt: dateValue(row, 'createdAt', 'CashDrawerMovements', rowNumber) ?? new Date(),
+    };
+
+    if (!shiftId) {
+      migrationError(
+        'shiftId',
+        'cash drawer movements must belong to a shift',
+        'CashDrawerMovements',
+        rowNumber
+      );
+    }
+    if ((data.type === 'CASH_SALE' || data.type === 'REFUND' || data.type === 'VOID') && !saleId) {
+      migrationError(
+        'saleId',
+        `${data.type} movement must reference a sale`,
+        'CashDrawerMovements',
+        rowNumber
+      );
+    }
+    if ((data.type === 'REFUND' || data.type === 'VOID') && data.amount >= 0) {
+      migrationError(
+        'amount',
+        `${data.type} movement amount must be negative`,
+        'CashDrawerMovements',
+        rowNumber
+      );
+    }
+    if ((data.type === 'CASH_SALE' || data.type === 'PAID_IN') && data.amount <= 0) {
+      migrationError(
+        'amount',
+        `${data.type} movement amount must be positive`,
+        'CashDrawerMovements',
+        rowNumber
+      );
+    }
+    if ((data.type === 'OPENING' || data.type === 'CLOSING') && data.amount < 0) {
+      migrationError(
+        'amount',
+        `${data.type} movement amount cannot be negative`,
+        'CashDrawerMovements',
+        rowNumber
+      );
+    }
+    if (data.type === 'PAID_OUT') {
+      if (data.amount === 0) {
+        migrationError('amount', 'PAID_OUT movement amount cannot be zero', 'CashDrawerMovements', rowNumber);
+      }
+      if (!expenseId && !data.reason) {
+        migrationError(
+          'reason',
+          'PAID_OUT movement needs an expense or reason',
+          'CashDrawerMovements',
+          rowNumber
+        );
+      }
+    }
+
     if (id) {
       await tx.cashDrawerMovement.upsert({ where: { id }, create: { id, ...data }, update: data });
     } else {
@@ -1077,7 +1548,10 @@ async function importCashDrawerMovements(tx: ImportClient, rows: Record<string, 
   return rows.length;
 }
 
-async function importSettings(tx: ImportClient, rows: Record<string, unknown>[]): Promise<number> {
+async function importSettings(
+  tx: ImportClient,
+  rows: Record<string, unknown>[]
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
@@ -1087,29 +1561,64 @@ async function importSettings(tx: ImportClient, rows: Record<string, unknown>[])
       businessNameMm: boundedString(row, 'businessNameMm', 'Settings', rowNumber, 200),
       address: boundedString(row, 'address', 'Settings', rowNumber, 500),
       phone: boundedString(row, 'phone', 'Settings', rowNumber, 20),
-      email: assertEmail(boundedString(row, 'email', 'Settings', rowNumber, 200), 'email', 'Settings', rowNumber),
+      email: assertEmail(
+        boundedString(row, 'email', 'Settings', rowNumber, 200),
+        'email',
+        'Settings',
+        rowNumber
+      ),
       taxRate: nonNegativeNumberValue(row, 'taxRate', 'Settings', rowNumber, true) as number,
       currencySymbol: boundedString(row, 'currencySymbol', 'Settings', rowNumber, 10, true) as string,
-      logo: boundedString(row, 'logo', 'Settings', rowNumber, 1000),
+      loyaltyEnabled: booleanValue(row, 'loyaltyEnabled', 'Settings', rowNumber, true),
+      loyaltyEarnRate: nonNegativeNumberValue(row, 'loyaltyEarnRate', 'Settings', rowNumber) ?? 1000,
+      loyaltyRedeemRate: nonNegativeNumberValue(row, 'loyaltyRedeemRate', 'Settings', rowNumber) ?? 10,
+      mobileBankingName:
+        boundedString(row, 'mobileBankingName', 'Settings', rowNumber, 120) ?? 'KBZPay / WavePay',
+      mobileBankingQrUrl: boundedString(row, 'mobileBankingQrUrl', 'Settings', rowNumber, 500_000),
+      logo: boundedString(row, 'logo', 'Settings', rowNumber, 500_000),
       receiptFooter: boundedString(row, 'receiptFooter', 'Settings', rowNumber, 500),
     };
-    if (data.taxRate > 100) migrationError('taxRate', 'taxRate cannot exceed 100', 'Settings', rowNumber);
+    if (data.taxRate > 100) {
+      migrationError('taxRate', 'taxRate cannot exceed 100', 'Settings', rowNumber);
+    }
     await tx.settings.upsert({ where: { id }, create: { id, ...data }, update: data });
   }
   return rows.length;
 }
 
-async function importInvoiceCounters(tx: ImportClient, rows: Record<string, unknown>[]): Promise<number> {
+async function importInvoiceCounters(
+  tx: ImportClient,
+  rows: Record<string, unknown>[]
+): Promise<number> {
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     const rowNumber = index + 2;
     const date = requiredString(row, 'date', 'InvoiceCounters', rowNumber);
-    if (!/^\d{8}$/.test(date)) migrationError('date', 'date must use YYYYMMDD format', 'InvoiceCounters', rowNumber);
-    const counter = nonNegativeIntegerValue(row, 'counter', 'InvoiceCounters', rowNumber, true) as number;
-    await tx.invoiceCounter.upsert({ where: { date }, create: { date, counter }, update: { counter } });
+    if (!/^(?:PO-)?\d{8}$/.test(date)) {
+      migrationError(
+        'date',
+        'date must use YYYYMMDD or PO-YYYYMMDD format',
+        'InvoiceCounters',
+        rowNumber
+      );
+    }
+    const counter = nonNegativeIntegerValue(
+      row,
+      'counter',
+      'InvoiceCounters',
+      rowNumber,
+      true
+    ) as number;
+    await tx.invoiceCounter.upsert({
+      where: { date },
+      create: { date, counter },
+      update: { counter },
+    });
   }
   return rows.length;
 }
+
+/* ---------- Atomic Transaction Runner ---------- */
 
 export async function importDataMigration(
   prisma: PrismaClient,
@@ -1118,19 +1627,50 @@ export async function importDataMigration(
   const run = async (tx: Prisma.TransactionClient): Promise<Record<string, number>> => {
     const maps = createImportMaps();
     const summary: Record<string, number> = {};
+
+    // Strict topological dependency order across all 19 sheets
     if (rows.Users) summary.Users = await importUsers(tx, rows.Users, maps);
     if (rows.Categories) summary.Categories = await importCategories(tx, rows.Categories, maps);
-    if (rows.Customers) summary.Customers = await importCustomers(tx, rows.Customers, maps);
     if (rows.Products) summary.Products = await importProducts(tx, rows.Products, maps);
+    if (rows.ProductUnits) {
+      summary.ProductUnits = await importProductUnits(tx, rows.ProductUnits, maps);
+    }
+    if (rows.Customers) summary.Customers = await importCustomers(tx, rows.Customers, maps);
+    if (rows.Suppliers) summary.Suppliers = await importSuppliers(tx, rows.Suppliers, maps);
+    if (rows.PurchaseOrders) {
+      summary.PurchaseOrders = await importPurchaseOrders(tx, rows.PurchaseOrders, maps);
+    }
+    if (rows.PurchaseItems) {
+      summary.PurchaseItems = await importPurchaseItems(tx, rows.PurchaseItems, maps);
+    }
+    if (rows.SupplierPayments) {
+      summary.SupplierPayments = await importSupplierPayments(tx, rows.SupplierPayments, maps);
+    }
+    if (rows.Shifts) summary.Shifts = await importShifts(tx, rows.Shifts, maps);
     if (rows.Sales) summary.Sales = await importSales(tx, rows.Sales, maps);
     if (rows.SaleItems) summary.SaleItems = await importSaleItems(tx, rows.SaleItems, maps);
-    if (rows.StockMovements) summary.StockMovements = await importStockMovements(tx, rows.StockMovements, maps);
+    if (rows.SalePayments) {
+      summary.SalePayments = await importSalePayments(tx, rows.SalePayments, maps);
+    }
+    if (rows.SaleAdjustments) {
+      summary.SaleAdjustments = await importSaleAdjustments(tx, rows.SaleAdjustments, maps);
+    }
+    if (rows.StockMovements) {
+      summary.StockMovements = await importStockMovements(tx, rows.StockMovements, maps);
+    }
     if (rows.Expenses) summary.Expenses = await importExpenses(tx, rows.Expenses, maps);
-    if (rows.Shifts) summary.Shifts = await importShifts(tx, rows.Shifts, maps);
-    if (rows.SaleAdjustments) summary.SaleAdjustments = await importSaleAdjustments(tx, rows.SaleAdjustments, maps);
-    if (rows.CashDrawerMovements) summary.CashDrawerMovements = await importCashDrawerMovements(tx, rows.CashDrawerMovements, maps);
+    if (rows.CashDrawerMovements) {
+      summary.CashDrawerMovements = await importCashDrawerMovements(
+        tx,
+        rows.CashDrawerMovements,
+        maps
+      );
+    }
     if (rows.Settings) summary.Settings = await importSettings(tx, rows.Settings);
-    if (rows.InvoiceCounters) summary.InvoiceCounters = await importInvoiceCounters(tx, rows.InvoiceCounters);
+    if (rows.InvoiceCounters) {
+      summary.InvoiceCounters = await importInvoiceCounters(tx, rows.InvoiceCounters);
+    }
+
     return summary;
   };
 

@@ -15,6 +15,14 @@ import {
 import { summarizeShiftCash } from '@/lib/shiftUtils';
 import { buildCode128Bars, encodeCode128BCodes } from '@/lib/barcode';
 import { useCartStore } from '@/store/cartStore';
+import {
+  DATA_MIGRATION_SHEETS,
+  createDataMigrationWorkbook,
+  parseDataMigrationWorkbook,
+  validateXlsxContainer,
+  workbookBuffer,
+} from '@/lib/dataMigration';
+import writeXlsxFile from 'write-excel-file/node';
 
 describe('Myanmar Timezone Standardization (Asia/Yangon, UTC+6:30)', () => {
   it('converts UTC late evening (18:00 UTC) to next day 00:30 in Myanmar time', () => {
@@ -199,5 +207,148 @@ describe('POS Cart Store Calculations & Hold/Resume Queue', () => {
     assert.equal(item.unitFactor, 1);
     assert.equal(item.unitPrice, 1000);
     store.clearCart();
+  });
+});
+
+describe('Excel Data Migration v2.0 Workbook Formatting & Round-Trip', () => {
+  it('generates a valid styled 19-sheet + Instructions workbook and round-trips all fields cleanly', async () => {
+    const sampleDate = new Date('2026-11-23T08:30:00.000Z');
+    const expiryDate = new Date('2027-06-30T00:00:00.000Z');
+    const workbook = createDataMigrationWorkbook({
+      Categories: [
+        {
+          id: 'cat-1',
+          name: 'Beverages',
+          nameMm: 'အချိုရည်',
+          description: 'Cold drinks',
+          slug: 'beverages',
+          isActive: true,
+          createdAt: sampleDate,
+        },
+      ],
+      Products: [
+        {
+          id: 'prod-1',
+          name: 'Energy Drink',
+          nameMm: 'အားဖြည့်အချိုရည်',
+          sku: 'DRK-001',
+          barcode: '8850123456789',
+          categoryId: 'beverages',
+          costPrice: 700,
+          sellingPrice: 1000,
+          stockQuantity: 48.5,
+          lowStockThreshold: 10,
+          unit: 'pcs',
+          batchNumber: 'B-2026-11',
+          expiryDate,
+          imageUrl: null,
+          isActive: true,
+          createdAt: sampleDate,
+          updatedAt: sampleDate,
+        },
+      ],
+      ProductUnits: [
+        {
+          id: 'pu-1',
+          productId: 'DRK-001',
+          unitName: 'carton',
+          nameMm: 'ဖာ',
+          conversionFactor: 24,
+          sellingPrice: 22000,
+          barcode: '8850123456796',
+          createdAt: sampleDate,
+          updatedAt: sampleDate,
+        },
+      ],
+      Customers: [
+        {
+          id: 'cust-1',
+          name: 'Daw Mya',
+          phone: '09771234567',
+          email: 'mya@example.com',
+          address: 'Yangon',
+          totalPurchases: 150000,
+          creditBalance: 25000,
+          creditLimit: 100000,
+          loyaltyPoints: 150,
+          createdAt: sampleDate,
+          updatedAt: sampleDate,
+        },
+      ],
+      Suppliers: [
+        {
+          id: 'sup-1',
+          name: 'Golden Star Wholesale',
+          contactPerson: 'U Hla',
+          phone: '09440011223',
+          email: null,
+          address: 'Mandalay',
+          creditBalance: 50000,
+          notes: 'Net 15',
+          isActive: true,
+          createdAt: sampleDate,
+          updatedAt: sampleDate,
+        },
+      ],
+      InvoiceCounters: [
+        { date: '20261123', counter: 12 },
+        { date: 'PO-20261123', counter: 3 },
+      ],
+    });
+
+    // 1 Instructions sheet + 19 operational data sheets = 20 sheets total
+    assert.equal(Object.keys(DATA_MIGRATION_SHEETS).length, 19);
+    assert.equal(workbook.length, 20);
+    assert.equal(workbook[0].sheet, 'Instructions');
+
+    const buffer = await workbookBuffer(workbook);
+    assert.ok(buffer.length > 0);
+    validateXlsxContainer(buffer);
+
+    const parsed = await parseDataMigrationWorkbook(buffer);
+    assert.equal(parsed.Products?.length, 1);
+    assert.equal(parsed.Products?.[0].barcode, '8850123456789');
+    assert.equal(parsed.Products?.[0].batchNumber, 'B-2026-11');
+    assert.equal(parsed.Products?.[0].stockQuantity, 48.5);
+
+    assert.equal(parsed.ProductUnits?.length, 1);
+    assert.equal(parsed.ProductUnits?.[0].unitName, 'carton');
+    assert.equal(parsed.ProductUnits?.[0].conversionFactor, 24);
+    assert.equal(parsed.ProductUnits?.[0].barcode, '8850123456796');
+
+    assert.equal(parsed.Customers?.length, 1);
+    assert.equal(parsed.Customers?.[0].phone, '09771234567');
+    assert.equal(parsed.Customers?.[0].creditBalance, 25000);
+    assert.equal(parsed.Customers?.[0].creditLimit, 100000);
+
+    assert.equal(parsed.Suppliers?.length, 1);
+    assert.equal(parsed.Suppliers?.[0].name, 'Golden Star Wholesale');
+    assert.equal(parsed.InvoiceCounters?.length, 2);
+    assert.equal(parsed.InvoiceCounters?.[1].date, 'PO-20261123');
+  });
+
+  it('remains backward-compatible when parsing legacy v1 sheets missing newer optional columns', async () => {
+    const legacyBuffer = await writeXlsxFile([
+      {
+        sheet: 'Customers',
+        data: [
+          ['id', 'name', 'phone', 'totalPurchases', 'loyaltyPoints'],
+          ['c-legacy', 'U Ba', '09123456789', 5000, 5],
+        ],
+      },
+      {
+        sheet: 'Products',
+        data: [
+          ['id', 'name', 'sku', 'categoryId', 'sellingPrice', 'stockQuantity'],
+          ['p-legacy', 'Legacy Tea', 'TEA-01', 'beverages', 1200, 10],
+        ],
+      },
+    ]).toBuffer();
+
+    const parsed = await parseDataMigrationWorkbook(legacyBuffer);
+    assert.equal(parsed.Customers?.length, 1);
+    assert.equal(parsed.Customers?.[0].name, 'U Ba');
+    assert.equal(parsed.Products?.length, 1);
+    assert.equal(parsed.Products?.[0].sku, 'TEA-01');
   });
 });

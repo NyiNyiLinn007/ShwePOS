@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
 import {
   SaleRecord,
   getPaymentMethodLabel,
@@ -25,7 +25,7 @@ export function SaleQuickViewModal({
   onPrint,
   onRequestAction,
 }: SaleQuickViewModalProps) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
 
   if (!sale) return null;
 
@@ -106,11 +106,16 @@ export function SaleQuickViewModal({
                   </tr>
                 </thead>
                 <tbody>
-                  {sale.items?.map((item) => (
+                  {sale.items?.map((item) => {
+                    const soldUnit = item.unitName || item.product?.unit;
+                    const refunded = Number(item.refundedQuantity || 0);
+                    return (
                     <tr key={item.id}>
                       <td>
                         <div style={{ fontWeight: 600, fontSize: 'var(--text-sm)' }}>
-                          {item.product?.name || 'Unknown Product'}
+                          {language === 'mm' && item.product?.nameMm
+                            ? item.product.nameMm
+                            : item.product?.name || 'Unknown Product'}
                         </div>
                         {item.product?.sku && (
                           <div
@@ -125,7 +130,16 @@ export function SaleQuickViewModal({
                         )}
                       </td>
                       <td style={{ textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
-                        {item.quantity}
+                        <div>
+                          {formatQuantity(item.quantity, soldUnit)}
+                          {soldUnit ? ` ${soldUnit}` : ''}
+                        </div>
+                        {refunded > 0 && (
+                          <div style={{ fontSize: '11px', color: 'var(--warning)' }}>
+                            {t('Refunded', 'ပြန်အမ်းပြီး')}: {formatQuantity(refunded, soldUnit)}
+                            {soldUnit ? ` ${soldUnit}` : ''}
+                          </div>
+                        )}
                       </td>
                       <td
                         style={{
@@ -162,7 +176,8 @@ export function SaleQuickViewModal({
                         {formatCurrency(item.total)}
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

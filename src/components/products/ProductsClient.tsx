@@ -23,6 +23,7 @@ import {
   Trash2,
   X,
   Info,
+  Layers,
 } from '@/components/ui/Icons';
 import {
   ProductFormModal,
@@ -32,6 +33,7 @@ import {
   generateRandomSKU,
 } from '@/components/products/ProductFormModal';
 import { BarcodeStickerModal } from '@/components/products/BarcodeStickerModal';
+import { ImageLightboxModal } from '@/components/ui/ImageLightboxModal';
 import type { ProductUnit } from '@/types';
 
 /* ---------- Types ---------- */
@@ -99,6 +101,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
   const [deleteTarget, setDeleteTarget] = useState<Product | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [labelTarget, setLabelTarget] = useState<Product | null>(null);
+  const [imagePreviewTarget, setImagePreviewTarget] = useState<Product | null>(null);
 
   const filteredProducts = useMemo(() => {
     let result = products;
@@ -110,7 +113,14 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
           p.name.toLowerCase().includes(q) ||
           (p.nameMm && p.nameMm.includes(search)) ||
           p.sku.toLowerCase().includes(q) ||
-          (p.barcode && p.barcode.toLowerCase().includes(q))
+          (p.barcode && p.barcode.toLowerCase().includes(q)) ||
+          Boolean(
+            p.productUnits?.some(
+              (u) =>
+                u.unitName.toLowerCase().includes(q) ||
+                (u.barcode && u.barcode.toLowerCase().includes(q))
+            )
+          )
       );
     }
 
@@ -460,14 +470,20 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                       <tr key={product.id}>
                         <td>
                           {product.imageUrl ? (
-                            <div
+                            <button
+                              type="button"
+                              onClick={() => setImagePreviewTarget(product)}
+                              title={t('Click to enlarge', 'ချဲ့ကြည့်ရန် နှိပ်ပါ')}
                               style={{
                                 width: 38,
                                 height: 38,
+                                padding: 0,
                                 borderRadius: 'var(--radius-sm)',
                                 background: 'var(--bg-tertiary)',
                                 border: '1px solid var(--border-subtle)',
                                 overflow: 'hidden',
+                                cursor: 'zoom-in',
+                                display: 'block',
                               }}
                             >
                               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -480,7 +496,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                                   objectFit: 'cover',
                                 }}
                               />
-                            </div>
+                            </button>
                           ) : (
                             <ProductMonogram name={product.name} size={38} />
                           )}
@@ -503,6 +519,20 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                               </div>
                             )}
                             <div className="flex gap-xs" style={{ marginTop: 2, flexWrap: 'wrap' }}>
+                              {product.productUnits && product.productUnits.length > 0 && (
+                                <span
+                                  className="badge badge-info"
+                                  style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}
+                                  title={product.productUnits
+                                    .map((u) => `${u.unitName} (×${u.conversionFactor}) — ${formatCurrency(u.sellingPrice)}`)
+                                    .join(', ')}
+                                >
+                                  <Layers size={10} strokeWidth={2} />
+                                  {product.productUnits
+                                    .map((u) => `${u.unitName} ×${u.conversionFactor}`)
+                                    .join(', ')}
+                                </span>
+                              )}
                               {product.batchNumber && (
                                 <span className="badge badge-neutral" style={{ fontSize: '10px' }}>
                                   Batch: {product.batchNumber}
@@ -761,6 +791,25 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
       <BarcodeStickerModal
         product={labelTarget}
         onClose={() => setLabelTarget(null)}
+      />
+
+      <ImageLightboxModal
+        isOpen={Boolean(imagePreviewTarget?.imageUrl)}
+        src={imagePreviewTarget?.imageUrl || ''}
+        alt={imagePreviewTarget?.name || 'Product Image'}
+        title={
+          imagePreviewTarget
+            ? language === 'mm' && imagePreviewTarget.nameMm
+              ? `${imagePreviewTarget.name} (${imagePreviewTarget.nameMm})`
+              : imagePreviewTarget.name
+            : undefined
+        }
+        subtitle={imagePreviewTarget ? `SKU: ${imagePreviewTarget.sku}` : undefined}
+        highlightText={
+          imagePreviewTarget ? formatCurrency(imagePreviewTarget.sellingPrice) : undefined
+        }
+        whiteFrame={false}
+        onClose={() => setImagePreviewTarget(null)}
       />
     </>
   );

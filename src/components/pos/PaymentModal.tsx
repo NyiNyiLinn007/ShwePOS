@@ -16,7 +16,9 @@ import {
   Star,
   CheckCircle2,
   QrCode,
+  ZoomIn,
 } from '@/components/ui/Icons';
+import { ImageLightboxModal } from '@/components/ui/ImageLightboxModal';
 
 interface PaymentModalProps {
   onClose: () => void;
@@ -169,6 +171,7 @@ export default function PaymentModal({
 
   // Loyalty points redemption
   const [pointsToRedeem, setPointsToRedeem] = useState(0);
+  const [qrLightboxAmount, setQrLightboxAmount] = useState<number | null>(null);
 
   const [clientSaleId] = useState(createClientSaleId);
 
@@ -405,6 +408,8 @@ export default function PaymentModal({
         const offlineItems = items.map((i, idx) => ({
           id: `offline-item-${idx}`,
           quantity: i.quantity,
+          unitName: i.unit,
+          unitFactor: i.unitFactor ?? 1,
           unitPrice: i.unitPrice,
           discount: i.discount || 0,
           total: Math.max(0, Math.round(i.unitPrice * i.quantity) - (i.discount || 0)),
@@ -427,6 +432,7 @@ export default function PaymentModal({
             items: offlineItems.map((oi) => ({
               name: oi.product.name,
               quantity: oi.quantity,
+              unit: oi.unitName,
               unitPrice: oi.unitPrice,
               discount: oi.discount,
               total: oi.total,
@@ -670,13 +676,20 @@ export default function PaymentModal({
                     border: '1px solid var(--border-default)',
                   }}
                 >
-                  <div
+                  <button
+                    type="button"
+                    onClick={() => setQrLightboxAmount(grandTotal)}
+                    title={t('Click to enlarge QR code', 'QR ပုံကို ချဲ့ကြည့်ရန် နှိပ်ပါ')}
+                    aria-label={t('Click to enlarge QR code', 'QR ပုံကို ချဲ့ကြည့်ရန် နှိပ်ပါ')}
                     style={{
                       padding: 6,
                       background: '#fff',
                       borderRadius: 'var(--radius-sm)',
                       border: '1px solid var(--border-subtle)',
                       flexShrink: 0,
+                      cursor: 'zoom-in',
+                      position: 'relative',
+                      display: 'block',
                     }}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -685,7 +698,22 @@ export default function PaymentModal({
                       alt={mobileBankingName || 'Mobile Banking QR'}
                       style={{ width: 124, height: 124, objectFit: 'contain', display: 'block' }}
                     />
-                  </div>
+                    <span
+                      style={{
+                        position: 'absolute',
+                        right: 4,
+                        bottom: 4,
+                        background: 'rgba(15, 23, 42, 0.78)',
+                        color: '#fff',
+                        borderRadius: 4,
+                        padding: '2px 4px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <ZoomIn size={12} strokeWidth={2} />
+                    </span>
+                  </button>
                   <div style={{ flex: 1 }}>
                     <div
                       style={{
@@ -717,6 +745,22 @@ export default function PaymentModal({
                     >
                       {formatCurrency(grandTotal)}
                     </div>
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setQrLightboxAmount(grandTotal)}
+                      style={{
+                        marginTop: 6,
+                        padding: '2px 8px',
+                        fontSize: 'var(--text-xs)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                    >
+                      <ZoomIn size={12} strokeWidth={1.75} />
+                      {t('Enlarge QR', 'QR ပုံချဲ့ပြရန်')}
+                    </button>
                   </div>
                 </div>
               )}
@@ -894,14 +938,50 @@ export default function PaymentModal({
                       border: '1px solid var(--border-subtle)',
                     }}
                   >
-                    <div style={{ padding: 4, background: '#fff', borderRadius: 4, flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setQrLightboxAmount(
+                          splitLegs
+                            .filter((l) => l.method === 'MOBILE_BANKING')
+                            .reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0)
+                        )
+                      }
+                      title={t('Click to enlarge QR code', 'QR ပုံကို ချဲ့ကြည့်ရန် နှိပ်ပါ')}
+                      aria-label={t('Click to enlarge QR code', 'QR ပုံကို ချဲ့ကြည့်ရန် နှိပ်ပါ')}
+                      style={{
+                        padding: 4,
+                        background: '#fff',
+                        borderRadius: 4,
+                        border: '1px solid var(--border-subtle)',
+                        flexShrink: 0,
+                        cursor: 'zoom-in',
+                        position: 'relative',
+                        display: 'block',
+                      }}
+                    >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={mobileBankingQrUrl}
                         alt={mobileBankingName || 'Mobile Banking QR'}
                         style={{ width: 84, height: 84, objectFit: 'contain', display: 'block' }}
                       />
-                    </div>
+                      <span
+                        style={{
+                          position: 'absolute',
+                          right: 3,
+                          bottom: 3,
+                          background: 'rgba(15, 23, 42, 0.78)',
+                          color: '#fff',
+                          borderRadius: 3,
+                          padding: '1px 3px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <ZoomIn size={10} strokeWidth={2} />
+                      </span>
+                    </button>
                     <div style={{ fontSize: 'var(--text-xs)' }}>
                       <div style={{ fontWeight: 700, color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         <QrCode size={12} strokeWidth={1.75} />
@@ -1178,6 +1258,25 @@ export default function PaymentModal({
           </button>
         </div>
       </div>
+
+      {mobileBankingQrUrl && (
+        <ImageLightboxModal
+          isOpen={qrLightboxAmount !== null}
+          src={mobileBankingQrUrl}
+          alt={mobileBankingName || 'Mobile Banking QR'}
+          title={mobileBankingName || 'KBZPay / WavePay'}
+          subtitle={t(
+            'Ask customer to scan QR and pay exact amount:',
+            'ဖောက်သည်အား QR Scan ဖတ်၍ အောက်ပါပမာဏအတိအကျ ပေးချေခိုင်းပါ -'
+          )}
+          highlightText={
+            qrLightboxAmount !== null && qrLightboxAmount > 0
+              ? formatCurrency(qrLightboxAmount)
+              : undefined
+          }
+          onClose={() => setQrLightboxAmount(null)}
+        />
+      )}
     </div>
   );
 }

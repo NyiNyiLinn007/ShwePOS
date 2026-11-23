@@ -17,7 +17,9 @@ import {
   Info,
   X,
   QrCode,
+  ZoomIn,
 } from '@/components/ui/Icons';
+import { ImageLightboxModal } from '@/components/ui/ImageLightboxModal';
 import {
   UserManagementSection,
   UserRecord,
@@ -90,6 +92,7 @@ export function SettingsClient({
   const [receiptFooter, setReceiptFooter] = useState(initialSettings.receiptFooter || '');
   const [savingReceipt, setSavingReceipt] = useState(false);
   const [showReceiptPreview, setShowReceiptPreview] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{ src: string; title: string } | null>(null);
 
   // ── Users ─────────────────────────────────────────────────
   const [users, setUsers] = useState<UserRecord[]>(initialUsers);
@@ -338,18 +341,36 @@ export function SettingsClient({
               <label className="input-label">{t('Shop Logo', 'ဆိုင်လိုဂို')}</label>
               <div className="flex gap-sm" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
                 {logo && (
-                  <img
-                    src={logo}
-                    alt="Logo"
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPreviewImage({
+                        src: logo,
+                        title: t('Shop Logo', 'ဆိုင်လိုဂို'),
+                      })
+                    }
+                    title={t('Click to enlarge', 'ချဲ့ကြည့်ရန် နှိပ်ပါ')}
                     style={{
-                      width: 44,
-                      height: 44,
-                      objectFit: 'contain',
+                      padding: 2,
                       borderRadius: 6,
                       border: '1px solid var(--border-color)',
                       background: '#fff',
+                      cursor: 'zoom-in',
+                      display: 'block',
                     }}
-                  />
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={logo}
+                      alt="Logo"
+                      style={{
+                        width: 44,
+                        height: 44,
+                        objectFit: 'contain',
+                        display: 'block',
+                      }}
+                    />
+                  </button>
                 )}
                 <label
                   className="btn btn-secondary btn-sm"
@@ -570,7 +591,7 @@ export function SettingsClient({
                       if (!file) return;
                       try {
                         const dataUrl = await resizeImageToDataUrl(file, {
-                          maxSize: 360,
+                          maxSize: 640,
                           mimeType: 'image/png',
                           quality: 0.92,
                         });
@@ -595,13 +616,24 @@ export function SettingsClient({
               </div>
             </div>
             {mobileBankingQrUrl && (
-              <div
+              <button
+                type="button"
+                onClick={() =>
+                  setPreviewImage({
+                    src: mobileBankingQrUrl,
+                    title: mobileBankingName || 'KBZPay / WavePay',
+                  })
+                }
+                title={t('Click to enlarge QR code', 'QR ပုံကို ချဲ့ကြည့်ရန် နှိပ်ပါ')}
                 style={{
                   padding: 8,
                   background: '#fff',
                   borderRadius: 'var(--radius-md)',
                   border: '1px solid var(--border-color)',
                   textAlign: 'center',
+                  cursor: 'zoom-in',
+                  position: 'relative',
+                  display: 'block',
                 }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -610,7 +642,22 @@ export function SettingsClient({
                   alt="Mobile Banking QR"
                   style={{ width: 120, height: 120, objectFit: 'contain', display: 'block' }}
                 />
-              </div>
+                <span
+                  style={{
+                    position: 'absolute',
+                    right: 6,
+                    bottom: 6,
+                    background: 'rgba(15, 23, 42, 0.78)',
+                    color: '#fff',
+                    borderRadius: 4,
+                    padding: '2px 4px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  <ZoomIn size={12} strokeWidth={2} />
+                </span>
+              </button>
             )}
           </div>
           <div style={{ marginTop: 'var(--space-lg)', display: 'flex', justifyContent: 'flex-end' }}>
@@ -849,6 +896,14 @@ export function SettingsClient({
           </div>
         </div>
       </div>
+
+      <ImageLightboxModal
+        isOpen={Boolean(previewImage)}
+        src={previewImage?.src || ''}
+        alt={previewImage?.title || 'Image Preview'}
+        title={previewImage?.title}
+        onClose={() => setPreviewImage(null)}
+      />
     </>
   );
 }

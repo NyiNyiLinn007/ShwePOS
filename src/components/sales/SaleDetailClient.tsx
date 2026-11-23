@@ -170,6 +170,8 @@ export function SaleDetailClient({
             <tbody>
               {sale.items?.map((item, idx) => {
                 const refunded = Number(item.refundedQuantity || 0);
+                const soldUnit = item.unitName || item.product?.unit;
+                const unitFactor = Number(item.unitFactor || 1);
                 return (
                   <tr key={item.id}>
                     <td style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>
@@ -200,7 +202,16 @@ export function SaleDetailClient({
                         fontWeight: 600,
                       }}
                     >
-                      <div>{formatQuantity(item.quantity, item.product?.unit)}</div>
+                      <div>
+                        {formatQuantity(item.quantity, soldUnit)}
+                        {soldUnit ? ` ${soldUnit}` : ''}
+                      </div>
+                      {unitFactor > 1 && item.product?.unit && (
+                        <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400 }}>
+                          ({formatQuantity(Number(item.quantity) * unitFactor, item.product.unit)}{' '}
+                          {item.product.unit})
+                        </div>
+                      )}
                       {refunded > 0 && (
                         <div
                           style={{
@@ -213,7 +224,8 @@ export function SaleDetailClient({
                         >
                           <RotateCcw size={11} strokeWidth={1.75} />
                           {t('Refunded', 'ပြန်အမ်းပြီး')}:{' '}
-                          {formatQuantity(refunded, item.product?.unit)}
+                          {formatQuantity(refunded, soldUnit)}
+                          {soldUnit ? ` ${soldUnit}` : ''}
                         </div>
                       )}
                     </td>

@@ -14,6 +14,7 @@ export interface QueuedSalePayload {
     items: Array<{
       name: string;
       quantity: number;
+      unit?: string;
       unitPrice: number;
       discount?: number;
       total: number;

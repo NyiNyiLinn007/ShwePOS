@@ -69,6 +69,7 @@ import {
   Layers,
   FileText,
   Check,
+  ZoomIn,
 } from 'lucide-react';
 
 export {
@@ -139,6 +140,7 @@ export {
   Layers,
   FileText,
   Check,
+  ZoomIn,
 };
 
 export function NavIcon({

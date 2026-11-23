@@ -348,14 +348,17 @@ export default function POSClient({
       payments: saleData.payments,
     });
 
-    // Update stock counts locally after sale (account for unit conversion factor)
+    // Update stock counts locally after sale (sum across all unit lines for each product)
     const soldItems = useCartStore.getState().items;
     setProducts((prev) =>
       prev.map((product) => {
-        const soldItem = soldItems.find((si) => si.productId === product.id);
-        if (soldItem) {
+        const matchingLines = soldItems.filter((si) => si.productId === product.id);
+        if (matchingLines.length > 0) {
           const deductedBaseQty = roundQuantity(
-            soldItem.quantity * (soldItem.unitFactor ?? 1)
+            matchingLines.reduce(
+              (sum, si) => sum + si.quantity * (si.unitFactor ?? 1),
+              0
+            )
           );
           return {
             ...product,

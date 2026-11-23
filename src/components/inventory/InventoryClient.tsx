@@ -4,7 +4,15 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatDate, formatDateTime, formatQuantity, isFractionalUnit, parseMyanmarDateBoundary, roundQuantity } from '@/lib/utils';
+import {
+  formatDate,
+  formatDateTime,
+  formatQuantity,
+  getExpiryInfo,
+  isFractionalUnit,
+  parseMyanmarDateBoundary,
+  roundQuantity,
+} from '@/lib/utils';
 import { STOCK_MOVEMENT_TYPES } from '@/lib/constants';
 import {
   StockMovementIcon,
@@ -543,22 +551,22 @@ export function InventoryClient({
                                       Batch: {product.batchNumber}
                                     </span>
                                   )}
-                                  {product.expiryDate && (() => {
-                                    const exp = new Date(product.expiryDate);
-                                    const diffDays = Math.ceil((exp.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-                                    if (diffDays < 0) {
+                                  {(() => {
+                                    const expiryInfo = getExpiryInfo(product.expiryDate);
+                                    if (!expiryInfo) return null;
+                                    if (expiryInfo.status === 'expired') {
                                       return (
                                         <span className="badge badge-danger" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                                           <AlertTriangle size={10} strokeWidth={2} />
-                                          {t('Expired', 'သက်တမ်းကုန်')} ({formatDate(exp)})
+                                          {t('Expired', 'သက်တမ်းကုန်')} ({formatDate(expiryInfo.date)})
                                         </span>
                                       );
                                     }
-                                    if (diffDays <= 30) {
+                                    if (expiryInfo.status === 'expiring_soon') {
                                       return (
                                         <span className="badge badge-warning" style={{ fontSize: '10px', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                                           <Clock size={10} strokeWidth={2} />
-                                          {t('Exp', 'သက်တမ်း')}: {formatDate(exp)} ({diffDays}d)
+                                          {t('Exp', 'သက်တမ်း')}: {formatDate(expiryInfo.date)} ({expiryInfo.diffDays}d)
                                         </span>
                                       );
                                     }

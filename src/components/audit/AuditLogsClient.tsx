@@ -27,6 +27,7 @@ const ACTION_LABELS: Record<string, { en: string; mm: string }> = {
   SHIFT_CLOSED: { en: 'Shift Closed', mm: 'အဆိုင်းပိတ်ခြင်း' },
   USER_UPDATED: { en: 'User Account Updated', mm: 'ဝန်ထမ်းအကောင့် ပြင်ဆင်ခြင်း' },
   SETTINGS_UPDATED: { en: 'Settings Updated', mm: 'ဆိုင်ဆက်တင် ပြင်ဆင်ခြင်း' },
+  DATA_MIGRATION_IMPORT: { en: 'Excel Data Imported', mm: 'Excel ဒေတာ သွင်းယူခြင်း' },
 };
 
 const ENTITY_LABELS: Record<string, { en: string; mm: string }> = {
@@ -39,6 +40,7 @@ const ENTITY_LABELS: Record<string, { en: string; mm: string }> = {
   SHIFT: { en: 'Shift', mm: 'အဆိုင်း' },
   USER: { en: 'User', mm: 'ဝန်ထမ်း' },
   SETTINGS: { en: 'Settings', mm: 'ဆက်တင်' },
+  DATA_MIGRATION: { en: 'Data Migration', mm: 'ဒေတာကူးပြောင်းမှု' },
 };
 
 const ACTION_OPTIONS = Object.keys(ACTION_LABELS);

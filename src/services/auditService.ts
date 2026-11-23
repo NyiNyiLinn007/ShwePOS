@@ -15,7 +15,8 @@ export type AuditAction =
   | 'CUSTOMER_DEBT_REPAYMENT'
   | 'SHIFT_CLOSED'
   | 'USER_UPDATED'
-  | 'SETTINGS_UPDATED';
+  | 'SETTINGS_UPDATED'
+  | 'DATA_MIGRATION_IMPORT';
 
 export type AuditEntityType =
   | 'SALE'
@@ -26,7 +27,8 @@ export type AuditEntityType =
   | 'PURCHASE_ORDER'
   | 'SHIFT'
   | 'USER'
-  | 'SETTINGS';
+  | 'SETTINGS'
+  | 'DATA_MIGRATION';
 
 export interface AuditLogInput {
   userId: string;
