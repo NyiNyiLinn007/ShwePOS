@@ -9,6 +9,8 @@ import {
   X,
   Pencil,
   Banknote,
+  AlertTriangle,
+  RotateCcw,
 } from '@/components/ui/Icons';
 import { useState } from 'react';
 
@@ -34,6 +36,8 @@ export default function Cart({
   const heldBills = useCartStore((s) => s.heldBills);
   const removeItem = useCartStore((s) => s.removeItem);
   const updateQuantity = useCartStore((s) => s.updateQuantity);
+  const updateUnitPrice = useCartStore((s) => s.updateUnitPrice);
+  const setItemUnit = useCartStore((s) => s.setItemUnit);
   const updateItemDiscount = useCartStore((s) => s.updateItemDiscount);
   const setDiscount = useCartStore((s) => s.setDiscount);
   const setDiscountType = useCartStore((s) => s.setDiscountType);
@@ -49,6 +53,8 @@ export default function Cart({
   const [discountInput, setDiscountInput] = useState('');
   const [editingQtyProductId, setEditingQtyProductId] = useState<string | null>(null);
   const [qtyInput, setQtyInput] = useState('');
+  const [editingPriceProductId, setEditingPriceProductId] = useState<string | null>(null);
+  const [priceInput, setPriceInput] = useState('');
   const [editingItemDiscountId, setEditingItemDiscountId] = useState<string | null>(null);
   const [itemDiscountInput, setItemDiscountInput] = useState('');
 
@@ -75,6 +81,14 @@ export default function Cart({
       updateQuantity(productId, val);
     }
     setEditingQtyProductId(null);
+  };
+
+  const handlePriceSubmit = (productId: string) => {
+    const val = parseFloat(priceInput);
+    if (!Number.isNaN(val) && val >= 0) {
+      updateUnitPrice(productId, val);
+    }
+    setEditingPriceProductId(null);
   };
 
   const handleItemDiscountSubmit = (productId: string) => {
@@ -146,17 +160,118 @@ export default function Cart({
           items.map((item) => {
             const fractional = isFractionalUnit(item.unit);
             const step = fractional ? 0.5 : 1;
+            const factor = item.unitFactor ?? 1;
+            const maxForUnit = fractional
+              ? item.maxStock / factor
+              : Math.floor(item.maxStock / factor + 1e-9);
             const lineGross = Math.round(item.unitPrice * item.quantity);
             const lineDiscount = item.discount || 0;
             const lineNet = Math.max(0, lineGross - lineDiscount);
+            const origPrice = item.originalUnitPrice ?? item.unitPrice;
+            const isPriceOverridden = item.unitPrice !== origPrice;
+            const effectiveUnitCost = (item.costPrice ?? 0) * factor;
+            const isBelowCost = effectiveUnitCost > 0 && item.unitPrice < effectiveUnitCost;
+            const hasAltUnits = (item.availableUnits?.length ?? 0) > 0;
 
             return (
               <div key={item.productId} className="pos-cart-item" style={{ flexWrap: 'wrap' }}>
                 <div className="pos-cart-item-info" style={{ minWidth: '120px' }}>
-                  <div className="pos-cart-item-name">{item.name}</div>
+                  <div className="pos-cart-item-name" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <span>{item.name}</span>
+                    {hasAltUnits && (
+                      <select
+                        className="input"
+                        value={item.productUnitId ?? ''}
+                        onChange={(e) => setItemUnit(item.productId, e.target.value || null)}
+                        title={t('Select packaging unit', 'ထုပ်ပိုးမှုယူနစ် ရွေးရန်')}
+                        style={{
+                          padding: '1px 6px',
+                          fontSize: 11,
+                          height: 22,
+                          width: 'auto',
+                          minWidth: 68,
+                          fontWeight: 600,
+                        }}
+                      >
+                        <option value="">{item.baseUnit ?? item.unit}</option>
+                        {item.availableUnits!.map((u) => {
+                          const canFit = item.maxStock >= u.conversionFactor;
+                          return (
+                            <option key={u.id} value={u.id} disabled={!canFit}>
+                              {u.unitName} (×{formatQuantity(u.conversionFactor)})
+                            </option>
+                          );
+                        })}
+                      </select>
+                    )}
+                  </div>
                   <div className="pos-cart-item-price" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    {editingPriceProductId === item.productId ? (
+                      <input
+                        type="number"
+                        className="input"
+                        value={priceInput}
+                        onChange={(e) => setPriceInput(e.target.value)}
+                        onBlur={() => handlePriceSubmit(item.productId)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handlePriceSubmit(item.productId);
+                          if (e.key === 'Escape') setEditingPriceProductId(null);
+                        }}
+                        autoFocus
+                        min={0}
+                        placeholder="Price K"
+                        style={{ width: 84, padding: '1px 4px', fontSize: 11, textAlign: 'right' }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPriceInput(String(item.unitPrice));
+                          setEditingPriceProductId(item.productId);
+                        }}
+                        title={t('Click to override unit price', 'ဈေးနှုန်းပြင်ရောင်းရန် နှိပ်ပါ')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          fontSize: 'inherit',
+                          color: isBelowCost ? 'var(--danger)' : isPriceOverridden ? 'var(--warning)' : 'inherit',
+                          fontWeight: isPriceOverridden ? 700 : undefined,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 3,
+                        }}
+                      >
+                        <span>{formatCurrency(item.unitPrice)}</span>
+                        <Pencil size={10} strokeWidth={1.75} style={{ opacity: 0.7 }} />
+                      </button>
+                    )}
+                    {isPriceOverridden && (
+                      <>
+                        <span style={{ textDecoration: 'line-through', opacity: 0.55, fontSize: 10 }}>
+                          {formatCurrency(origPrice)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateUnitPrice(item.productId, origPrice)}
+                          title={t('Reset to catalog price', 'မူလဈေးသို့ ပြန်ထားရန်')}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                          }}
+                        >
+                          <RotateCcw size={10} strokeWidth={2} />
+                        </button>
+                      </>
+                    )}
                     <span>
-                      {formatCurrency(item.unitPrice)} × {formatQuantity(item.quantity)} {item.unit}
+                      × {formatQuantity(item.quantity)} {item.unit}
                     </span>
                     {editingItemDiscountId === item.productId ? (
                       <input
@@ -196,6 +311,22 @@ export default function Cart({
                       </button>
                     )}
                   </div>
+                  {isBelowCost && (
+                    <div
+                      style={{
+                        marginTop: 2,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        color: 'var(--danger)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 3,
+                      }}
+                    >
+                      <AlertTriangle size={10} strokeWidth={2} />
+                      {t('Below cost price', 'အရင်းဈေးအောက် ရောက်နေသည်')} ({formatCurrency(effectiveUnitCost)})
+                    </div>
+                  )}
                 </div>
                 <div className="pos-cart-item-qty">
                   <button
@@ -218,7 +349,7 @@ export default function Cart({
                       }}
                       autoFocus
                       min={fractional ? 0.01 : 1}
-                      max={item.maxStock}
+                      max={maxForUnit}
                       step={fractional ? 'any' : 1}
                       style={{ width: 54, padding: '2px 4px', fontSize: 12, textAlign: 'center' }}
                     />
@@ -238,9 +369,9 @@ export default function Cart({
                     onClick={() => updateQuantity(item.productId, item.quantity + step)}
                     type="button"
                     aria-label={t('increaseQuantity')}
-                    disabled={item.quantity >= item.maxStock}
+                    disabled={item.quantity >= maxForUnit}
                     style={
-                      item.quantity >= item.maxStock
+                      item.quantity >= maxForUnit
                         ? { opacity: 0.4, cursor: 'not-allowed' }
                         : undefined
                     }

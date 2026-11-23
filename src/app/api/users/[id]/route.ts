@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateUserSchema } from '@/lib/validations';
+import { logAudit } from '@/services/auditService';
 
 export async function PUT(
   request: NextRequest,
@@ -10,7 +11,7 @@ export async function PUT(
 ) {
   try {
     await validateCsrf(request);
-    await requireRole('ADMIN');
+    const adminUser = await requireRole('ADMIN');
 
     const { id } = await params;
     const body = await request.json();
@@ -73,6 +74,23 @@ export async function PUT(
       },
     });
 
+    await logAudit({
+      userId: adminUser.id,
+      action: 'USER_UPDATED',
+      entityType: 'USER',
+      entityId: user.id,
+      summary: `Updated user ${user.name} (Role: ${existing.role} -> ${user.role}, Active: ${existing.isActive} -> ${user.isActive})`,
+      metadata: {
+        targetUserId: user.id,
+        targetEmail: user.email,
+        oldRole: existing.role,
+        newRole: user.role,
+        oldActive: existing.isActive,
+        newActive: user.isActive,
+        passwordChanged: Boolean(parsed.password && parsed.password.trim().length > 0),
+      },
+    });
+
     return NextResponse.json(user);
   } catch (error) {
     return handleApiError(error, 'Failed to update user');
@@ -85,7 +103,7 @@ export async function DELETE(
 ) {
   try {
     await validateCsrf(request);
-    await requireRole('ADMIN');
+    const adminUser = await requireRole('ADMIN');
 
     const { id } = await params;
 
@@ -101,6 +119,15 @@ export async function DELETE(
         isActive: false,
         sessionVersion: { increment: 1 },
       },
+    });
+
+    await logAudit({
+      userId: adminUser.id,
+      action: 'USER_UPDATED',
+      entityType: 'USER',
+      entityId: existing.id,
+      summary: `Deactivated user ${existing.name} (${existing.email})`,
+      metadata: { targetUserId: existing.id, deactivated: true },
     });
 
     return NextResponse.json({

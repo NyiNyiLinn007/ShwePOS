@@ -17,6 +17,7 @@ import {
   Bar,
 } from 'recharts';
 import { useI18n } from '@/lib/i18n';
+import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, getMyanmarDateKey, getMyanmarDateParts } from '@/lib/utils';
 import {
   BarChart3,
@@ -25,7 +26,13 @@ import {
   Wallet,
   DollarSign,
   Receipt,
+  Download,
+  Printer,
 } from '@/components/ui/Icons';
+import {
+  downloadReportCsv,
+  ReportSummaryPrintModal,
+} from '@/components/reports/ReportExportModal';
 
 /* ---------- Types ---------- */
 
@@ -224,12 +231,17 @@ function PieTooltip({
 
 export function ReportsClient() {
   const { language, t } = useI18n();
+  const { addToast } = useToast();
 
   const [preset, setPreset] = useState<DatePreset>('month');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [activeRange, setActiveRange] = useState<{ start: string; end: string }>(() =>
+    getDateRange('month')
+  );
   const [data, setData] = useState<ReportData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showPrintModal, setShowPrintModal] = useState(false);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -249,6 +261,7 @@ export function ReportsClient() {
         return;
       }
 
+      setActiveRange({ start, end });
       const res = await fetch(`/api/reports?startDate=${start}&endDate=${end}`);
       if (res.ok) {
         const json = await res.json();
@@ -314,6 +327,35 @@ export function ReportsClient() {
           <p className="page-subtitle mm-text">
             {t('Analytics & Insights', 'ခွဲခြမ်းစိတ်ဖြာမှုများ')}
           </p>
+        </div>
+        <div className="page-actions" style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={!data}
+            onClick={() => {
+              if (!data) return;
+              downloadReportCsv(data, activeRange.start, activeRange.end);
+              addToast(
+                t('Report exported to CSV', 'အစီရင်ခံစာ CSV ထုတ်ယူပြီးပါပြီ'),
+                'success'
+              );
+            }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Download size={15} strokeWidth={1.75} />
+            {t('Export CSV', 'CSV ထုတ်ရန်')}
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={!data}
+            onClick={() => setShowPrintModal(true)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Printer size={15} strokeWidth={1.75} />
+            {t('Print P&L', 'P&L ပရင့်ထုတ်ရန်')}
+          </button>
         </div>
       </div>
 
@@ -787,6 +829,14 @@ export function ReportsClient() {
           </>
         )}
       </div>
+
+      <ReportSummaryPrintModal
+        isOpen={showPrintModal}
+        data={data}
+        startDate={activeRange.start}
+        endDate={activeRange.end}
+        onClose={() => setShowPrintModal(false)}
+      />
     </>
   );
 }

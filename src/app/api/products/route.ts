@@ -42,6 +42,9 @@ export async function GET(request: NextRequest) {
             nameMm: true,
           },
         },
+        productUnits: {
+          orderBy: { conversionFactor: 'asc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -105,6 +108,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const cleanUnits = (parsed.data.productUnits ?? [])
+      .filter((u) => u.unitName.trim().length > 0 && u.conversionFactor > 0)
+      .map((u) => ({
+        unitName: u.unitName.trim(),
+        nameMm: u.nameMm?.trim() || null,
+        conversionFactor: u.conversionFactor,
+        sellingPrice: u.sellingPrice,
+        barcode: u.barcode?.trim() || null,
+      }));
+
     const product = await prisma.$transaction(async (tx) => {
       const created = await tx.product.create({
         data: {
@@ -122,6 +135,13 @@ export async function POST(request: NextRequest) {
           batchNumber: parsed.data.batchNumber ?? null,
           expiryDate: parsed.data.expiryDate ? new Date(parsed.data.expiryDate) : null,
           isActive: parsed.data.isActive ?? true,
+          ...(cleanUnits.length > 0
+            ? {
+                productUnits: {
+                  create: cleanUnits,
+                },
+              }
+            : {}),
         },
         include: {
           category: {
@@ -130,6 +150,9 @@ export async function POST(request: NextRequest) {
               name: true,
               nameMm: true,
             },
+          },
+          productUnits: {
+            orderBy: { conversionFactor: 'asc' },
           },
         },
       });

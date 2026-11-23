@@ -22,6 +22,8 @@ export interface BusinessSettings {
   loyaltyEnabled: boolean;
   loyaltyEarnRate: number;
   loyaltyRedeemRate: number;
+  mobileBankingQrUrl: string | null;
+  mobileBankingName: string | null;
 }
 
 interface SettingsState extends BusinessSettings {
@@ -51,6 +53,8 @@ const DEFAULT_SETTINGS: BusinessSettings = {
   loyaltyEnabled: true,
   loyaltyEarnRate: 1000,
   loyaltyRedeemRate: 10,
+  mobileBankingQrUrl: null,
+  mobileBankingName: 'KBZPay / WavePay',
 };
 
 export const useSettingsStore = create<SettingsState>()(
@@ -80,6 +84,8 @@ export const useSettingsStore = create<SettingsState>()(
         loyaltyEnabled: state.loyaltyEnabled,
         loyaltyEarnRate: state.loyaltyEarnRate,
         loyaltyRedeemRate: state.loyaltyRedeemRate,
+        mobileBankingQrUrl: state.mobileBankingQrUrl,
+        mobileBankingName: state.mobileBankingName,
         loaded: state.loaded,
       }),
     }

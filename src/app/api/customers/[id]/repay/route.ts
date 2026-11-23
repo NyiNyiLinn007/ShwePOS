@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { ApiError, handleApiError, requireRole, validateCsrf } from '@/lib/apiAuth';
 import { repayCustomerDebtSchema } from '@/lib/validations';
 import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
+import { logAudit } from '@/services/auditService';
 
 export async function POST(
   request: NextRequest,
@@ -101,7 +102,35 @@ export async function POST(
         },
       });
 
-      return { customer: updatedCustomer, payment };
+      const newCreditBalance = roundMoney(toNumber(updatedCustomer.creditBalance));
+
+      await logAudit(
+        {
+          userId: user.id,
+          action: 'CUSTOMER_DEBT_REPAYMENT',
+          entityType: 'CUSTOMER',
+          entityId: customer.id,
+          summary: `Received ${amount} K (${method}) debt repayment from ${customer.name} (Remaining: ${newCreditBalance} K)`,
+          metadata: {
+            customerName: customer.name,
+            previousBalance: currentDebt,
+            paidAmount: amount,
+            newCreditBalance,
+            method,
+            reference: cleanRef,
+          },
+        },
+        tx
+      );
+
+      return {
+        customer: updatedCustomer,
+        payment,
+        previousBalance: currentDebt,
+        paidAmount: amount,
+        newCreditBalance,
+        receivedBy: user.name,
+      };
     });
 
     return NextResponse.json(serializePrismaData(result), { status: 201 });

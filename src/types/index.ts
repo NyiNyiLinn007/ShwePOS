@@ -28,6 +28,16 @@ export interface Category {
   products?: Product[];
 }
 
+export interface ProductUnit {
+  id: string;
+  productId: string;
+  unitName: string;
+  nameMm: string | null;
+  conversionFactor: number;
+  sellingPrice: number;
+  barcode: string | null;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -47,6 +57,7 @@ export interface Product {
   createdAt: string | Date;
   updatedAt: string | Date;
   category?: Category;
+  productUnits?: ProductUnit[];
 }
 
 export interface Customer {
@@ -108,6 +119,8 @@ export interface SaleItem {
   productId: string;
   quantity: number;
   refundedQuantity?: number;
+  unitName?: string | null;
+  unitFactor?: number;
   unitPrice: number;
   discount: number;
   total: number;
@@ -153,22 +166,124 @@ export interface Settings {
   loyaltyEnabled?: boolean;
   loyaltyEarnRate?: number;
   loyaltyRedeemRate?: number;
+  mobileBankingQrUrl?: string | null;
+  mobileBankingName?: string | null;
+}
+
+// ── Procurement & Audit Types ─────────────────────────────────────────────
+
+export interface Supplier {
+  id: string;
+  name: string;
+  contactPerson: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  creditBalance: number;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+  purchaseOrderCount?: number;
+  totalPurchased?: number;
+}
+
+export interface PurchaseItem {
+  id: string;
+  purchaseOrderId: string;
+  productId: string;
+  quantity: number;
+  unitCost: number;
+  total: number;
+  batchNumber: string | null;
+  expiryDate: string | Date | null;
+  product?: {
+    id: string;
+    name: string;
+    nameMm: string | null;
+    sku: string;
+    unit: string;
+  };
+}
+
+export interface PurchaseOrder {
+  id: string;
+  poNumber: string;
+  supplierId: string;
+  userId: string;
+  subtotal: number;
+  discountAmount: number;
+  totalAmount: number;
+  paidAmount: number;
+  dueAmount: number;
+  paymentMethod: 'CASH' | 'BANK_TRANSFER' | 'MOBILE_BANKING' | 'CREDIT';
+  status: 'RECEIVED' | 'CANCELLED';
+  notes: string | null;
+  createdAt: string | Date;
+  supplier?: {
+    id: string;
+    name: string;
+    phone: string | null;
+  };
+  user?: {
+    id: string;
+    name: string;
+  };
+  items?: PurchaseItem[];
+}
+
+export interface SupplierPayment {
+  id: string;
+  supplierId: string;
+  userId: string;
+  amount: number;
+  method: 'CASH' | 'BANK_TRANSFER' | 'MOBILE_BANKING';
+  reference: string | null;
+  notes: string | null;
+  createdAt: string | Date;
+  user?: {
+    id: string;
+    name: string;
+  };
+}
+
+export interface AuditLogRecord {
+  id: string;
+  userId: string;
+  action: string;
+  entityType: string;
+  entityId: string | null;
+  summary: string;
+  metadata: Record<string, unknown> | null;
+  createdAt: string | Date;
+  user?: {
+    id: string;
+    name: string;
+    email: string;
+    role: string;
+  };
 }
 
 // ── Cart Types (POS) ──────────────────────────────────────────────────────
 
-/** A single item in the POS cart, including product info and selected quantity. */
+/** A single item in the POS cart, including product info, unit packaging, and price override. */
 export interface CartItem {
   productId: string;
   name: string;
   nameMm: string | null;
   sku: string;
   unitPrice: number;
+  originalUnitPrice?: number;
+  baseSellingPrice?: number;
   costPrice?: number;
   quantity: number;
   discount?: number;
   maxStock: number;
   unit: string;
+  baseUnit?: string;
+  productUnitId?: string | null;
+  unitFactor?: number;
+  availableUnits?: ProductUnit[];
   imageUrl: string | null;
 }
 

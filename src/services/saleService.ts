@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import { ApiError, AuthUser } from '@/lib/apiAuth';
 import { CreateSaleInput, UpdateSaleStatusInput } from '@/lib/validations';
 import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
+import { logAudit } from '@/services/auditService';
 import {
   getMyanmarDateCompact,
   isFractionalUnit,
@@ -217,6 +218,14 @@ export async function createSale(
               costPrice: true,
               stockQuantity: true,
               isActive: true,
+              productUnits: {
+                select: {
+                  id: true,
+                  unitName: true,
+                  conversionFactor: true,
+                  sellingPrice: true,
+                },
+              },
             },
           });
 
@@ -279,9 +288,20 @@ export async function createSale(
           let subtotal = 0;
           let totalDiscount = 0;
           const stockDeductions = new Map<string, number>();
+          const priceOverrides: Array<{
+            productId: string;
+            productName: string;
+            unit: string;
+            catalogPrice: number;
+            overridePrice: number;
+            costPrice: number;
+            belowCost: boolean;
+          }> = [];
           const saleItemsData: Array<{
             productId: string;
             quantity: number;
+            unitName: string | null;
+            unitFactor: number;
             unitPrice: number;
             costPrice: number;
             discount: number;
@@ -297,16 +317,48 @@ export async function createSale(
               throw new ApiError(`Product is inactive: ${product.name}`, 400);
             }
 
+            let unitName: string | null = null;
+            let unitFactor = 1;
+            let catalogPrice = toNumber(product.sellingPrice);
+            let effectiveCost = toNumber(product.costPrice);
+
+            if (item.productUnitId) {
+              const matchedUnit = product.productUnits.find((u) => u.id === item.productUnitId);
+              if (!matchedUnit) {
+                throw new ApiError(
+                  `Invalid packaging unit selected for ${product.name}`,
+                  400
+                );
+              }
+              unitName = matchedUnit.unitName;
+              unitFactor = roundQuantity(toNumber(matchedUnit.conversionFactor));
+              catalogPrice = toNumber(matchedUnit.sellingPrice);
+              effectiveCost = roundMoney(toNumber(product.costPrice) * unitFactor);
+            }
+
+            const activeUnitLabel = unitName ?? product.unit;
             const qty = roundQuantity(item.quantity);
-            if (!isFractionalUnit(product.unit) && !Number.isInteger(qty)) {
+            if (!isFractionalUnit(activeUnitLabel) && !Number.isInteger(qty)) {
               throw new ApiError(
-                `Fractional quantity (${qty}) is not allowed for unit '${product.unit}' on ${product.name}`,
+                `Fractional quantity (${qty}) is not allowed for unit '${activeUnitLabel}' on ${product.name}`,
                 400
               );
             }
 
-            const sellingPrice = toNumber(product.sellingPrice);
-            const costPrice = toNumber(product.costPrice);
+            const sellingPrice =
+              item.unitPrice !== undefined ? roundMoney(item.unitPrice) : catalogPrice;
+            if (sellingPrice !== catalogPrice) {
+              priceOverrides.push({
+                productId: product.id,
+                productName: product.name,
+                unit: activeUnitLabel,
+                catalogPrice,
+                overridePrice: sellingPrice,
+                costPrice: effectiveCost,
+                belowCost: effectiveCost > 0 && sellingPrice < effectiveCost,
+              });
+            }
+
             const itemSubtotal = roundMoney(sellingPrice * qty);
             const itemDiscount = roundMoney(Math.min(item.discount || 0, itemSubtotal));
             if (itemDiscount < 0) {
@@ -320,14 +372,17 @@ export async function createSale(
             saleItemsData.push({
               productId: item.productId,
               quantity: qty,
+              unitName,
+              unitFactor,
               unitPrice: sellingPrice,
-              costPrice,
+              costPrice: effectiveCost,
               discount: itemDiscount,
               total: itemTotal,
             });
+            const baseStockQty = roundQuantity(qty * unitFactor);
             stockDeductions.set(
               item.productId,
-              roundQuantity((stockDeductions.get(item.productId) ?? 0) + qty)
+              roundQuantity((stockDeductions.get(item.productId) ?? 0) + baseStockQty)
             );
           }
 
@@ -549,6 +604,8 @@ export async function createSale(
                 create: saleItemsData.map((item) => ({
                   productId: item.productId,
                   quantity: item.quantity,
+                  unitName: item.unitName,
+                  unitFactor: item.unitFactor,
                   unitPrice: item.unitPrice,
                   costPrice: item.costPrice,
                   discount: item.discount,
@@ -611,6 +668,23 @@ export async function createSale(
                 reason: `Sale: ${invoiceNumber}`,
               },
             });
+          }
+
+          if (priceOverrides.length > 0) {
+            await logAudit(
+              {
+                userId: user.id,
+                action: 'PRICE_OVERRIDE',
+                entityType: 'SALE',
+                entityId: newSale.id,
+                summary: `Custom unit price override on ${invoiceNumber} (${priceOverrides.length} item(s))`,
+                metadata: {
+                  invoiceNumber,
+                  overrides: priceOverrides,
+                },
+              },
+              tx
+            );
           }
 
           return newSale;
@@ -837,6 +911,9 @@ export async function refundOrVoidSale(
       });
 
       for (const { saleItem, refundQty } of refundLines) {
+        const unitFactor = roundQuantity(toNumber(saleItem.unitFactor ?? 1)) || 1;
+        const baseStockRestore = roundQuantity(refundQty * unitFactor);
+
         await tx.saleItem.update({
           where: { id: saleItem.id },
           data: {
@@ -847,7 +924,7 @@ export async function refundOrVoidSale(
         await tx.product.update({
           where: { id: saleItem.productId },
           data: {
-            stockQuantity: { increment: refundQty },
+            stockQuantity: { increment: baseStockRestore },
           },
         });
 
@@ -862,10 +939,10 @@ export async function refundOrVoidSale(
             productId: saleItem.productId,
             userId: user.id,
             saleId: existingSale.id,
-            quantity: refundQty,
+            quantity: baseStockRestore,
             type: 'RETURN',
             reason: `${finalStatus}: ${reason} (Invoice: ${existingSale.invoiceNumber})`,
-            previousStock: roundQuantity(newStock - refundQty),
+            previousStock: roundQuantity(newStock - baseStockRestore),
             newStock,
           },
         });
@@ -893,6 +970,29 @@ export async function refundOrVoidSale(
           },
         });
       }
+
+      await logAudit(
+        {
+          userId: user.id,
+          action:
+            finalStatus === 'VOIDED'
+              ? 'SALE_VOID'
+              : finalStatus === 'PARTIALLY_REFUNDED'
+                ? 'SALE_PARTIAL_REFUND'
+                : 'SALE_REFUND',
+          entityType: 'SALE',
+          entityId: existingSale.id,
+          summary: `${finalStatus} ${existingSale.invoiceNumber} — ${refundAmount} K (${reason})`,
+          metadata: {
+            invoiceNumber: existingSale.invoiceNumber,
+            finalStatus,
+            refundAmount,
+            refundMethod,
+            reason,
+          },
+        },
+        tx
+      );
 
       const finalSale = await tx.sale.findUnique({
         where: { id },

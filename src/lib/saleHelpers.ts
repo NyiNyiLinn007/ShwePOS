@@ -17,6 +17,8 @@ export interface SaleItemRecord {
   productId: string;
   quantity: number;
   refundedQuantity?: number;
+  unitName?: string | null;
+  unitFactor?: number;
   unitPrice: number;
   costPrice?: number;
   discount: number;
@@ -136,7 +138,7 @@ export function buildReceiptDataFromSale(
       unitPrice: Number(item.unitPrice),
       discount: Number(item.discount || 0),
       total: Number(item.total),
-      unit: item.product?.unit,
+      unit: item.unitName || item.product?.unit,
     })),
     subtotal: Number(sale.subtotal),
     discountAmount: Number(sale.discountAmount),

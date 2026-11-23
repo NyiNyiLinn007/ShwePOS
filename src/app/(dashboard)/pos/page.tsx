@@ -8,7 +8,8 @@ export const metadata = {
 };
 
 export default async function POSPage() {
-  await requirePageAuth();
+  const session = await requirePageAuth();
+  const canViewCost = session.user.role === 'ADMIN' || session.user.role === 'MANAGER';
 
   const [products, categories, settings] = await Promise.all([
     prisma.product.findMany({
@@ -20,6 +21,9 @@ export default async function POSPage() {
             name: true,
             nameMm: true,
           },
+        },
+        productUnits: {
+          orderBy: { conversionFactor: 'asc' },
         },
       },
       orderBy: [
@@ -38,7 +42,7 @@ export default async function POSPage() {
 
   const taxRate = settings?.taxRate ?? 0;
 
-  // Serialize for client component (strip Date objects and sensitive fields)
+  // Serialize for client component (costPrice exposed only to ADMIN/MANAGER for cost-floor warnings)
   const serializedProducts = products.map((p) => ({
     id: p.id,
     name: p.name,
@@ -46,11 +50,20 @@ export default async function POSPage() {
     sku: p.sku,
     barcode: p.barcode,
     sellingPrice: toNumber(p.sellingPrice),
-    // costPrice intentionally excluded — sensitive margin data
+    ...(canViewCost ? { costPrice: toNumber(p.costPrice) } : {}),
     stockQuantity: toNumber(p.stockQuantity),
     unit: p.unit,
     imageUrl: p.imageUrl,
     category: p.category,
+    productUnits: p.productUnits.map((u) => ({
+      id: u.id,
+      productId: u.productId,
+      unitName: u.unitName,
+      nameMm: u.nameMm,
+      conversionFactor: toNumber(u.conversionFactor),
+      sellingPrice: toNumber(u.sellingPrice),
+      barcode: u.barcode,
+    })),
   }));
 
   const serializedCategories = categories.map((c) => ({

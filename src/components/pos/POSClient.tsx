@@ -15,11 +15,14 @@ import {
   PauseCircle,
   PlayCircle,
   X,
+  Keyboard,
 } from '@/components/ui/Icons';
+import type { ProductUnit } from '@/types';
 import ProductGrid from '@/components/pos/ProductGrid';
 import Cart from '@/components/pos/Cart';
 import PaymentModal, { type SaleResponse } from '@/components/pos/PaymentModal';
 import Receipt, { type ReceiptData } from '@/components/pos/Receipt';
+import { KeyboardShortcutsModal } from '@/components/pos/KeyboardShortcutsModal';
 
 interface Category {
   id: string;
@@ -44,6 +47,7 @@ interface Product {
     name: string;
     nameMm: string | null;
   };
+  productUnits?: ProductUnit[];
 }
 
 interface POSClientProps {
@@ -70,6 +74,8 @@ export default function POSClient({
   useEffect(() => { setProducts(initialProducts); }, [initialProducts]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showPayment, setShowPayment] = useState(false);
+  const [focusPaymentCustomer, setFocusPaymentCustomer] = useState(false);
+  const [showShortcutsModal, setShowShortcutsModal] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
   const [hasOpenShift, setHasOpenShift] = useState<boolean | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -146,13 +152,18 @@ export default function POSClient({
     return products.filter((product) => {
       if (!showOutOfStock && product.stockQuantity <= 0) return false;
 
+      const q = searchQuery.toLowerCase();
       const matchesSearch =
         searchQuery === '' ||
-        product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        product.name.toLowerCase().includes(q) ||
         (product.nameMm && product.nameMm.includes(searchQuery)) ||
-        product.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (product.barcode &&
-          product.barcode.toLowerCase().includes(searchQuery.toLowerCase()));
+        product.sku.toLowerCase().includes(q) ||
+        (product.barcode && product.barcode.toLowerCase().includes(q)) ||
+        Boolean(
+          product.productUnits?.some(
+            (u) => u.barcode && u.barcode.toLowerCase().includes(q)
+          )
+        );
 
       const matchesCategory =
         selectedCategory === null ||
@@ -162,23 +173,136 @@ export default function POSClient({
     });
   }, [products, searchQuery, selectedCategory, showOutOfStock]);
 
+  // Barcode / SKU Enter quick-scan handler
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    const raw = searchQuery.trim();
+    if (!raw) return;
+    const lowered = raw.toLowerCase();
+
+    // 1. Check alternate packaging unit barcodes first
+    for (const product of products) {
+      if (product.stockQuantity <= 0) continue;
+      const matchedUnit = product.productUnits?.find(
+        (u) => u.barcode && u.barcode.toLowerCase() === lowered
+      );
+      if (matchedUnit) {
+        e.preventDefault();
+        useCartStore.getState().addItem(
+          {
+            id: product.id,
+            name: product.name,
+            nameMm: product.nameMm,
+            sku: product.sku,
+            barcode: product.barcode,
+            categoryId: product.category.id,
+            costPrice: product.costPrice,
+            sellingPrice: product.sellingPrice,
+            stockQuantity: product.stockQuantity,
+            lowStockThreshold: 10,
+            unit: product.unit,
+            imageUrl: product.imageUrl,
+            productUnits: product.productUnits,
+            isActive: true,
+            createdAt: '',
+            updatedAt: '',
+          },
+          1,
+          matchedUnit
+        );
+        setSearchQuery('');
+        return;
+      }
+    }
+
+    // 2. Check exact product barcode or SKU
+    const exactProduct = products.find(
+      (p) =>
+        p.stockQuantity > 0 &&
+        ((p.barcode && p.barcode.toLowerCase() === lowered) ||
+          p.sku.toLowerCase() === lowered)
+    );
+    if (exactProduct) {
+      e.preventDefault();
+      useCartStore.getState().addItem({
+        id: exactProduct.id,
+        name: exactProduct.name,
+        nameMm: exactProduct.nameMm,
+        sku: exactProduct.sku,
+        barcode: exactProduct.barcode,
+        categoryId: exactProduct.category.id,
+        costPrice: exactProduct.costPrice,
+        sellingPrice: exactProduct.sellingPrice,
+        stockQuantity: exactProduct.stockQuantity,
+        lowStockThreshold: 10,
+        unit: exactProduct.unit,
+        imageUrl: exactProduct.imageUrl,
+        productUnits: exactProduct.productUnits,
+        isActive: true,
+        createdAt: '',
+        updatedAt: '',
+      });
+      setSearchQuery('');
+    }
+  };
+
   // Keyboard shortcuts
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTypingField =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+
       if (e.key === 'F2') {
         e.preventDefault();
         searchRef.current?.focus();
+        searchRef.current?.select();
+        return;
       }
-      if (e.key === 'F9') {
+      if (e.key === 'F4') {
+        e.preventDefault();
+        const store = useCartStore.getState();
+        if (store.items.length > 0) {
+          store.holdCurrentBill();
+          addToast(t('Bill held for later', 'ဘောင်ချာ ခေတ္တဆိုင်းငံ့ပြီးပါပြီ'), 'info');
+        } else if (store.heldBills.length > 0) {
+          setShowHeldBillsModal(true);
+        }
+        return;
+      }
+      if (e.key === 'F8') {
         e.preventDefault();
         const items = useCartStore.getState().items;
         if (items.length > 0) {
+          setFocusPaymentCustomer(true);
           setShowPayment(true);
         }
+        return;
+      }
+      if (e.key === 'F9' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) {
+        e.preventDefault();
+        const items = useCartStore.getState().items;
+        if (items.length > 0 && !showPayment) {
+          setFocusPaymentCustomer(false);
+          setShowPayment(true);
+        }
+        return;
+      }
+      if (e.key === '?' && !isTypingField) {
+        e.preventDefault();
+        setShowShortcutsModal((prev) => !prev);
+        return;
       }
       if (e.key === 'Escape') {
-        if (showPayment) {
+        if (showShortcutsModal) {
+          setShowShortcutsModal(false);
+        } else if (showPayment) {
           setShowPayment(false);
+          setFocusPaymentCustomer(false);
         } else if (showHeldBillsModal) {
           setShowHeldBillsModal(false);
         } else if (receiptData) {
@@ -186,7 +310,7 @@ export default function POSClient({
         }
       }
     },
-    [showPayment, showHeldBillsModal, receiptData]
+    [showPayment, showHeldBillsModal, showShortcutsModal, receiptData, addToast, t]
   );
 
   useEffect(() => {
@@ -196,6 +320,7 @@ export default function POSClient({
 
   const handlePaymentSuccess = (saleData: SaleResponse) => {
     setShowPayment(false);
+    setFocusPaymentCustomer(false);
     setReceiptData({
       invoiceNumber: saleData.invoiceNumber,
       createdAt: saleData.createdAt,
@@ -206,7 +331,7 @@ export default function POSClient({
         unitPrice: item.unitPrice,
         discount: item.discount,
         total: item.total,
-        unit: item.product.unit,
+        unit: item.unitName || item.product.unit,
       })),
       subtotal: saleData.subtotal,
       discountAmount: saleData.discountAmount,
@@ -223,15 +348,18 @@ export default function POSClient({
       payments: saleData.payments,
     });
 
-    // Update stock counts locally after sale
+    // Update stock counts locally after sale (account for unit conversion factor)
     const soldItems = useCartStore.getState().items;
     setProducts((prev) =>
       prev.map((product) => {
         const soldItem = soldItems.find((si) => si.productId === product.id);
         if (soldItem) {
+          const deductedBaseQty = roundQuantity(
+            soldItem.quantity * (soldItem.unitFactor ?? 1)
+          );
           return {
             ...product,
-            stockQuantity: roundQuantity(Math.max(0, product.stockQuantity - soldItem.quantity)),
+            stockQuantity: roundQuantity(Math.max(0, product.stockQuantity - deductedBaseQty)),
           };
         }
         return product;
@@ -271,6 +399,7 @@ export default function POSClient({
               placeholder={t('searchProducts')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
               autoComplete="off"
             />
             {searchQuery && (
@@ -326,7 +455,16 @@ export default function POSClient({
                 {t('Held', 'ဆိုင်းငံ့')} ({heldBills.length})
               </button>
             )}
-            <span className="badge badge-neutral">F9 Pay</span>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setShowShortcutsModal(true)}
+              title={t('Keyboard Shortcuts (?)', 'ကီးဘုတ်ဖြတ်လမ်းခလုတ်များ (?)')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px' }}
+            >
+              <Keyboard size={14} strokeWidth={1.75} />
+              <span>?</span>
+            </button>
           </div>
           <div className="pos-toolbar-meta" aria-label={t('posShortcuts')}>
             <span className="pos-key-hint"><kbd>F2</kbd> {t('search')}</span>
@@ -498,12 +636,22 @@ export default function POSClient({
       {/* Payment Modal */}
       {showPayment && (
         <PaymentModal
-          onClose={() => setShowPayment(false)}
+          onClose={() => {
+            setShowPayment(false);
+            setFocusPaymentCustomer(false);
+          }}
           onSuccess={handlePaymentSuccess}
           taxRate={taxRate}
           hasOpenShift={hasOpenShift}
+          autoFocusCustomer={focusPaymentCustomer}
         />
       )}
+
+      {/* Keyboard Shortcuts Cheat Sheet */}
+      <KeyboardShortcutsModal
+        isOpen={showShortcutsModal}
+        onClose={() => setShowShortcutsModal(false)}
+      />
 
       {/* Receipt */}
       {receiptData && (

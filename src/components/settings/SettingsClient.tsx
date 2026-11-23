@@ -16,6 +16,7 @@ import {
   Upload,
   Info,
   X,
+  QrCode,
 } from '@/components/ui/Icons';
 import {
   UserManagementSection,
@@ -39,6 +40,8 @@ interface SettingsData {
   loyaltyEnabled?: boolean;
   loyaltyEarnRate?: number;
   loyaltyRedeemRate?: number;
+  mobileBankingQrUrl?: string | null;
+  mobileBankingName?: string | null;
 }
 
 interface SettingsClientProps {
@@ -73,6 +76,15 @@ export function SettingsClient({
   const [loyaltyEarnRate, setLoyaltyEarnRate] = useState(String(initialSettings.loyaltyEarnRate ?? 1000));
   const [loyaltyRedeemRate, setLoyaltyRedeemRate] = useState(String(initialSettings.loyaltyRedeemRate ?? 10));
   const [savingLoyalty, setSavingLoyalty] = useState(false);
+
+  // ── Mobile Banking QR ─────────────────────────────────────
+  const [mobileBankingName, setMobileBankingName] = useState(
+    initialSettings.mobileBankingName || 'KBZPay / WavePay'
+  );
+  const [mobileBankingQrUrl, setMobileBankingQrUrl] = useState(
+    initialSettings.mobileBankingQrUrl || ''
+  );
+  const [savingQr, setSavingQr] = useState(false);
 
   // ── Receipt ───────────────────────────────────────────────
   const [receiptFooter, setReceiptFooter] = useState(initialSettings.receiptFooter || '');
@@ -152,6 +164,37 @@ export function SettingsClient({
       addToast(t('networkError'), 'error');
     } finally {
       setSavingLoyalty(false);
+    }
+  }
+
+  async function saveMobileQr() {
+    setSavingQr(true);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mobileBankingName: mobileBankingName.trim() || 'KBZPay / WavePay',
+          mobileBankingQrUrl: mobileBankingQrUrl || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        addToast(data.error || t('saveFailed'), 'error');
+        return;
+      }
+      updateSettings({
+        mobileBankingName: mobileBankingName.trim() || 'KBZPay / WavePay',
+        mobileBankingQrUrl: mobileBankingQrUrl || null,
+      });
+      addToast(
+        t('Mobile Banking QR settings saved', 'မိုဘိုင်းဘဏ် QR ဆက်တင်သိမ်းပြီးပါပြီ'),
+        'success'
+      );
+    } catch {
+      addToast(t('networkError'), 'error');
+    } finally {
+      setSavingQr(false);
     }
   }
 
@@ -479,6 +522,104 @@ export function SettingsClient({
               disabled={savingLoyalty}
             >
               {savingLoyalty ? t('Saving...', 'သိမ်းနေသည်...') : t('Save', 'သိမ်းရန်')}
+            </button>
+          </div>
+        </div>
+
+        {/* Section 2c: Mobile Banking QR Code */}
+        <div className="glass-card" style={{ marginBottom: 'var(--space-xl)' }}>
+          <div style={{ marginBottom: 'var(--space-lg)' }}>
+            <h3 className="heading-4" style={{ marginBottom: 4, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <QrCode size={18} strokeWidth={1.75} />
+              {t('Mobile Banking QR Code', 'မိုဘိုင်းဘဏ် QR ကုဒ် (KBZPay / WavePay)')}
+            </h3>
+            <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
+              {t(
+                'Display your shop QR code during Mobile Banking POS checkout for quick customer scanning',
+                'POS ငွေရှင်းချိန် မိုဘိုင်းဘဏ်ရွေးပါက ဖောက်သည် Scan ဖတ်နိုင်ရန် ဆိုင်၏ QR ပုံကို ပြသပေးပါမည်'
+              )}
+            </p>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 'var(--space-lg)', alignItems: 'start' }}>
+            <div>
+              <div className="input-group" style={{ marginBottom: 'var(--space-md)' }}>
+                <label className="input-label">
+                  {t('Account / Provider Label', 'အကောင့်အမည် / ဝန်ဆောင်မှု')}
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  value={mobileBankingName}
+                  onChange={(e) => setMobileBankingName(e.target.value)}
+                  placeholder="KBZPay / WavePay (09-xxxxxxx)"
+                />
+              </div>
+              <div className="flex gap-sm" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                <label
+                  className="btn btn-secondary btn-sm"
+                  style={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Upload size={14} strokeWidth={1.75} />
+                  {t('Upload QR Image', 'QR ပုံတင်ရန်')}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      try {
+                        const dataUrl = await resizeImageToDataUrl(file, {
+                          maxSize: 360,
+                          mimeType: 'image/png',
+                          quality: 0.92,
+                        });
+                        setMobileBankingQrUrl(dataUrl);
+                      } catch {
+                        addToast(t('Failed to process image', 'ပုံဖတ်မရပါ'), 'error');
+                      }
+                    }}
+                  />
+                </label>
+                {mobileBankingQrUrl && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setMobileBankingQrUrl('')}
+                    style={{ color: 'var(--danger)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                  >
+                    <X size={14} strokeWidth={1.75} />
+                    {t('Remove QR', 'QR ဖယ်ရှားရန်')}
+                  </button>
+                )}
+              </div>
+            </div>
+            {mobileBankingQrUrl && (
+              <div
+                style={{
+                  padding: 8,
+                  background: '#fff',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-color)',
+                  textAlign: 'center',
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={mobileBankingQrUrl}
+                  alt="Mobile Banking QR"
+                  style={{ width: 120, height: 120, objectFit: 'contain', display: 'block' }}
+                />
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 'var(--space-lg)', display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              className="btn btn-primary"
+              onClick={saveMobileQr}
+              disabled={savingQr}
+            >
+              {savingQr ? t('Saving...', 'သိမ်းနေသည်...') : t('Save QR Settings', 'QR ဆက်တင်သိမ်းရန်')}
             </button>
           </div>
         </div>

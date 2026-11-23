@@ -22,6 +22,10 @@ import {
   CustomerRepayModal,
   CustomerDeleteModal,
 } from '@/components/customers/CustomerModals';
+import {
+  DebtRepaymentReceiptModal,
+  DebtRepaymentReceiptData,
+} from '@/components/customers/DebtRepaymentReceiptModal';
 
 const ITEMS_PER_PAGE = 12;
 
@@ -56,6 +60,8 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
   const [repayReference, setRepayReference] = useState('');
   const [repayNotes, setRepayNotes] = useState('');
   const [repaying, setRepaying] = useState(false);
+  const [repaymentReceipt, setRepaymentReceipt] =
+    useState<DebtRepaymentReceiptData | null>(null);
 
   const filteredCustomers = useMemo(() => {
     if (!search.trim()) return customers;
@@ -244,14 +250,19 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
         return;
       }
 
+      const updatedBalance =
+        typeof data.newCreditBalance === 'number'
+          ? data.newCreditBalance
+          : Math.max(0, (repayTarget.creditBalance ?? 0) - amt);
+
       setCustomers((prev) =>
         prev.map((c) =>
-          c.id === repayTarget.id ? { ...c, creditBalance: data.newCreditBalance } : c
+          c.id === repayTarget.id ? { ...c, creditBalance: updatedBalance } : c
         )
       );
       if (selectedCustomer?.id === repayTarget.id) {
         setSelectedCustomer((prev) =>
-          prev ? { ...prev, creditBalance: data.newCreditBalance } : null
+          prev ? { ...prev, creditBalance: updatedBalance } : null
         );
       }
 
@@ -259,6 +270,22 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
         t('Debt repayment recorded successfully', 'အကြွေးဆပ်မှု မှတ်တမ်းတင်ပြီးပါပြီ'),
         'success'
       );
+      setRepaymentReceipt({
+        paymentId: data.payment?.id || `PAY-${Date.now()}`,
+        customerName: repayTarget.name,
+        customerPhone: repayTarget.phone,
+        previousBalance:
+          typeof data.previousBalance === 'number'
+            ? data.previousBalance
+            : repayTarget.creditBalance ?? amt,
+        paidAmount: amt,
+        newCreditBalance: updatedBalance,
+        method: repayMethod,
+        reference: repayReference.trim() || null,
+        notes: repayNotes.trim() || null,
+        receivedBy: data.receivedBy || 'Cashier',
+        paidAt: data.payment?.createdAt || new Date().toISOString(),
+      });
       setRepayTarget(null);
     } catch {
       addToast(
@@ -607,6 +634,11 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
         deleting={deleting}
         onConfirm={handleDelete}
         onClose={() => setDeleteTarget(null)}
+      />
+
+      <DebtRepaymentReceiptModal
+        data={repaymentReceipt}
+        onClose={() => setRepaymentReceipt(null)}
       />
     </>
   );

@@ -138,4 +138,66 @@ describe('POS Cart Store Calculations & Hold/Resume Queue', () => {
     assert.equal(useCartStore.getState().items[0].quantity, 1.5);
     store.clearCart();
   });
+
+  it('supports custom unit price override and multi-unit wholesale packaging conversion', () => {
+    const store = useCartStore.getState();
+    store.clearCart();
+
+    store.addItem({
+      id: 'p2',
+      name: 'Energy Drink',
+      nameMm: null,
+      sku: 'DRK-01',
+      barcode: '8850001',
+      categoryId: 'cat-1',
+      costPrice: 700,
+      sellingPrice: 1000,
+      stockQuantity: 50,
+      lowStockThreshold: 10,
+      unit: 'pcs',
+      imageUrl: null,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      productUnits: [
+        {
+          id: 'pu-carton',
+          productId: 'p2',
+          unitName: 'carton',
+          nameMm: 'ဖာ',
+          conversionFactor: 24,
+          sellingPrice: 21500,
+          barcode: '8850001-C24',
+        },
+      ],
+    });
+
+    // Switch to carton (24 pcs/carton => max 2 cartons from 50 base stock)
+    useCartStore.getState().setItemUnit('p2', 'pu-carton');
+    let item = useCartStore.getState().items[0];
+    assert.equal(item.unit, 'carton');
+    assert.equal(item.unitFactor, 24);
+    assert.equal(item.unitPrice, 21500);
+
+    // Try setting qty 5 cartons => clamped to 2 (50 / 24 = 2.08 -> floor 2)
+    useCartStore.getState().updateQuantity('p2', 5);
+    item = useCartStore.getState().items[0];
+    assert.equal(item.quantity, 2);
+    assert.equal(useCartStore.getState().getSubtotal(), 43000);
+
+    // Override unit price to 20,000 K per carton => subtotal 40,000 K
+    useCartStore.getState().updateUnitPrice('p2', 20000);
+    item = useCartStore.getState().items[0];
+    assert.equal(item.unitPrice, 20000);
+    assert.equal(item.originalUnitPrice, 21500);
+    assert.equal(useCartStore.getState().getSubtotal(), 40000);
+
+    // Switch back to base unit => restores exact baseSellingPrice (1,000 K)
+    useCartStore.getState().setItemUnit('p2', null);
+    item = useCartStore.getState().items[0];
+    assert.equal(item.unit, 'pcs');
+    assert.equal(item.unitFactor, 1);
+    assert.equal(item.unitPrice, 1000);
+    store.clearCart();
+  });
 });

@@ -16,6 +16,9 @@ export default async function ProductsPage() {
             nameMm: true,
           },
         },
+        productUnits: {
+          orderBy: { conversionFactor: 'asc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     }),
@@ -32,6 +35,15 @@ export default async function ProductsPage() {
     stockQuantity: toNumber(product.stockQuantity),
     lowStockThreshold: toNumber(product.lowStockThreshold),
     expiryDate: product.expiryDate ? product.expiryDate.toISOString() : null,
+    productUnits: product.productUnits.map((u) => ({
+      id: u.id,
+      productId: u.productId,
+      unitName: u.unitName,
+      nameMm: u.nameMm,
+      conversionFactor: toNumber(u.conversionFactor),
+      sellingPrice: toNumber(u.sellingPrice),
+      barcode: u.barcode,
+    })),
   }));
 
   return <ProductsClient initialProducts={serializedProducts} categories={categories} />;

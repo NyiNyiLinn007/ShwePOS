@@ -27,6 +27,9 @@ export const translations: TranslationKeys = {
   logout: { en: 'Logout', mm: 'ထွက်ရန်' },
   register: { en: 'Register', mm: 'စာရင်းသွင်းရန်' },
   users: { en: 'Users', mm: 'အသုံးပြုသူများ' },
+  suppliers: { en: 'Suppliers', mm: 'ပေးသွင်းသူများ' },
+  purchases: { en: 'Purchases', mm: 'ကုန်အဝယ်များ' },
+  auditLogs: { en: 'Audit Logs', mm: 'လုပ်ဆောင်ချက်မှတ်တမ်း' },
   stockMovements: { en: 'Stock Movements', mm: 'ကုန်ပစ္စည်းရွှေ့ပြောင်းမှုများ' },
 
   // ── Common Actions ──────────────────────────────────────────

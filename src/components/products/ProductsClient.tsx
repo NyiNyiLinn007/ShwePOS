@@ -27,10 +27,12 @@ import {
 import {
   ProductFormModal,
   ProductFormInput,
+  ProductUnitFormRow,
   emptyProductForm,
   generateRandomSKU,
 } from '@/components/products/ProductFormModal';
 import { BarcodeStickerModal } from '@/components/products/BarcodeStickerModal';
+import type { ProductUnit } from '@/types';
 
 /* ---------- Types ---------- */
 
@@ -59,6 +61,7 @@ interface Product {
   createdAt: string | Date;
   updatedAt: string | Date;
   category: CategoryRef;
+  productUnits?: ProductUnit[];
 }
 
 interface Category {
@@ -164,6 +167,14 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
       expiryDate: expStr,
       imageUrl: product.imageUrl || '',
       isActive: product.isActive,
+      productUnits: (product.productUnits ?? []).map((u) => ({
+        id: u.id,
+        unitName: u.unitName,
+        nameMm: u.nameMm || '',
+        conversionFactor: String(u.conversionFactor),
+        sellingPrice: String(u.sellingPrice),
+        barcode: u.barcode || '',
+      })),
     });
     setFormErrors({});
     setShowModal(true);
@@ -176,7 +187,10 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
     setFormErrors({});
   }
 
-  function handleFormChange(field: keyof ProductFormInput, value: string | boolean) {
+  function handleFormChange(
+    field: keyof ProductFormInput,
+    value: string | boolean | ProductUnitFormRow[]
+  ) {
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (formErrors[field]) {
       setFormErrors((prev) => {
@@ -237,6 +251,15 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
         expiryDate: formData.expiryDate ? formData.expiryDate : null,
         imageUrl: formData.imageUrl.trim() || null,
         isActive: formData.isActive,
+        productUnits: formData.productUnits
+          .filter((u) => u.unitName.trim() && Number(u.conversionFactor) > 0)
+          .map((u) => ({
+            unitName: u.unitName.trim(),
+            nameMm: u.nameMm.trim() || null,
+            conversionFactor: Number(u.conversionFactor),
+            sellingPrice: Math.max(0, Number(u.sellingPrice) || 0),
+            barcode: u.barcode.trim() || null,
+          })),
       };
 
       const url = editingProduct

@@ -4,6 +4,7 @@ import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { inventoryMovementSchema } from '@/lib/validations';
 import { serializePrismaData, toNumber } from '@/lib/number';
 import { parseMyanmarDateBoundary, roundQuantity } from '@/lib/utils';
+import { logAudit } from '@/services/auditService';
 
 export async function GET(request: NextRequest) {
   try {
@@ -151,6 +152,25 @@ export async function POST(request: NextRequest) {
           },
         },
       });
+
+      await logAudit(
+        {
+          userId: user.id,
+          action: 'STOCK_ADJUSTMENT',
+          entityType: 'INVENTORY',
+          entityId: productId,
+          summary: `Stock ${type} for ${product.name}: ${previousStock} -> ${newStock} ${product.unit} (${reason})`,
+          metadata: {
+            productName: product.name,
+            type,
+            quantity,
+            previousStock,
+            newStock,
+            reason,
+          },
+        },
+        tx
+      );
 
       return created;
     });

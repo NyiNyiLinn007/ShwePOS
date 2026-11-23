@@ -60,7 +60,15 @@ import {
   TrendingUp,
   TrendingDown,
   ShieldAlert,
+  ShieldCheck,
   Image as ImageIcon,
+  Keyboard,
+  QrCode,
+  Truck,
+  ShoppingBag,
+  Layers,
+  FileText,
+  Check,
 } from 'lucide-react';
 
 export {
@@ -122,7 +130,15 @@ export {
   TrendingUp,
   TrendingDown,
   ShieldAlert,
+  ShieldCheck,
   ImageIcon,
+  Keyboard,
+  QrCode,
+  Truck,
+  ShoppingBag,
+  Layers,
+  FileText,
+  Check,
 };
 
 export function NavIcon({
@@ -146,6 +162,10 @@ export function NavIcon({
       return <Tags {...props} />;
     case 'inventory':
       return <Boxes {...props} />;
+    case 'suppliers':
+      return <Truck {...props} />;
+    case 'purchases':
+      return <ShoppingBag {...props} />;
     case 'sales':
       return <Receipt {...props} />;
     case 'customers':
@@ -154,6 +174,8 @@ export function NavIcon({
       return <Wallet {...props} />;
     case 'reports':
       return <BarChart3 {...props} />;
+    case 'auditLogs':
+      return <ShieldCheck {...props} />;
     case 'users':
       return <UserCog {...props} />;
     case 'settings':

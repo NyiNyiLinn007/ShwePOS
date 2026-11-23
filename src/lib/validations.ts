@@ -38,6 +38,15 @@ export type UpdateCategoryInput = z.infer<typeof updateCategorySchema>;
 
 // ---- Product Schemas ----
 
+export const productUnitInputSchema = z.object({
+  id: z.string().optional(),
+  unitName: z.string().min(1, 'Unit name is required').max(30),
+  nameMm: z.string().max(50).optional().nullable(),
+  conversionFactor: positiveQuantitySchema,
+  sellingPrice: moneySchema,
+  barcode: z.string().max(50).optional().nullable(),
+});
+
 export const createProductSchema = z.object({
   name: z.string().min(1, 'Product name is required').max(200),
   nameMm: z.string().max(200).optional().nullable(),
@@ -53,10 +62,12 @@ export const createProductSchema = z.object({
   batchNumber: z.string().max(100).optional().nullable(),
   expiryDate: dateStringSchema.optional().nullable(),
   isActive: z.boolean().optional().default(true),
+  productUnits: z.array(productUnitInputSchema).max(10).optional(),
 });
 
 export const updateProductSchema = createProductSchema.partial().omit({ stockQuantity: true });
 
+export type ProductUnitInput = z.infer<typeof productUnitInputSchema>;
 export type CreateProductInput = z.infer<typeof createProductSchema>;
 export type UpdateProductInput = z.infer<typeof updateProductSchema>;
 
@@ -66,6 +77,8 @@ export const saleItemInputSchema = z.object({
   productId: z.string().min(1, 'Product ID is required'),
   quantity: positiveQuantitySchema,
   discount: moneySchema.default(0),
+  unitPrice: moneySchema.optional(),
+  productUnitId: z.string().optional().nullable(),
 });
 
 export const salePaymentLegSchema = z.object({
@@ -225,6 +238,54 @@ export const updateSettingsSchema = z.object({
   loyaltyEnabled: z.boolean().optional(),
   loyaltyEarnRate: moneySchema.positive().optional(),
   loyaltyRedeemRate: moneySchema.positive().optional(),
+  mobileBankingQrUrl: z.string().max(500000).optional().nullable(),
+  mobileBankingName: z.string().max(120).optional().nullable(),
 });
 
 export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;
+
+// ---- Supplier & Purchase Order Schemas ----
+
+export const SupplierPaymentMethodEnum = z.enum(['CASH', 'BANK_TRANSFER', 'MOBILE_BANKING', 'CREDIT']);
+export const SupplierRepaymentMethodEnum = z.enum(['CASH', 'BANK_TRANSFER', 'MOBILE_BANKING']);
+
+export const createSupplierSchema = z.object({
+  name: z.string().min(1, 'Supplier name is required').max(200),
+  contactPerson: z.string().max(120).optional().nullable(),
+  phone: z.string().max(30).optional().nullable(),
+  email: z.string().email('Invalid email').max(200).optional().nullable(),
+  address: z.string().max(500).optional().nullable(),
+  notes: z.string().max(500).optional().nullable(),
+  isActive: z.boolean().optional().default(true),
+});
+
+export const updateSupplierSchema = createSupplierSchema.partial();
+
+export const repaySupplierDebtSchema = z.object({
+  amount: moneySchema.positive('Repayment amount must be positive'),
+  method: SupplierRepaymentMethodEnum,
+  reference: z.string().max(100).optional().nullable(),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export const purchaseItemInputSchema = z.object({
+  productId: z.string().min(1, 'Product is required'),
+  quantity: positiveQuantitySchema,
+  unitCost: moneySchema,
+  batchNumber: z.string().max(100).optional().nullable(),
+  expiryDate: dateStringSchema.optional().nullable(),
+});
+
+export const createPurchaseOrderSchema = z.object({
+  supplierId: z.string().min(1, 'Supplier is required'),
+  items: z.array(purchaseItemInputSchema).min(1, 'At least one item is required'),
+  discountAmount: moneySchema.default(0),
+  paidAmount: moneySchema.default(0),
+  paymentMethod: SupplierPaymentMethodEnum.default('CASH'),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export type CreateSupplierInput = z.infer<typeof createSupplierSchema>;
+export type UpdateSupplierInput = z.infer<typeof updateSupplierSchema>;
+export type RepaySupplierDebtInput = z.infer<typeof repaySupplierDebtSchema>;
+export type CreatePurchaseOrderInput = z.infer<typeof createPurchaseOrderSchema>;

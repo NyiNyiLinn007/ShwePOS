@@ -3,8 +3,8 @@
 import { useCartStore } from '@/store/cartStore';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
-import { ProductMonogram, Search } from '@/components/ui/Icons';
-import type { Product } from '@/types';
+import { ProductMonogram, Search, Layers } from '@/components/ui/Icons';
+import type { Product, ProductUnit } from '@/types';
 
 interface ProductForGrid {
   id: string;
@@ -22,6 +22,7 @@ interface ProductForGrid {
     name: string;
     nameMm: string | null;
   };
+  productUnits?: ProductUnit[];
 }
 
 interface ProductGridProps {
@@ -49,6 +50,7 @@ export default function ProductGrid({ products }: ProductGridProps) {
       lowStockThreshold: 10,
       unit: product.unit,
       imageUrl: product.imageUrl,
+      productUnits: product.productUnits ?? [],
       isActive: true,
       createdAt: '',
       updatedAt: '',
@@ -137,6 +139,22 @@ export default function ProductGrid({ products }: ProductGridProps) {
             <div className="pos-product-name" style={{ textAlign: 'left', width: '100%' }}>
               {product.name}
             </div>
+            {product.productUnits && product.productUnits.length > 0 && (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  fontSize: '10px',
+                  color: 'var(--primary)',
+                  fontWeight: 600,
+                  marginTop: 2,
+                }}
+              >
+                <Layers size={10} strokeWidth={2} />
+                {product.productUnits.map((u) => u.unitName).join(' / ')}
+              </div>
+            )}
             <div
               style={{
                 display: 'flex',

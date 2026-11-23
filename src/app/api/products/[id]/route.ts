@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { updateProductSchema } from '@/lib/validations';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
-import { serializePrismaData } from '@/lib/number';
+import { serializePrismaData, toNumber } from '@/lib/number';
+import { logAudit } from '@/services/auditService';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -23,6 +24,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             nameMm: true,
           },
         },
+        productUnits: {
+          orderBy: { conversionFactor: 'asc' },
+        },
       },
     });
 
@@ -42,7 +46,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     await validateCsrf(request);
-    await requireRole('MANAGER', 'ADMIN');
+    const user = await requireRole('MANAGER', 'ADMIN');
 
     const { id } = await params;
     const body = await request.json();
@@ -53,6 +57,14 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         { error: 'Validation failed', details: parsed.error.flatten().fieldErrors },
         { status: 400 }
       );
+    }
+
+    const existing = await prisma.product.findUnique({
+      where: { id },
+      select: { id: true, name: true, costPrice: true, sellingPrice: true },
+    });
+    if (!existing) {
+      return NextResponse.json({ error: 'Product not found' }, { status: 404 });
     }
 
     // Check SKU uniqueness if being updated
@@ -103,23 +115,72 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    const updateData: Record<string, unknown> = { ...parsed.data };
+    const { productUnits, ...restData } = parsed.data;
+    const updateData: Record<string, unknown> = { ...restData };
     if (parsed.data.expiryDate !== undefined) {
       updateData.expiryDate = parsed.data.expiryDate ? new Date(parsed.data.expiryDate) : null;
     }
 
-    const product = await prisma.product.update({
-      where: { id },
-      data: updateData,
-      include: {
-        category: {
-          select: {
-            id: true,
-            name: true,
-            nameMm: true,
+    const product = await prisma.$transaction(async (tx) => {
+      if (productUnits !== undefined) {
+        await tx.productUnit.deleteMany({ where: { productId: id } });
+        const cleanUnits = productUnits
+          .filter((u) => u.unitName.trim().length > 0 && u.conversionFactor > 0)
+          .map((u) => ({
+            productId: id,
+            unitName: u.unitName.trim(),
+            nameMm: u.nameMm?.trim() || null,
+            conversionFactor: u.conversionFactor,
+            sellingPrice: u.sellingPrice,
+            barcode: u.barcode?.trim() || null,
+          }));
+        if (cleanUnits.length > 0) {
+          await tx.productUnit.createMany({ data: cleanUnits });
+        }
+      }
+
+      const updated = await tx.product.update({
+        where: { id },
+        data: updateData,
+        include: {
+          category: {
+            select: {
+              id: true,
+              name: true,
+              nameMm: true,
+            },
+          },
+          productUnits: {
+            orderBy: { conversionFactor: 'asc' },
           },
         },
-      },
+      });
+
+      const oldCost = toNumber(existing.costPrice);
+      const oldSell = toNumber(existing.sellingPrice);
+      const newCost = toNumber(updated.costPrice);
+      const newSell = toNumber(updated.sellingPrice);
+      if (oldCost !== newCost || oldSell !== newSell) {
+        await logAudit(
+          {
+            userId: user.id,
+            action: 'PRODUCT_PRICE_CHANGE',
+            entityType: 'PRODUCT',
+            entityId: id,
+            summary: `Updated pricing for ${updated.name} (Cost: ${oldCost} -> ${newCost} K, Selling: ${oldSell} -> ${newSell} K)`,
+            metadata: {
+              productName: updated.name,
+              oldCost,
+              newCost,
+              oldSell,
+              newSell,
+            },
+          },
+          tx
+        );
+      }
+
+      return updated;
     });
 
     return NextResponse.json(serializePrismaData(product));
@@ -146,6 +207,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             name: true,
             nameMm: true,
           },
+        },
+        productUnits: {
+          orderBy: { conversionFactor: 'asc' },
         },
       },
     });

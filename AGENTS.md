@@ -136,9 +136,12 @@
 
 | Path | Responsibility |
 | :--- | :--- |
-| `prisma/schema.prisma` | Database models: `User`, `Category`, `Product`, `Customer`, `Sale`, `SaleItem`, `SalePayment`, `Shift`, `CashDrawerMovement`, `SaleAdjustment`, `StockMovement`, `Expense`, `Settings`, `InvoiceCounter`, `RateLimitBucket`, `DataMigrationAudit` |
-| `src/services/saleService.ts` | Domain service for Sales listing, single sale lookup, atomic Checkout (`createSale` with invoice counter retry, stock deduction, split/credit/cash legs, loyalty points, drawer movements), and Partial/Full Refund & Void (`refundOrVoidSale`) |
+| `prisma/schema.prisma` | Database models: `User`, `Category`, `Product`, `ProductUnit`, `Customer`, `Sale`, `SaleItem`, `SalePayment`, `Shift`, `CashDrawerMovement`, `SaleAdjustment`, `StockMovement`, `Expense`, `Supplier`, `PurchaseOrder`, `PurchaseItem`, `SupplierPayment`, `AuditLog`, `Settings`, `InvoiceCounter`, `RateLimitBucket`, `DataMigrationAudit` |
+| `src/services/saleService.ts` | Domain service for Sales listing, single sale lookup, atomic Checkout (`createSale` with invoice counter retry, multi-unit conversion factor stock deduction, custom price override + audit logging, split/credit/cash legs, loyalty points, drawer movements), and Partial/Full Refund & Void (`refundOrVoidSale`) |
 | `src/services/reportService.ts` | Domain service for Revenue, COGS, Gross Profit, Expenses, Net Profit, Myanmar daily/hourly sales buckets, top products, and category breakdown (`generateSalesAndProfitReport`) |
+| `src/services/supplierService.ts` | Domain service for Supplier directory CRUD and Accounts Payable repayments (`repaySupplierDebt` with optional open-shift `PAID_OUT` cash drawer movement & audit logging) |
+| `src/services/purchaseService.ts` | Domain service for Purchase Orders / Goods Receiving (`createPurchaseOrder` with Myanmar `PO-YYYYMMDD-XXXX` counter, automatic `StockMovement IN`, **Latest Purchase Cost** update on `Product.costPrice`, `Supplier.creditBalance` increment, and atomic PO cancellation) |
+| `src/services/auditService.ts` | Central immutable security audit logger (`logAudit`) and filterable log query service (`listAuditLogs`) for `/audit-logs` |
 | `src/lib/utils.ts` | Currency/quantity formatting (`formatCurrency`, `formatQuantity`, `isFractionalUnit`), expiry evaluation (`getExpiryInfo`), & Myanmar `UTC+6:30` date/time utilities |
 | `src/lib/image.ts` | Shared client-side `<canvas>` image compression (`resizeImageToDataUrl`) for product photos and shop logos |
 | `src/lib/barcode.ts` | Shared Code-128B barcode encoder (`encodeCode128BCodes`, `buildCode128Bars`) for SVG thermal sticker rendering |
@@ -150,14 +153,17 @@
 | `src/components/ui/Icons.tsx` | Centralized `lucide-react` vector icons & `<NavIcon />`, `<PaymentMethodIcon />`, `<StockMovementIcon />`, `<ProductMonogram />` |
 | `src/store/cartStore.ts` | POS cart state, `%`/`K` discounts, item discounts, fractional quantities, Hold/Resume multi-bill queue (`heldCarts`) |
 | `src/store/offlineQueueStore.ts` | Offline POS sale queue (`localStorage`) & automatic background sync when internet reconnects |
-| `src/components/pos/*` | `POSClient.tsx`, `ProductGrid.tsx`, `Cart.tsx`, `PaymentModal.tsx`, `Receipt.tsx` |
+| `src/components/pos/*` | `POSClient.tsx`, `ProductGrid.tsx`, `Cart.tsx`, `PaymentModal.tsx`, `Receipt.tsx`, `KeyboardShortcutsModal.tsx` (Hotkeys `F2`/`F4`/`F8`/`F9`/`?`, Price Override + Cost Floor Warning, Multi-Unit dropdown, Mobile Banking QR display) |
 | `src/components/shifts/ShiftClient.tsx` | Cashier shift open/close, Paid-In/Paid-Out drawer movements, 80mm/58mm Shift X-Report & Z-Report printing |
 | `src/components/sales/*` | `SalesClient.tsx`, `SaleDetailClient.tsx`, `SaleQuickViewModal.tsx`, `SaleRefundModal.tsx` |
-| `src/components/products/*` | `ProductsClient.tsx`, `ProductFormModal.tsx`, `BarcodeStickerModal.tsx` |
+| `src/components/products/*` | `ProductsClient.tsx`, `ProductFormModal.tsx` (with Alternate Multi-Unit Packaging editor), `BarcodeStickerModal.tsx` |
 | `src/components/inventory/InventoryClient.tsx` | Stock In/Out/Adjustment/Return movements, low-stock & expiry alerts |
-| `src/components/customers/*` | `CustomersClient.tsx` & `CustomerModals.tsx` (Customer CRUD, Loyalty points, Credit balance/limit, Debt repayment) |
-| `src/components/reports/ReportsClient.tsx` | Revenue, Gross Profit, Expenses, Net Profit, payment breakdown, top products, hourly distribution |
-| `src/components/settings/*` | `SettingsClient.tsx`, `UserManagementSection.tsx`, `DataMigrationSection.tsx` |
+| `src/components/suppliers/*` | `SuppliersClient.tsx` & `SupplierModals.tsx` (Supplier CRUD, PO/Payment History, Accounts Payable repayment) |
+| `src/components/purchases/*` | `PurchasesClient.tsx` & `PurchaseFormModal.tsx` (Purchase Order Goods Receiving, automatic stock-in & Latest Purchase Cost update, PO cancellation) |
+| `src/components/customers/*` | `CustomersClient.tsx`, `CustomerModals.tsx`, `DebtRepaymentReceiptModal.tsx` (Customer CRUD, Loyalty points, Credit balance/limit, Debt repayment & 80mm/58mm Thermal Repayment Receipt) |
+| `src/components/reports/*` | `ReportsClient.tsx` & `ReportExportModal.tsx` (Revenue, Gross Profit, Expenses, Net Profit, UTF-8 CSV export & A4/80mm P&L Summary printing) |
+| `src/components/audit/AuditLogsClient.tsx` | Admin-only Security Audit Log Viewer (`/audit-logs`) with date/user/action filtering, JSON metadata inspection, and CSV export |
+| `src/components/settings/*` | `SettingsClient.tsx` (including Mobile Banking QR Code upload), `UserManagementSection.tsx`, `DataMigrationSection.tsx` |
 | `src/__tests__/domain.test.ts` | Automated unit tests for Myanmar `UTC+6:30` timezone boundaries, currency/fractional quantities, shift cash drawer math, Code-128B barcode encoding, and POS cart discounts/tax/hold queue |
 
 ---
@@ -205,3 +211,18 @@ npx next build
   - **Thin API Route Controllers & Domain Service Layer (Rule 10):** Extracted `src/services/saleService.ts` and `src/services/reportService.ts`, reducing `src/app/api/sales/route.ts` (`617 -> 50 lines`), `src/app/api/sales/[id]/route.ts` (`362 -> 43 lines`), and `src/app/api/reports/route.ts` (`319 -> 17 lines`) into clean HTTP controllers.
   - **SRP Component Modularization (Rule 8):** Decomposed monolithic `1,000+` line client components into focused sub-components: `ProductFormModal.tsx` & `BarcodeStickerModal.tsx` (`ProductsClient.tsx`: `1,393 -> 438 lines`), `UserManagementSection.tsx` & `DataMigrationSection.tsx` (`SettingsClient.tsx`: `1,392 -> 502 lines`), `SaleRefundModal.tsx` & `SaleQuickViewModal.tsx` (`SalesClient.tsx`: `1,192 -> 383 lines`, `SaleDetailClient.tsx`: `801 -> 399 lines`), and `CustomerModals.tsx` (`CustomersClient.tsx`: `1,134 -> 434 lines`).
   - **Automated Domain Unit Tests (Rule 13):** Added `src/__tests__/domain.test.ts` (`npm test`) covering Myanmar `UTC+6:30` timezone boundaries, currency/fractional quantity formatting, product expiry evaluation, Shift `expectedCash` accounting, Code-128B barcode encoding, and POS cart discounts/tax/hold queue.
+- **2026-11-23 — Enterprise Tiers 1–3 Feature Suite (`20261123000000_enterprise_tiers_1_to_3`):**
+  - **Unified Schema Migration:** Added `Settings.mobileBankingQrUrl` & `mobileBankingName`, `ProductUnit`, `SaleItem.unitName` & `unitFactor`, `Supplier`, `PurchaseOrder`, `PurchaseItem`, `SupplierPayment`, and `AuditLog`.
+  - **Tier 1 (Immediate Retail Operations):**
+    - POS Keyboard Shortcuts (`F2` Search/Barcode Enter scan, `F4` Hold/Resume, `F8` Customer Search, `F9`/`Ctrl+Enter` Pay, `?` `KeyboardShortcutsModal.tsx`, `Esc`).
+    - Customer Debt Repayment `80mm`/`58mm` Thermal Receipt (`DebtRepaymentReceiptModal.tsx`) + fixed `POST /api/customers/[id]/repay` top-level `newCreditBalance`/`previousBalance` payload.
+    - Mobile Banking QR Code upload in `/settings` and automatic QR display on `MOBILE_BANKING` & `SPLIT` checkout in `PaymentModal.tsx`.
+    - Reports UTF-8 CSV export & `A4`/`80mm` Thermal Profit & Loss Summary Print (`ReportExportModal.tsx`).
+    - POS Cart inline Custom Unit Price Override with reset toggle, Manager/Admin Cost Floor Warning badge, and backend `PRICE_OVERRIDE` audit logging.
+  - **Tier 2 (Procurement & Multi-Unit Wholesale/Retail):**
+    - Supplier Directory & Accounts Payable Repayment (`/suppliers`, `supplierService.ts`, `SuppliersClient.tsx`, `SupplierModals.tsx`).
+    - Purchase Orders / Goods Received (`/purchases`, `purchaseService.ts`, `PurchasesClient.tsx`, `PurchaseFormModal.tsx`) with atomic Myanmar `PO-YYYYMMDD-XXXX` numbering, automatic `StockMovement IN`, **Latest Purchase Cost** update on `Product.costPrice`, payable tracking, and stock-safe PO cancellation.
+    - Multi-Unit Wholesale/Retail Packaging (`ProductUnit`) across `/products`, Product APIs, POS barcode scanning, Cart unit dropdown, and `saleService.ts` base-stock deduction & refund restoration.
+  - **Tier 3 (Governance & Security Audit Trail):**
+    - Central `auditService.ts` (`logAudit`) hooked across sales voids/refunds, price overrides, product price changes, stock adjustments, purchase orders, supplier/customer debt repayments, shift closing, user updates, and settings updates.
+    - Admin-only `/audit-logs` viewer (`AuditLogsClient.tsx`, `/api/audit-logs`) with date/user/action filters, metadata JSON inspector, and CSV export.

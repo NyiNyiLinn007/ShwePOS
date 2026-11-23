@@ -29,6 +29,8 @@ export function SettingsInitializer() {
             loyaltyEnabled: data.loyaltyEnabled ?? true,
             loyaltyEarnRate: Number(data.loyaltyEarnRate ?? 1000),
             loyaltyRedeemRate: Number(data.loyaltyRedeemRate ?? 10),
+            mobileBankingQrUrl: data.mobileBankingQrUrl ?? null,
+            mobileBankingName: data.mobileBankingName ?? 'KBZPay / WavePay',
           });
           setLoaded();
         }

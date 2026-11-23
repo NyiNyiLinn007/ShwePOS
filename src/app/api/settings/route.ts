@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireAuth, requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateSettingsSchema } from '@/lib/validations';
 import { serializePrismaData } from '@/lib/number';
+import { logAudit } from '@/services/auditService';
 
 export async function GET() {
   try {
@@ -33,7 +34,7 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     await validateCsrf(request);
-    await requireRole('ADMIN');
+    const user = await requireRole('ADMIN');
 
     const body = await request.json();
     const parsed = updateSettingsSchema.parse(body);
@@ -50,6 +51,8 @@ export async function PUT(request: NextRequest) {
       loyaltyEnabled,
       loyaltyEarnRate,
       loyaltyRedeemRate,
+      mobileBankingQrUrl,
+      mobileBankingName,
     } = parsed;
 
     const settings = await prisma.settings.upsert({
@@ -67,6 +70,8 @@ export async function PUT(request: NextRequest) {
         ...(loyaltyEnabled !== undefined && { loyaltyEnabled }),
         ...(loyaltyEarnRate !== undefined && { loyaltyEarnRate }),
         ...(loyaltyRedeemRate !== undefined && { loyaltyRedeemRate }),
+        ...(mobileBankingQrUrl !== undefined && { mobileBankingQrUrl: mobileBankingQrUrl || null }),
+        ...(mobileBankingName !== undefined && { mobileBankingName: mobileBankingName || null }),
       },
       create: {
         id: 'default',
@@ -82,7 +87,18 @@ export async function PUT(request: NextRequest) {
         loyaltyEnabled: loyaltyEnabled ?? true,
         loyaltyEarnRate: loyaltyEarnRate ?? 1000,
         loyaltyRedeemRate: loyaltyRedeemRate ?? 10,
+        mobileBankingQrUrl: mobileBankingQrUrl || null,
+        mobileBankingName: mobileBankingName || 'KBZPay / WavePay',
       },
+    });
+
+    await logAudit({
+      userId: user.id,
+      action: 'SETTINGS_UPDATED',
+      entityType: 'SETTINGS',
+      entityId: 'default',
+      summary: `Updated store settings (${Object.keys(parsed).join(', ')})`,
+      metadata: { updatedFields: Object.keys(parsed) },
     });
 
     return NextResponse.json(serializePrismaData(settings));

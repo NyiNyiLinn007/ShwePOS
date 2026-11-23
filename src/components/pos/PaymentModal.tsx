@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCartStore } from '@/store/cartStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Star,
   CheckCircle2,
+  QrCode,
 } from '@/components/ui/Icons';
 
 interface PaymentModalProps {
@@ -22,6 +23,7 @@ interface PaymentModalProps {
   onSuccess: (saleData: SaleResponse) => void;
   taxRate: number;
   hasOpenShift?: boolean | null;
+  autoFocusCustomer?: boolean;
 }
 
 export interface SaleResponse {
@@ -43,6 +45,8 @@ export interface SaleResponse {
   items: Array<{
     id: string;
     quantity: number;
+    unitName?: string | null;
+    unitFactor?: number;
     unitPrice: number;
     discount?: number;
     total: number;
@@ -112,8 +116,15 @@ const PAYMENT_METHODS: Array<{
   { id: 'SPLIT', labelEn: 'Split', labelMm: 'ပေါင်းစပ်' },
 ];
 
-export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift }: PaymentModalProps) {
+export default function PaymentModal({
+  onClose,
+  onSuccess,
+  taxRate,
+  hasOpenShift,
+  autoFocusCustomer = false,
+}: PaymentModalProps) {
   const router = useRouter();
+  const customerSearchRef = useRef<HTMLInputElement>(null);
   const items = useCartStore((s) => s.items);
   const getSubtotal = useCartStore((s) => s.getSubtotal);
   const getItemDiscountTotal = useCartStore((s) => s.getItemDiscountTotal);
@@ -123,7 +134,15 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
 
   const loyaltyEnabled = useSettingsStore((s) => s.loyaltyEnabled);
   const loyaltyRedeemRate = useSettingsStore((s) => s.loyaltyRedeemRate);
+  const mobileBankingQrUrl = useSettingsStore((s) => s.mobileBankingQrUrl);
+  const mobileBankingName = useSettingsStore((s) => s.mobileBankingName);
   const enqueueSale = useOfflineQueueStore((s) => s.enqueueSale);
+
+  useEffect(() => {
+    if (autoFocusCustomer) {
+      setTimeout(() => customerSearchRef.current?.focus(), 60);
+    }
+  }, [autoFocusCustomer]);
 
   const { language, t } = useI18n();
 
@@ -331,6 +350,10 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
         productId: item.productId,
         quantity: item.quantity,
         discount: item.discount || 0,
+        ...(item.unitPrice !== (item.originalUnitPrice ?? item.unitPrice)
+          ? { unitPrice: item.unitPrice }
+          : {}),
+        ...(item.productUnitId ? { productUnitId: item.productUnitId } : {}),
       })),
       customerId: selectedCustomer?.id || null,
       cartDiscount: cartDiscountAmount,
@@ -579,7 +602,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                 placeholder={t('Enter amount...', 'ပမာဏထည့်ပါ...')}
                 value={paidAmountStr}
                 onChange={(e) => setPaidAmountStr(e.target.value)}
-                autoFocus
+                autoFocus={!autoFocusCustomer}
                 min={0}
                 style={{
                   fontSize: 'var(--text-xl)',
@@ -632,28 +655,92 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
             </div>
           )}
 
-          {/* Card / Mobile Banking Reference */}
+          {/* Card / Mobile Banking Reference + QR Display */}
           {(paymentMethod === 'CARD' || paymentMethod === 'MOBILE_BANKING') && (
-            <div>
-              <div
-                style={{
-                  fontSize: 'var(--text-sm)',
-                  fontWeight: 600,
-                  marginBottom: 'var(--space-xs)',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                {t('paymentReference')} *
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              {paymentMethod === 'MOBILE_BANKING' && mobileBankingQrUrl && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 'var(--space-md)',
+                    padding: 'var(--space-md)',
+                    background: 'var(--bg-secondary)',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-default)',
+                  }}
+                >
+                  <div
+                    style={{
+                      padding: 6,
+                      background: '#fff',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border-subtle)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={mobileBankingQrUrl}
+                      alt={mobileBankingName || 'Mobile Banking QR'}
+                      style={{ width: 124, height: 124, objectFit: 'contain', display: 'block' }}
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        fontSize: 'var(--text-xs)',
+                        fontWeight: 700,
+                        color: 'var(--primary)',
+                        marginBottom: 4,
+                      }}
+                    >
+                      <QrCode size={14} strokeWidth={1.75} />
+                      {mobileBankingName || 'KBZPay / WavePay'}
+                    </div>
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)', marginBottom: 6 }}>
+                      {t(
+                        'Ask customer to scan QR and pay exact amount:',
+                        'ဖောက်သည်အား QR Scan ဖတ်၍ အောက်ပါပမာဏအတိအကျ ပေးချေခိုင်းပါ -'
+                      )}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 'var(--text-xl)',
+                        fontWeight: 800,
+                        color: 'var(--text-primary)',
+                        fontFamily: 'var(--font-mono)',
+                      }}
+                    >
+                      {formatCurrency(grandTotal)}
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div>
+                <div
+                  style={{
+                    fontSize: 'var(--text-sm)',
+                    fontWeight: 600,
+                    marginBottom: 'var(--space-xs)',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  {t('paymentReference')} *
+                </div>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder={t('transactionCode')}
+                  value={paymentReference}
+                  onChange={(e) => setPaymentReference(e.target.value)}
+                  maxLength={100}
+                  autoFocus={!autoFocusCustomer}
+                />
               </div>
-              <input
-                type="text"
-                className="input"
-                placeholder={t('transactionCode')}
-                value={paymentReference}
-                onChange={(e) => setPaymentReference(e.target.value)}
-                maxLength={100}
-                autoFocus
-              />
             </div>
           )}
 
@@ -792,6 +879,45 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
                   <span style={{ color: 'var(--success)', fontWeight: 700 }}>✓ Balanced</span>
                 )}
               </div>
+              {mobileBankingQrUrl &&
+                splitLegs.some((l) => l.method === 'MOBILE_BANKING') && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 'var(--space-sm)',
+                      padding: 'var(--space-sm)',
+                      background: 'var(--bg-primary)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <div style={{ padding: 4, background: '#fff', borderRadius: 4, flexShrink: 0 }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={mobileBankingQrUrl}
+                        alt={mobileBankingName || 'Mobile Banking QR'}
+                        style={{ width: 84, height: 84, objectFit: 'contain', display: 'block' }}
+                      />
+                    </div>
+                    <div style={{ fontSize: 'var(--text-xs)' }}>
+                      <div style={{ fontWeight: 700, color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <QrCode size={12} strokeWidth={1.75} />
+                        {mobileBankingName || 'KBZPay / WavePay'}
+                      </div>
+                      <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                        {t('Mobile Transfer Amount', 'မိုဘိုင်းလွှဲရမည့်ပမာဏ')}:{' '}
+                        <strong style={{ color: 'var(--text-primary)' }}>
+                          {formatCurrency(
+                            splitLegs
+                              .filter((l) => l.method === 'MOBILE_BANKING')
+                              .reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0)
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
             </div>
           )}
 
@@ -851,6 +977,7 @@ export default function PaymentModal({ onClose, onSuccess, taxRate, hasOpenShift
               </div>
             ) : (
               <input
+                ref={customerSearchRef}
                 type="text"
                 className="input input-search"
                 placeholder={t('Search customer by name or phone...', 'ဖောက်သည်အမည် သို့မဟုတ် ဖုန်းဖြင့် ရှာပါ...')}

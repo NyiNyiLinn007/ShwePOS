@@ -5,7 +5,16 @@ import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, isFractionalUnit } from '@/lib/utils';
 import { resizeImageToDataUrl } from '@/lib/image';
-import { Upload, X } from '@/components/ui/Icons';
+import { Upload, X, Plus, Layers, Trash2 } from '@/components/ui/Icons';
+
+export interface ProductUnitFormRow {
+  id?: string;
+  unitName: string;
+  nameMm: string;
+  conversionFactor: string;
+  sellingPrice: string;
+  barcode: string;
+}
 
 export interface ProductFormInput {
   name: string;
@@ -22,6 +31,7 @@ export interface ProductFormInput {
   expiryDate: string;
   imageUrl: string;
   isActive: boolean;
+  productUnits: ProductUnitFormRow[];
 }
 
 export interface ProductCategoryOption {
@@ -57,6 +67,7 @@ export const emptyProductForm: ProductFormInput = {
   expiryDate: '',
   imageUrl: '',
   isActive: true,
+  productUnits: [],
 };
 
 export function generateRandomSKU(): string {
@@ -75,7 +86,10 @@ interface ProductFormModalProps {
   formErrors: Record<string, string>;
   categories: ProductCategoryOption[];
   saving: boolean;
-  onChange: (field: keyof ProductFormInput, value: string | boolean) => void;
+  onChange: (
+    field: keyof ProductFormInput,
+    value: string | boolean | ProductUnitFormRow[]
+  ) => void;
   onSave: () => void;
   onClose: () => void;
 }
@@ -403,6 +417,144 @@ export function ProductFormModal({
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* Alternate Packaging Units (Wholesale / Multi-Unit) - full width */}
+            <div
+              style={{
+                gridColumn: '1 / -1',
+                padding: 'var(--space-md)',
+                background: 'var(--bg-secondary)',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--border-color)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 'var(--space-sm)',
+                }}
+              >
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 'var(--text-sm)' }}>
+                  <Layers size={15} strokeWidth={1.75} />
+                  {t(
+                    'Wholesale / Multi-Unit Packaging (Optional)',
+                    'လက်ကား / ယူနစ်ခွဲ ထုပ်ပိုးမှုများ (ဥပမာ - ဖာ၊ ဒါဇင်)'
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() =>
+                    onChange('productUnits', [
+                      ...formData.productUnits,
+                      {
+                        unitName: 'box',
+                        nameMm: 'ဖာ',
+                        conversionFactor: '12',
+                        sellingPrice: String(
+                          Math.round((Number(formData.sellingPrice) || 0) * 12)
+                        ),
+                        barcode: '',
+                      },
+                    ])
+                  }
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
+                  <Plus size={13} strokeWidth={2} />
+                  {t('Add Unit', 'ယူနစ်ထပ်ထည့်ရန်')}
+                </button>
+              </div>
+              {formData.productUnits.length === 0 ? (
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                  {t(
+                    `Base unit is "${formData.unit}". Add pack/dozen/carton units to sell wholesale directly in POS while deducting base stock automatically.`,
+                    `အခြေခံယူနစ်မှာ "${formData.unit}" ဖြစ်သည်။ POS တွင် တစ်ဖာ/တစ်ဒါဇင်လိုက် ရောင်းနိုင်ရန် ယူနစ်အပိုများ ထည့်သွင်းနိုင်ပါသည်။`
+                  )}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {formData.productUnits.map((row, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 90px 110px 1fr auto',
+                        gap: 6,
+                        alignItems: 'center',
+                      }}
+                    >
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder={t('Unit (e.g. carton)', 'ယူနစ် (ဥပမာ carton)')}
+                        value={row.unitName}
+                        onChange={(e) => {
+                          const next = [...formData.productUnits];
+                          next[idx] = { ...row, unitName: e.target.value };
+                          onChange('productUnits', next);
+                        }}
+                        style={{ fontSize: 12 }}
+                      />
+                      <input
+                        type="number"
+                        className="input"
+                        min="0.001"
+                        step="any"
+                        placeholder={`× ${formData.unit}`}
+                        title={t(`Number of base units (${formData.unit}) per 1 unit`, `၁ ယူနစ်တွင် ပါဝင်သည့် ${formData.unit} အရေအတွက်`)}
+                        value={row.conversionFactor}
+                        onChange={(e) => {
+                          const next = [...formData.productUnits];
+                          next[idx] = { ...row, conversionFactor: e.target.value };
+                          onChange('productUnits', next);
+                        }}
+                        style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                      />
+                      <input
+                        type="number"
+                        className="input"
+                        min="0"
+                        placeholder={t('Price (K)', 'ဈေးနှုန်း (K)')}
+                        value={row.sellingPrice}
+                        onChange={(e) => {
+                          const next = [...formData.productUnits];
+                          next[idx] = { ...row, sellingPrice: e.target.value };
+                          onChange('productUnits', next);
+                        }}
+                        style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                      />
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder={t('Unit Barcode (optional)', 'ဘားကုဒ် (ရှိပါက)')}
+                        value={row.barcode}
+                        onChange={(e) => {
+                          const next = [...formData.productUnits];
+                          next[idx] = { ...row, barcode: e.target.value };
+                          onChange('productUnits', next);
+                        }}
+                        style={{ fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ color: 'var(--danger)' }}
+                        onClick={() =>
+                          onChange(
+                            'productUnits',
+                            formData.productUnits.filter((_, i) => i !== idx)
+                          )
+                        }
+                      >
+                        <Trash2 size={14} strokeWidth={1.75} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Active Toggle - full width */}

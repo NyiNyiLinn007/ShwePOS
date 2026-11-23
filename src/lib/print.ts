@@ -2,11 +2,13 @@
  * Dedicated thermal receipt & barcode label printer using a clean hidden iframe.
  * Avoids main-window CSS/modal/scroll/dark-mode conflicts in browser print preview.
  */
+export type PrintPaperSize = '80mm' | '58mm' | 'A4';
+
 export function printElementById(
   elementId: string,
   options?: {
     title?: string;
-    paperSize?: '80mm' | '58mm' | 'A4';
+    paperSize?: PrintPaperSize;
   }
 ) {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;

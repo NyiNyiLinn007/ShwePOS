@@ -4,6 +4,7 @@ import { ApiError, handleApiError, requireAuth, validateCsrf } from '@/lib/apiAu
 import { closeShiftSchema } from '@/lib/validations';
 import { roundMoney, toNumber } from '@/lib/number';
 import { summarizeShiftCash } from '@/lib/shiftUtils';
+import { logAudit } from '@/services/auditService';
 
 export async function POST(
   request: NextRequest,
@@ -51,7 +52,7 @@ export async function POST(
         },
       });
 
-      return tx.shift.update({
+      const updatedShift = await tx.shift.update({
         where: { id },
         data: {
           status: 'CLOSED',
@@ -70,6 +71,25 @@ export async function POST(
           },
         },
       });
+
+      await logAudit(
+        {
+          userId: user.id,
+          action: 'SHIFT_CLOSED',
+          entityType: 'SHIFT',
+          entityId: id,
+          summary: `Closed shift for ${updatedShift.user.name} — Expected: ${summary.expectedCash} K, Actual: ${actualCash} K, Variance: ${variance} K`,
+          metadata: {
+            shiftOwner: updatedShift.user.name,
+            expectedCash: summary.expectedCash,
+            actualCash,
+            variance,
+          },
+        },
+        tx
+      );
+
+      return updatedShift;
     });
 
     return NextResponse.json({ shift: serializeClosedShift(closed) });
