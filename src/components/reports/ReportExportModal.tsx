@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settingsStore';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { getPaymentMethodLabel } from '@/lib/saleHelpers';
 import { printElementById, type PrintPaperSize } from '@/lib/print';
 import { Printer, X, FileText } from '@/components/ui/Icons';
 
@@ -291,7 +292,7 @@ export function ReportSummaryPrintModal({
                     style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}
                   >
                     <span>
-                      {pm.method} ({pm.count})
+                      {getPaymentMethodLabel(pm.method, t)} ({pm.count})
                     </span>
                     <span>{formatCurrency(pm.amount)}</span>
                   </div>

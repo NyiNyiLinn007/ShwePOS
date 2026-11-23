@@ -3,6 +3,7 @@
 import React from 'react';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { getPaymentMethodLabel } from '@/lib/saleHelpers';
 import { X, CreditCard, Truck } from '@/components/ui/Icons';
 
 export interface SupplierRecord {
@@ -383,7 +384,7 @@ export function SupplierDetailModal({
                     {supplier.payments.map((p) => (
                       <tr key={p.id}>
                         <td style={{ fontSize: 'var(--text-xs)' }}>{formatDateTime(p.createdAt)}</td>
-                        <td>{p.method}</td>
+                        <td>{getPaymentMethodLabel(p.method, t)}</td>
                         <td>{p.reference || '—'}</td>
                         <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--success)', fontWeight: 600 }}>
                           {formatCurrency(p.amount)}

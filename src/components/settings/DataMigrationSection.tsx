@@ -34,7 +34,12 @@ export function DataMigrationSection() {
       const data = await res.json();
       if (!res.ok) {
         const detail = data.details?.[0]?.message;
-        addToast(detail ? `${data.error}: ${detail}` : data.error || 'Import failed', 'error');
+        addToast(
+          detail
+            ? `${data.error}: ${detail}`
+            : data.error || t('Import failed', 'ဒေတာသွင်းယူမှု မအောင်မြင်ပါ'),
+          'error'
+        );
         return;
       }
 

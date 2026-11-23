@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatQuantity, isFractionalUnit } from '@/lib/utils';
-import { SaleRecord } from '@/lib/saleHelpers';
+import { SaleRecord, getPaymentMethodLabel } from '@/lib/saleHelpers';
 import { X } from '@/components/ui/Icons';
 
 export type SaleRefundAction = 'VOIDED' | 'REFUNDED' | 'PARTIALLY_REFUNDED';
@@ -222,7 +222,7 @@ export function SaleRefundModal({
               onChange={(e) => setRefundMethod(e.target.value as 'ORIGINAL' | 'CASH')}
             >
               <option value="ORIGINAL">
-                {t('Original Payment Method', 'မူလငွေပေးချေမှုနည်းလမ်းအတိုင်း')} ({sale.paymentMethod})
+                {t('Original Payment Method', 'မူလငွေပေးချေမှုနည်းလမ်းအတိုင်း')} ({getPaymentMethodLabel(sale.paymentMethod, t)})
               </option>
               <option value="CASH">
                 {t(

@@ -203,28 +203,38 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
 
   function validateForm(): boolean {
     const errors: Record<string, string> = {};
-    if (!formData.name.trim()) errors.name = 'Product name is required';
-    if (!formData.sku.trim()) errors.sku = 'SKU is required';
-    if (!formData.categoryId) errors.categoryId = 'Category is required';
+    if (!formData.name.trim()) {
+      errors.name = t('Product name is required', 'ကုန်ပစ္စည်းအမည် ထည့်ရန်လိုအပ်ပါသည်');
+    }
+    if (!formData.sku.trim()) {
+      errors.sku = t('SKU is required', 'SKU ထည့်ရန်လိုအပ်ပါသည်');
+    }
+    if (!formData.categoryId) {
+      errors.categoryId = t('Category is required', 'အမျိုးအစား ရွေးချယ်ရန်လိုအပ်ပါသည်');
+    }
 
     const cost = Number(formData.costPrice);
     const selling = Number(formData.sellingPrice);
-    if (isNaN(cost) || cost < 0) errors.costPrice = 'Invalid cost price';
-    if (isNaN(selling) || selling < 0) errors.sellingPrice = 'Invalid selling price';
+    if (isNaN(cost) || cost < 0) {
+      errors.costPrice = t('Invalid cost price', 'အရင်းဈေး မှားယွင်းနေပါသည်');
+    }
+    if (isNaN(selling) || selling < 0) {
+      errors.sellingPrice = t('Invalid selling price', 'ရောင်းဈေး မှားယွင်းနေပါသည်');
+    }
 
     const fractional = isFractionalUnit(formData.unit);
     const stock = Number(formData.stockQuantity);
     if (isNaN(stock) || stock < 0 || (!fractional && !Number.isInteger(stock))) {
       errors.stockQuantity = fractional
-        ? 'Stock must be a non-negative number'
-        : 'Stock must be a non-negative integer';
+        ? t('Stock must be a non-negative number', 'ကုန်လက်ကျန်သည် သုည သို့မဟုတ် အပြုကိန်းဖြစ်ရပါမည်')
+        : t('Stock must be a non-negative integer', 'ကုန်လက်ကျန်သည် အပြုကိန်းပြည့်ဖြစ်ရပါမည်');
     }
 
     const threshold = Number(formData.lowStockThreshold);
     if (isNaN(threshold) || threshold < 0 || (!fractional && !Number.isInteger(threshold))) {
       errors.lowStockThreshold = fractional
-        ? 'Threshold must be a non-negative number'
-        : 'Threshold must be a non-negative integer';
+        ? t('Threshold must be a non-negative number', 'ကုန်နည်းသတ်မှတ်ချက်သည် သုည သို့မဟုတ် အပြုကိန်းဖြစ်ရပါမည်')
+        : t('Threshold must be a non-negative integer', 'ကုန်နည်းသတ်မှတ်ချက်သည် အပြုကိန်းပြည့်ဖြစ်ရပါမည်');
     }
 
     setFormErrors(errors);

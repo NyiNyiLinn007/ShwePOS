@@ -95,17 +95,21 @@ export function UserManagementSection({ users, setUsers }: UserManagementSection
 
   function validateUserForm(): boolean {
     const errors: Record<string, string> = {};
-    if (!userForm.name.trim()) errors.name = 'Name is required';
-    if (!userForm.email.trim()) errors.email = 'Email is required';
+    if (!userForm.name.trim()) {
+      errors.name = t('Name is required', 'အမည် ထည့်ရန်လိုအပ်ပါသည်');
+    }
+    if (!userForm.email.trim()) {
+      errors.email = t('Email is required', 'အီးမေးလ် ထည့်ရန်လိုအပ်ပါသည်');
+    }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (userForm.email && !emailRegex.test(userForm.email)) {
-      errors.email = 'Invalid email format';
+      errors.email = t('Invalid email format', 'အီးမေးလ်ပုံစံ မှားယွင်းနေပါသည်');
     }
     if (!editingUser && !userForm.password) {
-      errors.password = 'Password is required for new users';
+      errors.password = t('Password is required for new users', 'အသုံးပြုသူအသစ်အတွက် စကားဝှက်ထည့်ရန် လိုအပ်ပါသည်');
     }
     if (userForm.password && userForm.password.length > 0 && userForm.password.length < 6) {
-      errors.password = 'Password must be at least 6 characters';
+      errors.password = t('Password must be at least 6 characters', 'စကားဝှက်သည် အနည်းဆုံး ၆ လုံးရှိရပါမည်');
     }
     setUserFormErrors(errors);
     return Object.keys(errors).length === 0;

@@ -117,7 +117,7 @@ export function ExpensesClient({
   users,
   initialSummary,
 }: ExpensesClientProps) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const { addToast } = useToast();
 
   // State
@@ -245,13 +245,19 @@ export function ExpensesClient({
 
   function validateForm(): boolean {
     const errors: Record<string, string> = {};
-    if (!formData.category) errors.category = 'Category is required';
+    if (!formData.category) {
+      errors.category = t('Category is required', 'အမျိုးအစား ရွေးချယ်ရန်လိုအပ်ပါသည်');
+    }
     const amount = Number(formData.amount);
     if (!formData.amount || isNaN(amount) || amount <= 0) {
-      errors.amount = 'Amount must be a positive number';
+      errors.amount = t('Amount must be a positive number', 'ပမာဏသည် သုညထက်ကြီးရပါမည်');
     }
-    if (!formData.date) errors.date = 'Date is required';
-    if (!formData.userId) errors.userId = 'User is required';
+    if (!formData.date) {
+      errors.date = t('Date is required', 'ရက်စွဲ ထည့်ရန်လိုအပ်ပါသည်');
+    }
+    if (!formData.userId) {
+      errors.userId = t('User is required', 'မှတ်တမ်းတင်သူ ရွေးချယ်ရန်လိုအပ်ပါသည်');
+    }
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -283,7 +289,7 @@ export function ExpensesClient({
       const data = await res.json();
 
       if (!res.ok) {
-        addToast(data.error || 'Failed to save expense', 'error');
+        addToast(data.error || t('Failed to save expense', 'ကုန်ကျစရိတ် သိမ်းမရပါ'), 'error');
         return;
       }
 
@@ -303,7 +309,7 @@ export function ExpensesClient({
 
       closeModal();
     } catch {
-      addToast('Network error. Please try again.', 'error');
+      addToast(t('Network error. Please try again.', 'ကွန်ရက်ချို့ယွင်းချက်။ ထပ်ကြိုးစားပါ။'), 'error');
     } finally {
       setSaving(false);
     }
@@ -321,7 +327,7 @@ export function ExpensesClient({
       const data = await res.json();
 
       if (!res.ok) {
-        addToast(data.error || 'Failed to delete expense', 'error');
+        addToast(data.error || t('Failed to delete expense', 'ကုန်ကျစရိတ် ဖျက်မရပါ'), 'error');
         return;
       }
 
@@ -331,7 +337,7 @@ export function ExpensesClient({
       addToast(t('Expense deleted successfully', 'ကုန်ကျစရိတ်အောင်မြင်စွာဖျက်ပြီး'), 'success');
       setDeleteTarget(null);
     } catch {
-      addToast('Network error. Please try again.', 'error');
+      addToast(t('Network error. Please try again.', 'ကွန်ရက်ချို့ယွင်းချက်။ ထပ်ကြိုးစားပါ။'), 'error');
     } finally {
       setDeleting(false);
     }
@@ -572,7 +578,7 @@ export function ExpensesClient({
             }}
           >
             {filteredExpenses.length} {t('expense', 'ကုန်ကျစရိတ်')}
-            {filteredExpenses.length !== 1 ? 's' : ''}
+            {language !== 'mm' && filteredExpenses.length !== 1 ? 's' : ''}
           </div>
         </div>
 

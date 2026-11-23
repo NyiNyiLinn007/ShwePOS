@@ -13,21 +13,35 @@ import {
 } from '@/components/ui/Icons';
 import type { AuditLogRecord } from '@/types';
 
-const ACTION_OPTIONS = [
-  'SALE_VOID',
-  'SALE_REFUND',
-  'SALE_PARTIAL_REFUND',
-  'PRICE_OVERRIDE',
-  'PRODUCT_PRICE_CHANGE',
-  'STOCK_ADJUSTMENT',
-  'PURCHASE_ORDER_CREATED',
-  'PURCHASE_ORDER_CANCELLED',
-  'SUPPLIER_DEBT_REPAYMENT',
-  'CUSTOMER_DEBT_REPAYMENT',
-  'SHIFT_CLOSED',
-  'USER_UPDATED',
-  'SETTINGS_UPDATED',
-] as const;
+const ACTION_LABELS: Record<string, { en: string; mm: string }> = {
+  SALE_VOID: { en: 'Sale Voided', mm: 'အရောင်းပယ်ဖျက်ခြင်း' },
+  SALE_REFUND: { en: 'Full Refund', mm: 'ဘောင်ချာအပြည့် ပြန်အမ်းခြင်း' },
+  SALE_PARTIAL_REFUND: { en: 'Partial Refund', mm: 'ပစ္စည်းအချို့ ပြန်အမ်းခြင်း' },
+  PRICE_OVERRIDE: { en: 'POS Price Override', mm: 'POS ဈေးနှုန်းပြင်ရောင်းခြင်း' },
+  PRODUCT_PRICE_CHANGE: { en: 'Product Price Changed', mm: 'ကုန်ပစ္စည်းဈေးနှုန်း ပြောင်းလဲခြင်း' },
+  STOCK_ADJUSTMENT: { en: 'Stock Adjustment', mm: 'ကုန်လက်ကျန် ချိန်ညှိခြင်း' },
+  PURCHASE_ORDER_CREATED: { en: 'Purchase Order Received', mm: 'ကုန်အဝယ် လက်ခံသွင်းခြင်း' },
+  PURCHASE_ORDER_CANCELLED: { en: 'Purchase Order Cancelled', mm: 'ကုန်အဝယ် ပယ်ဖျက်ခြင်း' },
+  SUPPLIER_DEBT_REPAYMENT: { en: 'Supplier Debt Paid', mm: 'ပေးသွင်းသူအကြွေး ပေးချေခြင်း' },
+  CUSTOMER_DEBT_REPAYMENT: { en: 'Customer Debt Received', mm: 'ဖောက်သည်အကြွေး လက်ခံခြင်း' },
+  SHIFT_CLOSED: { en: 'Shift Closed', mm: 'အဆိုင်းပိတ်ခြင်း' },
+  USER_UPDATED: { en: 'User Account Updated', mm: 'ဝန်ထမ်းအကောင့် ပြင်ဆင်ခြင်း' },
+  SETTINGS_UPDATED: { en: 'Settings Updated', mm: 'ဆိုင်ဆက်တင် ပြင်ဆင်ခြင်း' },
+};
+
+const ENTITY_LABELS: Record<string, { en: string; mm: string }> = {
+  SALE: { en: 'Sale', mm: 'အရောင်း' },
+  PRODUCT: { en: 'Product', mm: 'ကုန်ပစ္စည်း' },
+  INVENTORY: { en: 'Inventory', mm: 'ကုန်လက်ကျန်' },
+  CUSTOMER: { en: 'Customer', mm: 'ဖောက်သည်' },
+  SUPPLIER: { en: 'Supplier', mm: 'ပေးသွင်းသူ' },
+  PURCHASE_ORDER: { en: 'Purchase Order', mm: 'ကုန်အဝယ်' },
+  SHIFT: { en: 'Shift', mm: 'အဆိုင်း' },
+  USER: { en: 'User', mm: 'ဝန်ထမ်း' },
+  SETTINGS: { en: 'Settings', mm: 'ဆက်တင်' },
+};
+
+const ACTION_OPTIONS = Object.keys(ACTION_LABELS);
 
 function getActionBadgeClass(action: string): string {
   if (action.includes('VOID') || action.includes('CANCELLED')) return 'badge-danger';
@@ -48,8 +62,14 @@ interface AuditLogsClientProps {
 }
 
 export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const { addToast } = useToast();
+
+  const getActionLabel = (action: string) =>
+    ACTION_LABELS[action]?.[language] ?? action;
+
+  const getEntityLabel = (entityType: string) =>
+    ENTITY_LABELS[entityType]?.[language] ?? entityType;
 
   const [logs, setLogs] = useState<AuditLogRecord[]>(initialLogs);
   const [loading, setLoading] = useState(false);
@@ -215,7 +235,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
               <option value="">{t('All Actions', 'လုပ်ဆောင်ချက်အားလုံး')}</option>
               {ACTION_OPTIONS.map((a) => (
                 <option key={a} value={a}>
-                  {a}
+                  {getActionLabel(a)}
                 </option>
               ))}
             </select>
@@ -232,7 +252,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
               <option value="">{t('All Users', 'အသုံးပြုသူအားလုံး')}</option>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.name} ({u.role})
+                  {u.name} ({t(u.role.toLowerCase())})
                 </option>
               ))}
             </select>
@@ -276,16 +296,20 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
                         {log.user?.name || '—'}
                       </div>
                       <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
-                        {log.user?.role}
+                        {log.user?.role ? t(log.user.role.toLowerCase()) : ''}
                       </div>
                     </td>
                     <td>
-                      <span className={`badge ${getActionBadgeClass(log.action)}`} style={{ fontSize: '10px' }}>
-                        {log.action}
+                      <span
+                        className={`badge ${getActionBadgeClass(log.action)}`}
+                        style={{ fontSize: '11px' }}
+                        title={log.action}
+                      >
+                        {getActionLabel(log.action)}
                       </span>
                     </td>
-                    <td style={{ fontSize: 'var(--text-xs)', fontFamily: 'var(--font-mono)' }}>
-                      {log.entityType}
+                    <td style={{ fontSize: 'var(--text-xs)' }}>
+                      {getEntityLabel(log.entityType)}
                     </td>
                     <td style={{ fontSize: 'var(--text-sm)', maxWidth: 420 }}>
                       {log.summary}
@@ -314,7 +338,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
         <div className="modal-backdrop" onClick={() => setSelectedLog(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
             <div className="modal-header">
-              <h2 className="modal-title">{selectedLog.action}</h2>
+              <h2 className="modal-title">{getActionLabel(selectedLog.action)}</h2>
               <button type="button" className="btn btn-ghost btn-icon" onClick={() => setSelectedLog(null)}>
                 <X size={16} strokeWidth={1.75} />
               </button>
@@ -324,7 +348,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
                 <strong>{t('Summary', 'အကျဉ်းချုပ်')}:</strong> {selectedLog.summary}
               </div>
               <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-                {selectedLog.user?.name} ({selectedLog.user?.role}) · {formatDateTime(selectedLog.createdAt)}
+                {selectedLog.user?.name} ({selectedLog.user?.role ? t(selectedLog.user.role.toLowerCase()) : ''}) · {formatDateTime(selectedLog.createdAt)}
               </div>
               <pre
                 style={{

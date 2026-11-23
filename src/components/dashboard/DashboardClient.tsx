@@ -82,7 +82,9 @@ export default function DashboardClient({
           </p>
         </div>
         <span className="badge badge-primary dashboard-role-badge">
-          {role === 'CASHIER' ? 'Cashier workspace' : `${role.toLowerCase()} overview`}
+          {role === 'CASHIER'
+            ? t('Cashier workspace', 'ငွေကိုင် လုပ်ငန်းခွင်')
+            : `${t(role.toLowerCase())} ${t('overview', 'ခြုံငုံကြည့်ရှုမှု')}`}
         </span>
       </div>
 

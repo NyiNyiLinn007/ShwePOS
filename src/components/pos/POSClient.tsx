@@ -426,10 +426,10 @@ export default function POSClient({
             {!isOnline && (
               <span
                 className="badge badge-danger"
-                title="Offline mode active — sales will queue locally"
+                title={t('Offline mode active — sales will queue locally', 'အော့ဖ်လိုင်းမုဒ် — အရောင်းများကို ယာယီသိမ်းထားပါမည်')}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
               >
-                <WifiOff size={12} strokeWidth={2} /> Offline
+                <WifiOff size={12} strokeWidth={2} /> {t('Offline', 'အော့ဖ်လိုင်း')}
               </span>
             )}
             {queuedSales.length > 0 && (
@@ -441,7 +441,9 @@ export default function POSClient({
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
               >
                 <RefreshCw size={13} strokeWidth={1.75} />
-                {isSyncing ? 'Syncing...' : `Queued (${queuedSales.length})`}
+                {isSyncing
+                  ? t('Syncing...', 'ချိတ်ဆက်နေသည်...')
+                  : `${t('Queued', 'စောင့်ဆိုင်းနေ')} (${queuedSales.length})`}
               </button>
             )}
             {heldBills.length > 0 && (

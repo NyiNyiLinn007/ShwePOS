@@ -5,6 +5,7 @@ import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { useAppStore } from '@/lib/store';
 import { formatCurrency, formatDateTime, formatQuantity } from '@/lib/utils';
+import { getPaymentMethodLabel } from '@/lib/saleHelpers';
 import { ShoppingBag, Plus, Eye, Ban, X } from '@/components/ui/Icons';
 import {
   PurchaseFormModal,
@@ -306,7 +307,7 @@ export function PurchasesClient({
                 <div><strong>{t('Supplier', 'ပေးသွင်းသူ')}:</strong> {selectedOrder.supplier.name}</div>
                 <div><strong>{t('Received By', 'လက်ခံသူ')}:</strong> {selectedOrder.user.name}</div>
                 <div><strong>{t('Date', 'ရက်စွဲ')}:</strong> {formatDateTime(selectedOrder.createdAt)}</div>
-                <div><strong>{t('Payment', 'ငွေပေးချေမှု')}:</strong> {selectedOrder.paymentMethod}</div>
+                <div><strong>{t('Payment', 'ငွေပေးချေမှု')}:</strong> {getPaymentMethodLabel(selectedOrder.paymentMethod, t)}</div>
               </div>
               <div className="table-container">
                 <table className="table">

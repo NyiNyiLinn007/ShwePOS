@@ -41,15 +41,15 @@ export interface ProductCategoryOption {
 }
 
 export const PRODUCT_UNITS = [
-  { value: 'pcs', label: 'Pieces (pcs)' },
-  { value: 'kg', label: 'Kilogram (kg)' },
-  { value: 'g', label: 'Gram (g)' },
-  { value: 'liter', label: 'Liter (L)' },
-  { value: 'ml', label: 'Milliliter (ml)' },
-  { value: 'pack', label: 'Pack' },
-  { value: 'box', label: 'Box' },
-  { value: 'dozen', label: 'Dozen' },
-  { value: 'set', label: 'Set' },
+  { value: 'pcs', en: 'Pieces (pcs)', mm: 'ခု (pcs)' },
+  { value: 'kg', en: 'Kilogram (kg)', mm: 'ကီလိုဂရမ် (kg)' },
+  { value: 'g', en: 'Gram (g)', mm: 'ဂရမ် (g)' },
+  { value: 'liter', en: 'Liter (L)', mm: 'လီတာ (L)' },
+  { value: 'ml', en: 'Milliliter (ml)', mm: 'မီလီလီတာ (ml)' },
+  { value: 'pack', en: 'Pack', mm: 'ထုပ် (pack)' },
+  { value: 'box', en: 'Box', mm: 'ဘူး/ဖာ (box)' },
+  { value: 'dozen', en: 'Dozen', mm: 'ဒါဇင် (dozen)' },
+  { value: 'set', en: 'Set', mm: 'စုံ (set)' },
 ];
 
 export const emptyProductForm: ProductFormInput = {
@@ -105,7 +105,7 @@ export function ProductFormModal({
   onSave,
   onClose,
 }: ProductFormModalProps) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const { addToast } = useToast();
 
   if (!isOpen) return null;
@@ -178,7 +178,7 @@ export function ProductFormModal({
                     }}
                     onClick={() => onChange('sku', generateRandomSKU())}
                   >
-                    Generate
+                    {t('Generate', 'အလိုအလျောက်ဖန်တီး')}
                   </button>
                 )}
               </label>
@@ -199,11 +199,11 @@ export function ProductFormModal({
 
             {/* Barcode */}
             <div className="input-group">
-              <label className="input-label">Barcode</label>
+              <label className="input-label">{t('Barcode', 'ဘားကုဒ်')}</label>
               <input
                 type="text"
                 className="input"
-                placeholder="Optional barcode"
+                placeholder={t('Optional barcode', 'ဘားကုဒ် (ရှိပါက)')}
                 value={formData.barcode}
                 onChange={(e) => onChange('barcode', e.target.value)}
                 style={{ fontFamily: 'var(--font-mono)' }}
@@ -212,17 +212,16 @@ export function ProductFormModal({
 
             {/* Category */}
             <div className="input-group">
-              <label className="input-label">Category *</label>
+              <label className="input-label">{t('Category', 'အမျိုးအစား')} *</label>
               <select
                 className={`input ${formErrors.categoryId ? 'input-error' : ''}`}
                 value={formData.categoryId}
                 onChange={(e) => onChange('categoryId', e.target.value)}
               >
-                <option value="">Select category</option>
+                <option value="">{t('Select category', 'အမျိုးအစား ရွေးချယ်ပါ')}</option>
                 {categories.map((cat) => (
                   <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                    {cat.nameMm ? ` (${cat.nameMm})` : ''}
+                    {language === 'mm' && cat.nameMm ? `${cat.nameMm} (${cat.name})` : `${cat.name}${cat.nameMm ? ` (${cat.nameMm})` : ''}`}
                   </option>
                 ))}
               </select>
@@ -235,7 +234,7 @@ export function ProductFormModal({
 
             {/* Unit */}
             <div className="input-group">
-              <label className="input-label">Unit</label>
+              <label className="input-label">{t('Unit', 'ယူနစ်')}</label>
               <select
                 className="input"
                 value={formData.unit}
@@ -243,7 +242,7 @@ export function ProductFormModal({
               >
                 {PRODUCT_UNITS.map((u) => (
                   <option key={u.value} value={u.value}>
-                    {u.label}
+                    {language === 'mm' ? u.mm : u.en}
                   </option>
                 ))}
               </select>
@@ -251,7 +250,7 @@ export function ProductFormModal({
 
             {/* Cost Price */}
             <div className="input-group">
-              <label className="input-label">Cost Price (K) *</label>
+              <label className="input-label">{t('Cost Price (K)', 'အရင်းဈေး (ကျပ်)')} *</label>
               <input
                 type="number"
                 min="0"
@@ -271,7 +270,7 @@ export function ProductFormModal({
 
             {/* Selling Price */}
             <div className="input-group">
-              <label className="input-label">Selling Price (K) *</label>
+              <label className="input-label">{t('Selling Price (K)', 'ရောင်းဈေး (ကျပ်)')} *</label>
               <input
                 type="number"
                 min="0"
@@ -291,7 +290,7 @@ export function ProductFormModal({
 
             {/* Stock Quantity */}
             <div className="input-group">
-              <label className="input-label">Stock Quantity ({formData.unit})</label>
+              <label className="input-label">{t('Stock Quantity', 'ကုန်လက်ကျန်အရေအတွက်')} ({formData.unit})</label>
               <input
                 type="number"
                 min="0"
@@ -335,7 +334,7 @@ export function ProductFormModal({
               <input
                 type="text"
                 className="input"
-                placeholder="Optional batch / lot number"
+                placeholder={t('Optional batch / lot number', 'အသုတ်နံပါတ် (ရှိပါက)')}
                 value={formData.batchNumber}
                 onChange={(e) => onChange('batchNumber', e.target.value)}
               />

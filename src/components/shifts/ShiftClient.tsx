@@ -71,6 +71,19 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
 
   const isManager = userRole === 'ADMIN' || userRole === 'MANAGER';
 
+  const getDrawerMovementLabel = (type: string): string => {
+    const labels: Record<string, { en: string; mm: string }> = {
+      OPENING: { en: 'Opening Cash', mm: 'အဖွင့်ငွေ' },
+      CASH_SALE: { en: 'Cash Sale', mm: 'ငွေသားအရောင်း' },
+      PAID_IN: { en: 'Paid In', mm: 'ငွေသွင်း' },
+      PAID_OUT: { en: 'Paid Out', mm: 'ငွေထုတ်' },
+      REFUND: { en: 'Refund', mm: 'ပြန်အမ်းငွေ' },
+      VOID: { en: 'Void', mm: 'ပယ်ဖျက်ငွေ' },
+      CLOSING: { en: 'Closing Cash', mm: 'အပိတ်ငွေ' },
+    };
+    return labels[type]?.[language] ?? type;
+  };
+
   async function loadShifts() {
     setLoading(true);
     try {
@@ -151,7 +164,11 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
         }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to record movement');
+      if (!response.ok) {
+        throw new Error(
+          data.error || t('Failed to record movement', 'ငွေအဝင်အထွက် မှတ်တမ်းတင်မရပါ')
+        );
+      }
       addToast(
         movementMode === 'PAID_IN'
           ? t('Cash paid-in recorded', 'ငွေသေတ္တာအတွင်း ငွေသွင်းခြင်း မှတ်တမ်းတင်ပြီးပါပြီ')
@@ -163,7 +180,12 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
       setMovementReason('');
       await loadShifts();
     } catch (error) {
-      addToast(error instanceof Error ? error.message : 'Failed to record movement', 'error');
+      addToast(
+        error instanceof Error
+          ? error.message
+          : t('Failed to record movement', 'ငွေအဝင်အထွက် မှတ်တမ်းတင်မရပါ'),
+        'error'
+      );
     } finally {
       setSaving(false);
     }
@@ -365,8 +387,11 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
                         <tr key={m.id}>
                           <td style={{ fontSize: 'var(--text-xs)' }}>{formatDateTime(m.createdAt)}</td>
                           <td>
-                            <span className={`badge ${m.type === 'REFUND' || m.type === 'VOID' || m.type === 'PAID_OUT' ? 'badge-danger' : 'badge-success'}`}>
-                              {m.type}
+                            <span
+                              className={`badge ${m.type === 'REFUND' || m.type === 'VOID' || m.type === 'PAID_OUT' ? 'badge-danger' : 'badge-success'}`}
+                              title={m.type}
+                            >
+                              {getDrawerMovementLabel(m.type)}
                             </span>
                           </td>
                           <td style={{ fontSize: 'var(--text-xs)' }}>{m.reason || '—'}</td>

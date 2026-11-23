@@ -90,6 +90,9 @@ export function getPaymentMethodLabel(method: string, t: TranslateFn): string {
   if (method === 'SPLIT') {
     return t('Split Payment', 'ပေါင်းစပ်ငွေပေးချေမှု');
   }
+  if (method === 'BANK_TRANSFER') {
+    return t('Bank Transfer', 'ဘဏ်လွှဲ');
+  }
   const found = PAYMENT_METHODS.find((p) => p.value === method);
   return found ? t(paymentMethodTranslationKeys[method] ?? method) : method;
 }

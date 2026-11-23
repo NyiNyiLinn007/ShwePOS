@@ -241,7 +241,7 @@ export function PurchaseFormModal({
                     className="input"
                     min="0.001"
                     step="any"
-                    placeholder="Qty"
+                    placeholder={t('Qty', 'အရေအတွက်')}
                     value={row.quantity}
                     onChange={(e) =>
                       setRows(rows.map((r, i) => (i === idx ? { ...r, quantity: e.target.value } : r)))
@@ -252,7 +252,7 @@ export function PurchaseFormModal({
                     type="number"
                     className="input"
                     min="0"
-                    placeholder="Unit Cost"
+                    placeholder={t('Unit Cost', 'အရင်းဈေး')}
                     value={row.unitCost}
                     onChange={(e) =>
                       setRows(rows.map((r, i) => (i === idx ? { ...r, unitCost: e.target.value } : r)))
@@ -262,7 +262,7 @@ export function PurchaseFormModal({
                   <input
                     type="text"
                     className="input"
-                    placeholder="Batch #"
+                    placeholder={t('Batch #', 'အသုတ်နံပါတ်')}
                     value={row.batchNumber}
                     onChange={(e) =>
                       setRows(rows.map((r, i) => (i === idx ? { ...r, batchNumber: e.target.value } : r)))

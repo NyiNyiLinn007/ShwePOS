@@ -3,7 +3,7 @@
 import React from 'react';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
-import { getSaleStatusBadgeClass } from '@/lib/saleHelpers';
+import { getSaleStatusBadgeClass, getSaleStatusLabel } from '@/lib/saleHelpers';
 import { Star, CreditCard, Pencil, X, AlertTriangle } from '@/components/ui/Icons';
 
 export interface CustomerRecentSale {
@@ -137,7 +137,7 @@ export function CustomerFormModal({
             <textarea
               className="input"
               rows={2}
-              placeholder="Customer address"
+              placeholder={t('Customer address', 'ဖောက်သည်လိပ်စာ')}
               value={formData.address}
               onChange={(e) => onChange('address', e.target.value)}
               style={{ resize: 'vertical' }}
@@ -364,7 +364,7 @@ export function CustomerDetailModal({
                       </td>
                       <td>
                         <span className={`badge ${getSaleStatusBadgeClass(sale.status)}`}>
-                          {sale.status}
+                          {getSaleStatusLabel(sale.status, t)}
                         </span>
                       </td>
                     </tr>

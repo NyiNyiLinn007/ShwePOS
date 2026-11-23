@@ -876,7 +876,9 @@ export default function PaymentModal({
                     {t('Change', 'ပြန်အမ်းငွေ')}: {formatCurrency(changeAmount)}
                   </span>
                 ) : (
-                  <span style={{ color: 'var(--success)', fontWeight: 700 }}>✓ Balanced</span>
+                  <span style={{ color: 'var(--success)', fontWeight: 700 }}>
+                    ✓ {t('Balanced', 'ကိုက်ညီပါပြီ')}
+                  </span>
                 )}
               </div>
               {mobileBankingQrUrl &&

@@ -198,9 +198,11 @@ function ChartTooltip({
 function PieTooltip({
   active,
   payload,
+  salesLabel,
 }: {
   active?: boolean;
   payload?: Array<{ name: string; value: number; payload: { count: number } }>;
+  salesLabel: string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
   const data = payload[0];
@@ -221,7 +223,7 @@ function PieTooltip({
         {formatCurrency(data.value)}
       </div>
       <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
-        {data.payload.count} sales
+        {data.payload.count} {salesLabel}
       </div>
     </div>
   );
@@ -613,7 +615,7 @@ export function ReportsClient() {
                             );
                           })}
                         </Pie>
-                        <Tooltip content={<PieTooltip />} />
+                        <Tooltip content={<PieTooltip salesLabel={t('sales', 'ခု')} />} />
                         <Legend
                           wrapperStyle={{ fontSize: 'var(--text-xs)', color: 'var(--text-secondary)' }}
                         />
