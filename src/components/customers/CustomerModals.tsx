@@ -3,14 +3,26 @@
 import React from 'react';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/utils';
-import { getSaleStatusBadgeClass, getSaleStatusLabel } from '@/lib/saleHelpers';
+import { getPaymentMethodLabel, getSaleStatusBadgeClass, getSaleStatusLabel } from '@/lib/saleHelpers';
 import { Star, CreditCard, Pencil, X, AlertTriangle } from '@/components/ui/Icons';
 
 export interface CustomerRecentSale {
   id: string;
   invoiceNumber: string;
   totalAmount: number;
+  paidAmount?: number;
+  dueAmount?: number;
+  paymentMethod?: string;
   status: string;
+  createdAt: string | Date;
+}
+
+export interface CustomerRepaymentRecord {
+  id: string;
+  amount: number;
+  method: string;
+  reference: string | null;
+  notes: string | null;
   createdAt: string | Date;
 }
 
@@ -29,6 +41,7 @@ export interface CustomerData {
   purchaseCount: number;
   lastPurchaseDate: string | Date | null;
   recentSales: CustomerRecentSale[];
+  repayments?: CustomerRepaymentRecord[];
 }
 
 export interface CustomerFormInput {
@@ -328,7 +341,9 @@ export function CustomerDetailModal({
                   <tr>
                     <th>{t('Invoice', 'ပြေစာ')}</th>
                     <th>{t('Date', 'ရက်စွဲ')}</th>
+                    <th>{t('Payment', 'ငွေပေးချေမှု')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Amount', 'ပမာဏ')}</th>
+                    <th style={{ textAlign: 'right' }}>{t('Credit Due', 'ကြွေးကျန်')}</th>
                     <th>{t('Status', 'အခြေအနေ')}</th>
                   </tr>
                 </thead>
@@ -351,6 +366,9 @@ export function CustomerDetailModal({
                       <td style={{ fontSize: 'var(--text-sm)' }}>
                         {formatDateTime(sale.createdAt)}
                       </td>
+                      <td style={{ fontSize: 'var(--text-xs)' }}>
+                        {sale.paymentMethod ? getPaymentMethodLabel(sale.paymentMethod, t) : '—'}
+                      </td>
                       <td
                         style={{
                           textAlign: 'right',
@@ -362,6 +380,17 @@ export function CustomerDetailModal({
                       >
                         {formatCurrency(sale.totalAmount)}
                       </td>
+                      <td
+                        style={{
+                          textAlign: 'right',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 'var(--text-sm)',
+                          color: (sale.dueAmount ?? 0) > 0 ? 'var(--danger)' : 'var(--text-muted)',
+                          fontWeight: (sale.dueAmount ?? 0) > 0 ? 700 : 400,
+                        }}
+                      >
+                        {(sale.dueAmount ?? 0) > 0 ? formatCurrency(sale.dueAmount ?? 0) : '—'}
+                      </td>
                       <td>
                         <span className={`badge ${getSaleStatusBadgeClass(sale.status)}`}>
                           {getSaleStatusLabel(sale.status, t)}
@@ -371,6 +400,58 @@ export function CustomerDetailModal({
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {customer.repayments && customer.repayments.length > 0 && (
+            <div style={{ marginTop: 'var(--space-lg)' }}>
+              <h3
+                style={{
+                  fontSize: 'var(--text-sm)',
+                  fontWeight: 700,
+                  marginBottom: 'var(--space-sm)',
+                  color: 'var(--text-secondary)',
+                }}
+              >
+                {t('Debt Repayment History', 'အကြွေးပြန်ဆပ်မှု မှတ်တမ်း')}
+              </h3>
+              <div className="table-container">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>{t('Date', 'ရက်စွဲ')}</th>
+                      <th>{t('Method', 'နည်းလမ်း')}</th>
+                      <th>{t('Reference / Notes', 'ရည်ညွှန်း / မှတ်စု')}</th>
+                      <th style={{ textAlign: 'right' }}>{t('Amount', 'ပမာဏ')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {customer.repayments.map((rep) => (
+                      <tr key={rep.id}>
+                        <td style={{ fontSize: 'var(--text-sm)' }}>
+                          {formatDateTime(rep.createdAt)}
+                        </td>
+                        <td style={{ fontSize: 'var(--text-xs)' }}>
+                          {getPaymentMethodLabel(rep.method, t)}
+                        </td>
+                        <td style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                          {[rep.reference, rep.notes].filter(Boolean).join(' · ') || '—'}
+                        </td>
+                        <td
+                          style={{
+                            textAlign: 'right',
+                            fontFamily: 'var(--font-mono)',
+                            fontWeight: 700,
+                            color: 'var(--success)',
+                          }}
+                        >
+                          {formatCurrency(rep.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDate } from '@/lib/utils';
@@ -12,7 +13,10 @@ import {
   Eye,
   Pencil,
   Trash2,
+  RefreshCw,
+  FileText,
 } from '@/components/ui/Icons';
+import { CustomerCreditStatementModal } from '@/components/customers/CustomerCreditStatementModal';
 import {
   CustomerData,
   CustomerFormInput,
@@ -34,6 +38,7 @@ interface CustomersClientProps {
 }
 
 export function CustomersClient({ initialCustomers }: CustomersClientProps) {
+  const router = useRouter();
   const { addToast } = useToast();
   const { language, t } = useI18n();
 
@@ -43,6 +48,8 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
   }, [initialCustomers]);
 
   const [search, setSearch] = useState('');
+  const [creditOnly, setCreditOnly] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<CustomerData | null>(null);
@@ -52,6 +59,7 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
   const [deleteTarget, setDeleteTarget] = useState<CustomerData | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerData | null>(null);
+  const [statementCustomer, setStatementCustomer] = useState<CustomerData | null>(null);
 
   // Debt Repayment Modal State
   const [repayTarget, setRepayTarget] = useState<CustomerData | null>(null);
@@ -63,17 +71,64 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
   const [repaymentReceipt, setRepaymentReceipt] =
     useState<DebtRepaymentReceiptData | null>(null);
 
+  const creditSummary = useMemo(() => {
+    let debtorsCount = 0;
+    let totalCreditDue = 0;
+    for (const c of customers) {
+      const bal = c.creditBalance ?? 0;
+      if (bal > 0) {
+        debtorsCount += 1;
+        totalCreditDue += bal;
+      }
+    }
+    return { debtorsCount, totalCreditDue };
+  }, [customers]);
+
   const filteredCustomers = useMemo(() => {
-    if (!search.trim()) return customers;
+    let list = customers;
+    if (creditOnly) {
+      list = list.filter((c) => (c.creditBalance ?? 0) > 0);
+    }
+    if (!search.trim()) return list;
 
     const q = search.toLowerCase();
-    return customers.filter(
+    return list.filter(
       (c) =>
         c.name.toLowerCase().includes(q) ||
         (c.phone && c.phone.includes(search)) ||
         (c.email && c.email.toLowerCase().includes(q))
     );
-  }, [customers, search]);
+  }, [customers, search, creditOnly]);
+
+  async function handleReconcileCredit() {
+    setReconciling(true);
+    try {
+      const res = await fetch('/api/customers/reconcile-credit', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        addToast(
+          data.error || t('Failed to sync credit balances', 'အကြွေးစာရင်း တိုက်ဆိုင်မရပါ'),
+          'error'
+        );
+        return;
+      }
+      addToast(
+        t(
+          `Credit synced: ${data.updatedCustomers} customer(s) updated, total due ${formatCurrency(data.totalOutstandingCredit)}`,
+          `အကြွေးစာရင်း တိုက်ဆိုင်ပြီး (${data.updatedCustomers} ဦး ပြင်ဆင်ပြီး၊ စုစုပေါင်းကြွေးကျန် ${formatCurrency(data.totalOutstandingCredit)})`
+        ),
+        'success'
+      );
+      router.refresh();
+    } catch {
+      addToast(
+        t('Network error. Please try again.', 'ကွန်ရက်ချို့ယွင်းချက်။ ထပ်ကြိုးစားပါ။'),
+        'error'
+      );
+    } finally {
+      setReconciling(false);
+    }
+  }
 
   const totalPages = Math.max(1, Math.ceil(filteredCustomers.length / ITEMS_PER_PAGE));
   const safePage = Math.min(currentPage, totalPages);
@@ -144,12 +199,13 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
     setSaving(true);
 
     try {
+      const parsedLimit = parseFloat(formData.creditLimit);
       const payload = {
         name: formData.name.trim(),
         phone: formData.phone.trim() || null,
         email: formData.email.trim() || null,
         address: formData.address.trim() || null,
-        creditLimit: Math.max(0, parseFloat(formData.creditLimit) || 0),
+        creditLimit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : null,
       };
 
       const url = editingCustomer
@@ -351,7 +407,22 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
             {t('Customer Management', 'ဖောက်သည်စီမံခန့်ခွဲမှု')}
           </p>
         </div>
-        <div className="page-actions">
+        <div className="page-actions" style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-secondary"
+            onClick={handleReconcileCredit}
+            disabled={reconciling}
+            title={t(
+              'Recalculate customer credit balances from unpaid credit sales & repayments',
+              'အကြွေးရောင်းဘောင်ချာနှင့် အကြွေးဆပ်မှတ်တမ်းများမှ ကြွေးကျန်များကို ပြန်လည်တိုက်ဆိုင်ရန်'
+            )}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <RefreshCw size={15} strokeWidth={1.75} />
+            {reconciling
+              ? t('Syncing...', 'တိုက်ဆိုင်နေသည်...')
+              : t('Sync Credit', 'အကြွေးတိုက်ဆိုင်ရန်')}
+          </button>
           <button
             className="btn btn-primary"
             onClick={openAddModal}
@@ -365,8 +436,40 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
 
       <div className="page-body">
         <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+            gap: 'var(--space-md)',
+            marginBottom: 'var(--space-lg)',
+          }}
+        >
+          <div className="kpi-card">
+            <div className="kpi-label">{t('Total Customers', 'စုစုပေါင်းဖောက်သည်')}</div>
+            <div className="kpi-value">{customers.length}</div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-label">{t('Customers With Credit', 'အကြွေးရှိဖောက်သည်')}</div>
+            <div
+              className="kpi-value"
+              style={{ color: creditSummary.debtorsCount > 0 ? 'var(--warning)' : undefined }}
+            >
+              {creditSummary.debtorsCount}
+            </div>
+          </div>
+          <div className="kpi-card">
+            <div className="kpi-label">{t('Total Credit Receivable', 'စုစုပေါင်း ရရန်အကြွေး')}</div>
+            <div
+              className="kpi-value"
+              style={{ color: creditSummary.totalCreditDue > 0 ? 'var(--danger)' : 'var(--success)' }}
+            >
+              {formatCurrency(creditSummary.totalCreditDue)}
+            </div>
+          </div>
+        </div>
+
+        <div
           className="flex gap-md"
-          style={{ marginBottom: 'var(--space-lg)', flexWrap: 'wrap' }}
+          style={{ marginBottom: 'var(--space-lg)', flexWrap: 'wrap', alignItems: 'center' }}
         >
           <div style={{ flex: '1 1 300px', maxWidth: 400 }}>
             <input
@@ -377,6 +480,18 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
               onChange={(e) => handleSearchChange(e.target.value)}
             />
           </div>
+          <button
+            type="button"
+            className={`btn btn-sm ${creditOnly ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => {
+              setCreditOnly((prev) => !prev);
+              setCurrentPage(1);
+            }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <CreditCard size={14} strokeWidth={1.75} />
+            {t('Credit Due Only', 'အကြွေးရှိသူများသာ')} ({creditSummary.debtorsCount})
+          </button>
           <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
             {filteredCustomers.length} {t('customer', 'ဖောက်သည်')}
             {language !== 'mm' && filteredCustomers.length !== 1 ? 's' : ''}
@@ -513,14 +628,24 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                       <td>
                         <div className="table-actions">
                           {(customer.creditBalance ?? 0) > 0 && (
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => openRepayModal(customer)}
-                              title={t('Repay Debt', 'အကြွေးဆပ်ရန်')}
-                              style={{ color: 'var(--warning)' }}
-                            >
-                              <CreditCard size={15} strokeWidth={1.75} />
-                            </button>
+                            <>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => openRepayModal(customer)}
+                                title={t('Repay Debt', 'အကြွေးဆပ်ရန်')}
+                                style={{ color: 'var(--warning)' }}
+                              >
+                                <CreditCard size={15} strokeWidth={1.75} />
+                              </button>
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => setStatementCustomer(customer)}
+                                title={t('Credit Statement', 'အကြွေးရှင်းတမ်း')}
+                                style={{ color: 'var(--primary)' }}
+                              >
+                                <FileText size={15} strokeWidth={1.75} />
+                              </button>
+                            </>
                           )}
                           <button
                             className="btn btn-ghost btn-sm"
@@ -639,6 +764,11 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
       <DebtRepaymentReceiptModal
         data={repaymentReceipt}
         onClose={() => setRepaymentReceipt(null)}
+      />
+
+      <CustomerCreditStatementModal
+        customer={statementCustomer}
+        onClose={() => setStatementCustomer(null)}
       />
     </>
   );

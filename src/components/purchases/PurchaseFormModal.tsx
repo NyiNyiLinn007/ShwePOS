@@ -1,10 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency } from '@/lib/utils';
 import { Plus, Trash2, X, ShoppingBag } from '@/components/ui/Icons';
+
+export interface PurchasePrefillItem {
+  productId: string;
+  quantity: number;
+  unitCost: number;
+}
 
 export interface PurchaseSupplierOption {
   id: string;
@@ -34,6 +40,7 @@ interface PurchaseFormModalProps {
   isOpen: boolean;
   suppliers: PurchaseSupplierOption[];
   products: PurchaseProductOption[];
+  prefillItems?: PurchasePrefillItem[] | null;
   onCreated: (order: unknown) => void;
   onClose: () => void;
 }
@@ -42,6 +49,7 @@ export function PurchaseFormModal({
   isOpen,
   suppliers,
   products,
+  prefillItems,
   onCreated,
   onClose,
 }: PurchaseFormModalProps) {
@@ -57,6 +65,21 @@ export function PurchaseFormModal({
     { productId: '', quantity: '1', unitCost: '0', batchNumber: '', expiryDate: '' },
   ]);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && prefillItems && prefillItems.length > 0) {
+      setRows(
+        prefillItems.map((item) => ({
+          productId: item.productId,
+          quantity: String(item.quantity),
+          unitCost: String(item.unitCost),
+          batchNumber: '',
+          expiryDate: '',
+        }))
+      );
+      setNotes('Auto-reorder from Inventory Analytics');
+    }
+  }, [isOpen, prefillItems]);
 
   if (!isOpen) return null;
 

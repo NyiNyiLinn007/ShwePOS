@@ -103,6 +103,9 @@ export interface Sale {
   changeAmount: number;
   pointsEarned?: number;
   pointsRedeemed?: number;
+  promotionId?: string | null;
+  promotionCode?: string | null;
+  promotionDiscount?: number;
   paymentMethod: 'CASH' | 'CARD' | 'MOBILE_BANKING' | 'CREDIT' | 'SPLIT';
   status: 'COMPLETED' | 'PARTIALLY_REFUNDED' | 'REFUNDED' | 'VOIDED';
   notes: string | null;
@@ -264,11 +267,135 @@ export interface AuditLogRecord {
   };
 }
 
+// ── Stocktake, Promotions & Quotations Types ──────────────────────────────
+
+export interface StocktakeItemDTO {
+  id: string;
+  sessionId: string;
+  productId: string;
+  systemQty: number;
+  countedQty: number | null;
+  varianceQty: number;
+  unitCost: number;
+  varianceValue: number;
+  notes: string | null;
+  product?: {
+    id: string;
+    name: string;
+    nameMm: string | null;
+    sku: string;
+    barcode: string | null;
+    unit: string;
+    category?: { id: string; name: string; nameMm: string | null };
+  };
+}
+
+export interface StocktakeSessionDTO {
+  id: string;
+  sessionNumber: string;
+  status: 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  categoryId: string | null;
+  userId: string;
+  completedById: string | null;
+  notes: string | null;
+  totalItems: number;
+  varianceItems: number;
+  totalVarianceValue: number;
+  createdAt: string | Date;
+  completedAt: string | Date | null;
+  category?: { id: string; name: string; nameMm: string | null } | null;
+  user?: { id: string; name: string };
+  completedBy?: { id: string; name: string } | null;
+  items?: StocktakeItemDTO[];
+}
+
+export type PromotionType =
+  | 'PERCENT_OFF'
+  | 'FIXED_OFF'
+  | 'BUY_X_GET_Y'
+  | 'MIN_SPEND_PERCENT'
+  | 'MIN_SPEND_FIXED';
+
+export interface PromotionDTO {
+  id: string;
+  name: string;
+  nameMm: string | null;
+  code: string | null;
+  type: PromotionType;
+  discountValue: number;
+  minSpend: number | null;
+  buyQty: number | null;
+  getQty: number | null;
+  categoryId: string | null;
+  productId: string | null;
+  startDate: string | Date;
+  endDate: string | Date;
+  usageLimit: number | null;
+  usedCount: number;
+  isActive: boolean;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+  category?: { id: string; name: string; nameMm: string | null } | null;
+  product?: { id: string; name: string; nameMm: string | null; sku: string } | null;
+}
+
+export interface QuotationItemDTO {
+  id: string;
+  quotationId: string;
+  productId: string;
+  quantity: number;
+  unitName: string | null;
+  unitFactor: number;
+  unitPrice: number;
+  discount: number;
+  total: number;
+  product?: {
+    id: string;
+    name: string;
+    nameMm: string | null;
+    sku: string;
+    unit: string;
+    sellingPrice?: number;
+    stockQuantity?: number;
+  };
+}
+
+export type QuotationStatus =
+  | 'DRAFT'
+  | 'SENT'
+  | 'ACCEPTED'
+  | 'CONVERTED'
+  | 'EXPIRED'
+  | 'CANCELLED';
+
+export interface QuotationDTO {
+  id: string;
+  quoteNumber: string;
+  customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  userId: string;
+  subtotal: number;
+  discountAmount: number;
+  taxAmount: number;
+  totalAmount: number;
+  status: QuotationStatus;
+  validUntil: string | Date;
+  convertedSaleId: string | null;
+  notes: string | null;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+  customer?: { id: string; name: string; phone: string | null } | null;
+  user?: { id: string; name: string };
+  items?: QuotationItemDTO[];
+}
+
 // ── Cart Types (POS) ──────────────────────────────────────────────────────
 
 /** A single item in the POS cart, including product info, unit packaging, and price override. */
 export interface CartItem {
   productId: string;
+  categoryId?: string;
   name: string;
   nameMm: string | null;
   sku: string;

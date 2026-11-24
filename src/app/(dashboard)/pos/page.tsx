@@ -2,6 +2,9 @@ import prisma from '@/lib/prisma';
 import POSClient from '@/components/pos/POSClient';
 import { requirePageAuth } from '@/lib/pageAuth';
 import { toNumber } from '@/lib/number';
+import { listActivePromotions } from '@/services/promotionService';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'POS Terminal - ShwePOS',
@@ -11,7 +14,7 @@ export default async function POSPage() {
   const session = await requirePageAuth();
   const canViewCost = session.user.role === 'ADMIN' || session.user.role === 'MANAGER';
 
-  const [products, categories, settings] = await Promise.all([
+  const [products, categories, settings, activePromotions] = await Promise.all([
     prisma.product.findMany({
       where: { isActive: true },
       include: {
@@ -38,6 +41,7 @@ export default async function POSPage() {
     prisma.settings.findFirst({
       where: { id: 'default' },
     }),
+    listActivePromotions(),
   ]);
 
   const taxRate = settings?.taxRate ?? 0;
@@ -77,6 +81,7 @@ export default async function POSPage() {
     <POSClient
       initialProducts={serializedProducts}
       initialCategories={serializedCategories}
+      initialPromotions={activePromotions}
       taxRate={taxRate}
     />
   );

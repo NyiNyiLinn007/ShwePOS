@@ -15,9 +15,9 @@ export async function GET(request: NextRequest) {
     const where = search
       ? {
           OR: [
-            { name: { contains: search } },
-            { phone: { contains: search } },
-            { email: { contains: search } },
+            { name: { contains: search, mode: 'insensitive' as const } },
+            { phone: { contains: search, mode: 'insensitive' as const } },
+            { email: { contains: search, mode: 'insensitive' as const } },
           ],
         }
       : {};
@@ -128,7 +128,10 @@ export async function POST(request: NextRequest) {
         phone,
         email: parsed.email?.trim() || null,
         address: parsed.address?.trim() || null,
-        creditLimit: user.role !== 'CASHIER' && parsed.creditLimit !== undefined ? parsed.creditLimit : null,
+        creditLimit:
+          user.role !== 'CASHIER' && parsed.creditLimit !== undefined && parsed.creditLimit !== null && parsed.creditLimit > 0
+            ? parsed.creditLimit
+            : null,
       },
     });
 

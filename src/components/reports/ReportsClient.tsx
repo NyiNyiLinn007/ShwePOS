@@ -33,6 +33,11 @@ import {
   downloadReportCsv,
   ReportSummaryPrintModal,
 } from '@/components/reports/ReportExportModal';
+import { InventoryAnalyticsTab } from '@/components/reports/InventoryAnalyticsTab';
+import { AgingReportTab } from '@/components/reports/AgingReportTab';
+import { CashierPerformanceTab } from '@/components/reports/CashierPerformanceTab';
+
+type ReportTab = 'pnl' | 'inventory' | 'aging' | 'cashier';
 
 /* ---------- Types ---------- */
 
@@ -235,6 +240,7 @@ export function ReportsClient() {
   const { language, t } = useI18n();
   const { addToast } = useToast();
 
+  const [activeTab, setActiveTab] = useState<ReportTab>('pnl');
   const [preset, setPreset] = useState<DatePreset>('month');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -362,7 +368,37 @@ export function ReportsClient() {
       </div>
 
       <div className="page-body">
-        {/* Date Range Selector */}
+        {/* Analytics Tabs */}
+        <div
+          className="flex gap-xs"
+          style={{
+            marginBottom: 'var(--space-lg)',
+            flexWrap: 'wrap',
+            borderBottom: '1px solid var(--border-color)',
+            paddingBottom: 'var(--space-sm)',
+          }}
+        >
+          {(
+            [
+              { key: 'pnl', en: 'Sales & P&L', mm: 'အရောင်းနှင့် အမြတ်ရှုံး' },
+              { key: 'inventory', en: 'Inventory Valuation & Reorder', mm: 'ကုန်တန်ဖိုးနှင့် ပြန်မှာရန်' },
+              { key: 'aging', en: 'AR / AP Aging', mm: 'အကြွေးသက်တမ်း စစ်တမ်း' },
+              { key: 'cashier', en: 'Cashier Performance', mm: 'ဝန်ထမ်း စွမ်းဆောင်ရည်' },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`btn btn-sm ${activeTab === tab.key ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {t(tab.en, tab.mm)}
+            </button>
+          ))}
+        </div>
+
+        {/* Date Range Selector (shared by P&L and Cashier Performance) */}
+        {(activeTab === 'pnl' || activeTab === 'cashier') && (
         <div
           className="glass-card"
           style={{
@@ -417,8 +453,15 @@ export function ReportsClient() {
             )}
           </div>
         </div>
+        )}
 
-        {loading ? (
+        {activeTab === 'inventory' && <InventoryAnalyticsTab />}
+        {activeTab === 'aging' && <AgingReportTab />}
+        {activeTab === 'cashier' && (
+          <CashierPerformanceTab startDate={activeRange.start} endDate={activeRange.end} />
+        )}
+
+        {activeTab === 'pnl' && (loading ? (
           <div className="empty-state">
             <div className="empty-state-icon">
               <BarChart3 size={28} strokeWidth={1.5} />
@@ -829,7 +872,7 @@ export function ReportsClient() {
               </div>
             </div>
           </>
-        )}
+        ))}
       </div>
 
       <ReportSummaryPrintModal

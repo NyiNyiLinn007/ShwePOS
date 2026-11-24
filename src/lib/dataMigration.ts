@@ -11,13 +11,16 @@ import {
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   PRODUCT_UNITS,
+  PROMOTION_TYPES,
   PURCHASE_PAYMENT_METHODS,
   PURCHASE_STATUSES,
+  QUOTATION_STATUSES,
   REVERSAL_STATUSES,
   SALE_PAYMENT_METHODS,
   SALE_PAYMENT_TYPES,
   SALE_STATUSES,
   SHIFT_STATUSES,
+  STOCKTAKE_STATUSES,
   SUPPLIER_PAYMENT_METHODS,
   USER_ROLES,
   type MigrationRows,
@@ -423,6 +426,12 @@ interface ImportMaps {
   purchaseOrdersByPoNumber: Map<string, string>;
   salesById: Map<string, string>;
   salesByInvoice: Map<string, string>;
+  promotionsById: Map<string, string>;
+  promotionsByCode: Map<string, string>;
+  quotationsById: Map<string, string>;
+  quotationsByNumber: Map<string, string>;
+  stocktakesById: Map<string, string>;
+  stocktakesByNumber: Map<string, string>;
   expensesById: Map<string, string>;
   shiftsById: Map<string, string>;
 }
@@ -444,6 +453,12 @@ function createImportMaps(): ImportMaps {
     purchaseOrdersByPoNumber: new Map(),
     salesById: new Map(),
     salesByInvoice: new Map(),
+    promotionsById: new Map(),
+    promotionsByCode: new Map(),
+    quotationsById: new Map(),
+    quotationsByNumber: new Map(),
+    stocktakesById: new Map(),
+    stocktakesByNumber: new Map(),
     expensesById: new Map(),
     shiftsById: new Map(),
   };
@@ -1178,6 +1193,11 @@ async function importSales(
       (id ? await tx.sale.findUnique({ where: { id }, select: { id: true } }) : null) ??
       (await tx.sale.findUnique({ where: { invoiceNumber }, select: { id: true } }));
 
+    const rawPromoId = stringValue(row.promotionId);
+    const promotionId = rawPromoId
+      ? maps.promotionsById.get(rawPromoId) ?? maps.promotionsByCode.get(rawPromoId.toUpperCase()) ?? null
+      : null;
+
     const status = enumValue(row, 'status', SALE_STATUSES, 'Sales', rowNumber, 'COMPLETED');
     const data = {
       invoiceNumber,
@@ -1193,6 +1213,9 @@ async function importSales(
       changeAmount: nonNegativeNumberValue(row, 'changeAmount', 'Sales', rowNumber) ?? 0,
       pointsEarned: nonNegativeIntegerValue(row, 'pointsEarned', 'Sales', rowNumber) ?? 0,
       pointsRedeemed: nonNegativeIntegerValue(row, 'pointsRedeemed', 'Sales', rowNumber) ?? 0,
+      promotionId,
+      promotionCode: boundedString(row, 'promotionCode', 'Sales', rowNumber, 50),
+      promotionDiscount: nonNegativeNumberValue(row, 'promotionDiscount', 'Sales', rowNumber) ?? 0,
       paymentMethod: enumValue(row, 'paymentMethod', PAYMENT_METHODS, 'Sales', rowNumber, 'CASH'),
       paymentStatus: enumValue(row, 'paymentStatus', PAYMENT_STATUSES, 'Sales', rowNumber, 'PAID'),
       paymentReference: boundedString(row, 'paymentReference', 'Sales', rowNumber, 100),
@@ -1594,10 +1617,10 @@ async function importInvoiceCounters(
     const row = rows[index];
     const rowNumber = index + 2;
     const date = requiredString(row, 'date', 'InvoiceCounters', rowNumber);
-    if (!/^(?:PO-)?\d{8}$/.test(date)) {
+    if (!/^(?:(?:PO|ST|QT)-)?\d{8}$/.test(date)) {
       migrationError(
         'date',
-        'date must use YYYYMMDD or PO-YYYYMMDD format',
+        'date must use YYYYMMDD, PO-YYYYMMDD, ST-YYYYMMDD, or QT-YYYYMMDD format',
         'InvoiceCounters',
         rowNumber
       );
@@ -1614,6 +1637,233 @@ async function importInvoiceCounters(
       create: { date, counter },
       update: { counter },
     });
+  }
+  return rows.length;
+}
+
+async function importPromotions(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const name = boundedString(row, 'name', 'Promotions', rowNumber, 150, true) as string;
+    const code = boundedString(row, 'code', 'Promotions', rowNumber, 50)?.toUpperCase() || null;
+    const rawCat = stringValue(row.categoryId);
+    const rawProd = stringValue(row.productId);
+    const categoryId = rawCat ? await resolveCategory(tx, rawCat, maps, 'Promotions', rowNumber) : null;
+    const productId = rawProd ? await resolveProduct(tx, rawProd, maps, 'Promotions', rowNumber) : null;
+    const existing =
+      (id ? await tx.promotion.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (code ? await tx.promotion.findUnique({ where: { code }, select: { id: true } }) : null);
+    const data = {
+      name,
+      nameMm: boundedString(row, 'nameMm', 'Promotions', rowNumber, 150),
+      code,
+      type: enumValue(row, 'type', PROMOTION_TYPES, 'Promotions', rowNumber),
+      discountValue: nonNegativeNumberValue(row, 'discountValue', 'Promotions', rowNumber) ?? 0,
+      minSpend: nonNegativeNumberValue(row, 'minSpend', 'Promotions', rowNumber),
+      buyQty: nonNegativeIntegerValue(row, 'buyQty', 'Promotions', rowNumber),
+      getQty: nonNegativeIntegerValue(row, 'getQty', 'Promotions', rowNumber),
+      categoryId,
+      productId,
+      startDate: dateValue(row, 'startDate', 'Promotions', rowNumber, true) as Date,
+      endDate: dateValue(row, 'endDate', 'Promotions', rowNumber, true) as Date,
+      usageLimit: nonNegativeIntegerValue(row, 'usageLimit', 'Promotions', rowNumber),
+      usedCount: nonNegativeIntegerValue(row, 'usedCount', 'Promotions', rowNumber) ?? 0,
+      isActive: booleanValue(row, 'isActive', 'Promotions', rowNumber, true),
+      createdAt: dateValue(row, 'createdAt', 'Promotions', rowNumber) ?? new Date(),
+      updatedAt: dateValue(row, 'updatedAt', 'Promotions', rowNumber) ?? new Date(),
+    };
+    const promo = existing
+      ? await tx.promotion.update({ where: { id: existing.id }, data })
+      : await tx.promotion.create({ data: id ? { id, ...data } : data });
+    track(maps.promotionsById, id, promo.id);
+    if (code) maps.promotionsByCode.set(code, promo.id);
+  }
+  return rows.length;
+}
+
+async function importQuotations(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const quoteNumber = boundedString(row, 'quoteNumber', 'Quotations', rowNumber, 50, true) as string;
+    const userId = await resolveUser(tx, row.userId, maps, 'Quotations', rowNumber);
+    const rawCustomer = stringValue(row.customerId);
+    const customerId = rawCustomer ? await resolveCustomer(tx, rawCustomer, maps, 'Quotations', rowNumber) : null;
+    const rawSale = stringValue(row.convertedSaleId);
+    const convertedSaleId = rawSale ? await resolveSale(tx, rawSale, maps, 'Quotations', rowNumber) : null;
+    const existing =
+      (id ? await tx.quotation.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.quotation.findUnique({ where: { quoteNumber }, select: { id: true } }));
+    const data = {
+      quoteNumber,
+      customerId,
+      customerName: boundedString(row, 'customerName', 'Quotations', rowNumber, 200),
+      customerPhone: boundedString(row, 'customerPhone', 'Quotations', rowNumber, 30),
+      userId,
+      subtotal: nonNegativeNumberValue(row, 'subtotal', 'Quotations', rowNumber) ?? 0,
+      discountAmount: nonNegativeNumberValue(row, 'discountAmount', 'Quotations', rowNumber) ?? 0,
+      taxAmount: nonNegativeNumberValue(row, 'taxAmount', 'Quotations', rowNumber) ?? 0,
+      totalAmount: nonNegativeNumberValue(row, 'totalAmount', 'Quotations', rowNumber) ?? 0,
+      status: enumValue(row, 'status', QUOTATION_STATUSES, 'Quotations', rowNumber, 'SENT'),
+      validUntil: dateValue(row, 'validUntil', 'Quotations', rowNumber, true) as Date,
+      convertedSaleId,
+      notes: boundedString(row, 'notes', 'Quotations', rowNumber, 500),
+      createdAt: dateValue(row, 'createdAt', 'Quotations', rowNumber) ?? new Date(),
+      updatedAt: dateValue(row, 'updatedAt', 'Quotations', rowNumber) ?? new Date(),
+    };
+    const quote = existing
+      ? await tx.quotation.update({ where: { id: existing.id }, data })
+      : await tx.quotation.create({ data: id ? { id, ...data } : data });
+    track(maps.quotationsById, id, quote.id);
+    maps.quotationsByNumber.set(quoteNumber, quote.id);
+  }
+  return rows.length;
+}
+
+async function importQuotationItems(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const rawQuote = stringValue(row.quotationId);
+    if (!rawQuote) relationError('quotationId', '', 'QuotationItems', rowNumber);
+    let quotationId = maps.quotationsById.get(rawQuote) ?? maps.quotationsByNumber.get(rawQuote);
+    if (!quotationId) {
+      const q = await tx.quotation.findFirst({
+        where: { OR: [{ id: rawQuote }, { quoteNumber: rawQuote }] },
+        select: { id: true },
+      });
+      if (!q) relationError('quotationId', rawQuote, 'QuotationItems', rowNumber);
+      quotationId = q.id;
+    }
+    const productId = await resolveProduct(tx, row.productId, maps, 'QuotationItems', rowNumber);
+    const quantity = positiveNumberValue(row, 'quantity', 'QuotationItems', rowNumber, true) as number;
+    const unitPrice = nonNegativeNumberValue(row, 'unitPrice', 'QuotationItems', rowNumber) ?? 0;
+    const discount = nonNegativeNumberValue(row, 'discount', 'QuotationItems', rowNumber) ?? 0;
+    const total =
+      nonNegativeNumberValue(row, 'total', 'QuotationItems', rowNumber) ??
+      Math.max(0, Math.round((unitPrice * quantity - discount) * 100) / 100);
+    const data = {
+      quotationId,
+      productId,
+      quantity,
+      unitName: boundedString(row, 'unitName', 'QuotationItems', rowNumber, 50),
+      unitFactor: positiveNumberValue(row, 'unitFactor', 'QuotationItems', rowNumber) ?? 1,
+      unitPrice,
+      discount,
+      total,
+    };
+    if (id) {
+      await tx.quotationItem.upsert({ where: { id }, create: { id, ...data }, update: data });
+    } else {
+      await tx.quotationItem.create({ data });
+    }
+  }
+  return rows.length;
+}
+
+async function importStocktakeSessions(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const sessionNumber = boundedString(row, 'sessionNumber', 'StocktakeSessions', rowNumber, 50, true) as string;
+    const userId = await resolveUser(tx, row.userId, maps, 'StocktakeSessions', rowNumber);
+    const rawCompletedBy = stringValue(row.completedById);
+    const completedById = rawCompletedBy
+      ? await resolveUser(tx, rawCompletedBy, maps, 'StocktakeSessions', rowNumber)
+      : null;
+    const rawCategory = stringValue(row.categoryId);
+    const categoryId = rawCategory
+      ? await resolveCategory(tx, rawCategory, maps, 'StocktakeSessions', rowNumber)
+      : null;
+    const existing =
+      (id ? await tx.stocktakeSession.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.stocktakeSession.findUnique({ where: { sessionNumber }, select: { id: true } }));
+    const data = {
+      sessionNumber,
+      status: enumValue(row, 'status', STOCKTAKE_STATUSES, 'StocktakeSessions', rowNumber, 'IN_PROGRESS'),
+      categoryId,
+      userId,
+      completedById,
+      notes: boundedString(row, 'notes', 'StocktakeSessions', rowNumber, 500),
+      totalItems: nonNegativeIntegerValue(row, 'totalItems', 'StocktakeSessions', rowNumber) ?? 0,
+      varianceItems: nonNegativeIntegerValue(row, 'varianceItems', 'StocktakeSessions', rowNumber) ?? 0,
+      totalVarianceValue: numberValue(row, 'totalVarianceValue', 'StocktakeSessions', rowNumber) ?? 0,
+      createdAt: dateValue(row, 'createdAt', 'StocktakeSessions', rowNumber) ?? new Date(),
+      completedAt: dateValue(row, 'completedAt', 'StocktakeSessions', rowNumber),
+      updatedAt: dateValue(row, 'updatedAt', 'StocktakeSessions', rowNumber) ?? new Date(),
+    };
+    const sess = existing
+      ? await tx.stocktakeSession.update({ where: { id: existing.id }, data })
+      : await tx.stocktakeSession.create({ data: id ? { id, ...data } : data });
+    track(maps.stocktakesById, id, sess.id);
+    maps.stocktakesByNumber.set(sessionNumber, sess.id);
+  }
+  return rows.length;
+}
+
+async function importStocktakeItems(
+  tx: ImportClient,
+  rows: Record<string, unknown>[],
+  maps: ImportMaps
+): Promise<number> {
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const rowNumber = index + 2;
+    const id = inputId(row);
+    const rawSess = stringValue(row.sessionId);
+    if (!rawSess) relationError('sessionId', '', 'StocktakeItems', rowNumber);
+    let sessionId = maps.stocktakesById.get(rawSess) ?? maps.stocktakesByNumber.get(rawSess);
+    if (!sessionId) {
+      const s = await tx.stocktakeSession.findFirst({
+        where: { OR: [{ id: rawSess }, { sessionNumber: rawSess }] },
+        select: { id: true },
+      });
+      if (!s) relationError('sessionId', rawSess, 'StocktakeItems', rowNumber);
+      sessionId = s.id;
+    }
+    const productId = await resolveProduct(tx, row.productId, maps, 'StocktakeItems', rowNumber);
+    const existing =
+      (id ? await tx.stocktakeItem.findUnique({ where: { id }, select: { id: true } }) : null) ??
+      (await tx.stocktakeItem.findUnique({
+        where: { sessionId_productId: { sessionId, productId } },
+        select: { id: true },
+      }));
+    const data = {
+      sessionId,
+      productId,
+      systemQty: nonNegativeNumberValue(row, 'systemQty', 'StocktakeItems', rowNumber, true) as number,
+      countedQty: nonNegativeNumberValue(row, 'countedQty', 'StocktakeItems', rowNumber),
+      varianceQty: numberValue(row, 'varianceQty', 'StocktakeItems', rowNumber) ?? 0,
+      unitCost: nonNegativeNumberValue(row, 'unitCost', 'StocktakeItems', rowNumber) ?? 0,
+      varianceValue: numberValue(row, 'varianceValue', 'StocktakeItems', rowNumber) ?? 0,
+      notes: boundedString(row, 'notes', 'StocktakeItems', rowNumber, 300),
+    };
+    if (existing) {
+      await tx.stocktakeItem.update({ where: { id: existing.id }, data });
+    } else {
+      await tx.stocktakeItem.create({ data: id ? { id, ...data } : data });
+    }
   }
   return rows.length;
 }
@@ -1647,6 +1897,7 @@ export async function importDataMigration(
       summary.SupplierPayments = await importSupplierPayments(tx, rows.SupplierPayments, maps);
     }
     if (rows.Shifts) summary.Shifts = await importShifts(tx, rows.Shifts, maps);
+    if (rows.Promotions) summary.Promotions = await importPromotions(tx, rows.Promotions, maps);
     if (rows.Sales) summary.Sales = await importSales(tx, rows.Sales, maps);
     if (rows.SaleItems) summary.SaleItems = await importSaleItems(tx, rows.SaleItems, maps);
     if (rows.SalePayments) {
@@ -1654,6 +1905,16 @@ export async function importDataMigration(
     }
     if (rows.SaleAdjustments) {
       summary.SaleAdjustments = await importSaleAdjustments(tx, rows.SaleAdjustments, maps);
+    }
+    if (rows.Quotations) summary.Quotations = await importQuotations(tx, rows.Quotations, maps);
+    if (rows.QuotationItems) {
+      summary.QuotationItems = await importQuotationItems(tx, rows.QuotationItems, maps);
+    }
+    if (rows.StocktakeSessions) {
+      summary.StocktakeSessions = await importStocktakeSessions(tx, rows.StocktakeSessions, maps);
+    }
+    if (rows.StocktakeItems) {
+      summary.StocktakeItems = await importStocktakeItems(tx, rows.StocktakeItems, maps);
     }
     if (rows.StockMovements) {
       summary.StockMovements = await importStockMovements(tx, rows.StockMovements, maps);

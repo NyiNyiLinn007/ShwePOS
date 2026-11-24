@@ -1,11 +1,12 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, isFractionalUnit } from '@/lib/utils';
 import { resizeImageToDataUrl } from '@/lib/image';
-import { Upload, X, Plus, Layers, Trash2 } from '@/components/ui/Icons';
+import { Upload, X, Plus, Layers, Trash2, Camera } from '@/components/ui/Icons';
+import { CameraBarcodeModal } from '@/components/ui/CameraBarcodeModal';
 
 export interface ProductUnitFormRow {
   id?: string;
@@ -107,6 +108,7 @@ export function ProductFormModal({
 }: ProductFormModalProps) {
   const { language, t } = useI18n();
   const { addToast } = useToast();
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
 
   if (!isOpen) return null;
 
@@ -200,14 +202,24 @@ export function ProductFormModal({
             {/* Barcode */}
             <div className="input-group">
               <label className="input-label">{t('Barcode', 'ဘားကုဒ်')}</label>
-              <input
-                type="text"
-                className="input"
-                placeholder={t('Optional barcode', 'ဘားကုဒ် (ရှိပါက)')}
-                value={formData.barcode}
-                onChange={(e) => onChange('barcode', e.target.value)}
-                style={{ fontFamily: 'var(--font-mono)' }}
-              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder={t('Optional barcode', 'ဘားကုဒ် (ရှိပါက)')}
+                  value={formData.barcode}
+                  onChange={(e) => onChange('barcode', e.target.value)}
+                  style={{ fontFamily: 'var(--font-mono)', flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setShowCameraScanner(true)}
+                  title={t('Scan barcode with camera', 'ကင်မရာဖြင့် ဘားကုဒ်ဖတ်ရန်')}
+                >
+                  <Camera size={15} strokeWidth={1.75} />
+                </button>
+              </div>
             </div>
 
             {/* Category */}
@@ -625,6 +637,15 @@ export function ProductFormModal({
           </button>
         </div>
       </div>
+
+      <CameraBarcodeModal
+        isOpen={showCameraScanner}
+        onDetected={(code) => {
+          onChange('barcode', code);
+          setShowCameraScanner(false);
+        }}
+        onClose={() => setShowCameraScanner(false)}
+      />
     </div>
   );
 }

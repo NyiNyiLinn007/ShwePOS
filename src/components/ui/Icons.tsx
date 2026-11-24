@@ -70,6 +70,13 @@ import {
   FileText,
   Check,
   ZoomIn,
+  ClipboardCheck,
+  Camera,
+  Monitor,
+  Copy,
+  Sparkles,
+  Tag,
+  FileCheck,
 } from 'lucide-react';
 
 export {
@@ -141,6 +148,13 @@ export {
   FileText,
   Check,
   ZoomIn,
+  ClipboardCheck,
+  Camera,
+  Monitor,
+  Copy,
+  Sparkles,
+  Tag,
+  FileCheck,
 };
 
 export function NavIcon({
@@ -164,6 +178,12 @@ export function NavIcon({
       return <Tags {...props} />;
     case 'inventory':
       return <Boxes {...props} />;
+    case 'stocktake':
+      return <ClipboardCheck {...props} />;
+    case 'promotions':
+      return <Tag {...props} />;
+    case 'quotations':
+      return <FileText {...props} />;
     case 'suppliers':
       return <Truck {...props} />;
     case 'purchases':

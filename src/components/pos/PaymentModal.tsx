@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCartStore } from '@/store/cartStore';
 import { useSettingsStore } from '@/store/settingsStore';
@@ -8,6 +8,8 @@ import { useOfflineQueueStore } from '@/store/offlineQueueStore';
 import { useAppStore } from '@/lib/store';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatQuantity, generateInvoiceNumber } from '@/lib/utils';
+import { evaluateBestPromotion, type EvaluablePromotion } from '@/lib/promotionEngine';
+import { broadcastCustomerDisplay } from '@/lib/customerDisplayChannel';
 import {
   PaymentMethodIcon,
   Banknote,
@@ -24,6 +26,7 @@ interface PaymentModalProps {
   onClose: () => void;
   onSuccess: (saleData: SaleResponse) => void;
   taxRate: number;
+  activePromotions?: EvaluablePromotion[];
   hasOpenShift?: boolean | null;
   autoFocusCustomer?: boolean;
 }
@@ -122,18 +125,24 @@ export default function PaymentModal({
   onClose,
   onSuccess,
   taxRate,
+  activePromotions = [],
   hasOpenShift,
   autoFocusCustomer = false,
 }: PaymentModalProps) {
   const router = useRouter();
   const customerSearchRef = useRef<HTMLInputElement>(null);
   const items = useCartStore((s) => s.items);
+  const promoCode = useCartStore((s) => s.promoCode);
+  const activeQuotationId = useCartStore((s) => s.activeQuotationId);
   const getSubtotal = useCartStore((s) => s.getSubtotal);
   const getItemDiscountTotal = useCartStore((s) => s.getItemDiscountTotal);
   const getCartDiscountAmount = useCartStore((s) => s.getCartDiscountAmount);
   const getTotal = useCartStore((s) => s.getTotal);
   const getItemCount = useCartStore((s) => s.getItemCount);
 
+  const businessName = useSettingsStore((s) => s.businessName);
+  const businessNameMm = useSettingsStore((s) => s.businessNameMm);
+  const businessLogo = useSettingsStore((s) => s.logo);
   const loyaltyEnabled = useSettingsStore((s) => s.loyaltyEnabled);
   const loyaltyRedeemRate = useSettingsStore((s) => s.loyaltyRedeemRate);
   const mobileBankingQrUrl = useSettingsStore((s) => s.mobileBankingQrUrl);
@@ -179,20 +188,100 @@ export default function PaymentModal({
   const itemDiscountTotal = getItemDiscountTotal();
   const cartDiscountAmount = getCartDiscountAmount();
   const afterCartDiscount = getTotal();
+
+  const promoEval = useMemo(() => {
+    const promoLines = items.map((item) => {
+      const gross = Math.round(item.unitPrice * item.quantity);
+      const disc = Math.min(item.discount || 0, gross);
+      return {
+        productId: item.productId,
+        categoryId: item.categoryId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        lineTotal: Math.max(0, gross - disc),
+      };
+    });
+    return evaluateBestPromotion(promoLines, activePromotions, promoCode);
+  }, [items, activePromotions, promoCode]);
+
+  const promoDiscountAmount = Math.min(
+    afterCartDiscount,
+    Math.round(promoEval.best?.discountAmount ?? 0)
+  );
+  const afterPromoDiscount = Math.max(0, afterCartDiscount - promoDiscountAmount);
+
   const maxRedeemablePoints =
     selectedCustomer?.loyaltyPoints && loyaltyRedeemRate > 0
       ? Math.min(
           selectedCustomer.loyaltyPoints,
-          Math.floor(afterCartDiscount / loyaltyRedeemRate)
+          Math.floor(afterPromoDiscount / loyaltyRedeemRate)
         )
       : 0;
   const safePointsRedeemed = Math.max(0, Math.min(pointsToRedeem, maxRedeemablePoints));
   const loyaltyDiscountAmount = Math.round(safePointsRedeemed * loyaltyRedeemRate);
-  const discountAmount = itemDiscountTotal + cartDiscountAmount + loyaltyDiscountAmount;
-  const taxableAmount = Math.max(0, afterCartDiscount - loyaltyDiscountAmount);
+  const discountAmount =
+    itemDiscountTotal + cartDiscountAmount + promoDiscountAmount + loyaltyDiscountAmount;
+  const taxableAmount = Math.max(0, afterPromoDiscount - loyaltyDiscountAmount);
   const taxAmount = Math.round(taxableAmount * (taxRate / 100));
   const grandTotal = taxableAmount + taxAmount;
   const totalItems = getItemCount();
+
+  // Broadcast live QR scan screen to Customer Display when paying via Mobile Banking or Split Mobile
+  const splitMobileAmount = splitLegs
+    .filter((l) => l.method === 'MOBILE_BANKING')
+    .reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0);
+
+  useEffect(() => {
+    const shouldShowQr =
+      Boolean(mobileBankingQrUrl) &&
+      (paymentMethod === 'MOBILE_BANKING' ||
+        (paymentMethod === 'SPLIT' && splitLegs.some((l) => l.method === 'MOBILE_BANKING')));
+
+    broadcastCustomerDisplay({
+      mode: shouldShowQr ? 'PAYMENT_QR' : 'CART',
+      businessName,
+      businessNameMm,
+      logo: businessLogo,
+      items: items.map((i) => ({
+        name: i.name,
+        nameMm: i.nameMm,
+        quantity: i.quantity,
+        unit: i.unit,
+        unitPrice: i.unitPrice,
+        lineTotal: Math.max(0, Math.round(i.unitPrice * i.quantity) - (i.discount || 0)),
+      })),
+      subtotal,
+      discountAmount,
+      promoLabel: promoEval.best
+        ? language === 'mm' && promoEval.best.promotion.nameMm
+          ? promoEval.best.promotion.nameMm
+          : promoEval.best.promotion.name
+        : null,
+      taxAmount,
+      grandTotal,
+      qrUrl: shouldShowQr ? mobileBankingQrUrl : null,
+      qrLabel: mobileBankingName || 'KBZPay / WavePay',
+      qrPayableAmount:
+        paymentMethod === 'SPLIT' && splitMobileAmount > 0 ? splitMobileAmount : grandTotal,
+      updatedAt: Date.now(),
+    });
+  }, [
+    paymentMethod,
+    mobileBankingQrUrl,
+    mobileBankingName,
+    splitLegs,
+    splitMobileAmount,
+    businessName,
+    businessNameMm,
+    businessLogo,
+    items,
+    subtotal,
+    discountAmount,
+    promoEval.best,
+    taxAmount,
+    grandTotal,
+    language,
+  ]);
 
   const paidAmount = parseFloat(paidAmountStr) || 0;
   const splitTotal = splitLegs.reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0);
@@ -315,7 +404,7 @@ export default function PaymentModal({
       return paymentReference.trim().length > 0;
     }
     if (paymentMethod === 'CREDIT') {
-      return Boolean(selectedCustomer) && paidAmount <= grandTotal;
+      return Boolean(selectedCustomer) && paidAmount < grandTotal && creditDueAmount > 0;
     }
     if (paymentMethod === 'SPLIT') {
       const validLegs = splitLegs.filter((l) => (parseFloat(l.amountStr) || 0) > 0);
@@ -360,6 +449,8 @@ export default function PaymentModal({
       })),
       customerId: selectedCustomer?.id || null,
       cartDiscount: cartDiscountAmount,
+      promotionCode: promoCode.trim() || null,
+      quotationId: activeQuotationId || null,
       pointsRedeemed: safePointsRedeemed,
       clientSaleId,
       paymentReference:
@@ -559,7 +650,12 @@ export default function PaymentModal({
                   className={`btn ${
                     paymentMethod === method.id ? 'btn-primary' : 'btn-secondary'
                   }`}
-                  onClick={() => setPaymentMethod(method.id)}
+                  onClick={() => {
+                    setPaymentMethod(method.id);
+                    if (method.id === 'CREDIT') {
+                      setPaidAmountStr('');
+                    }
+                  }}
                   type="button"
                   style={{ flex: '1 1 80px', flexDirection: 'column', padding: '10px 6px', gap: 4 }}
                 >

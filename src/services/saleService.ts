@@ -3,6 +3,7 @@ import { ApiError, AuthUser } from '@/lib/apiAuth';
 import { CreateSaleInput, UpdateSaleStatusInput } from '@/lib/validations';
 import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
 import { logAudit } from '@/services/auditService';
+import { evaluateBestPromotion, type EvaluablePromotion } from '@/lib/promotionEngine';
 import {
   getMyanmarDateCompact,
   isFractionalUnit,
@@ -177,6 +178,8 @@ export async function createSale(
     payments: inputPayments,
     pointsRedeemed,
     cartDiscount,
+    promotionCode,
+    quotationId,
     clientSaleId,
     paymentReference,
     notes,
@@ -213,6 +216,7 @@ export async function createSale(
               name: true,
               nameMm: true,
               sku: true,
+              categoryId: true,
               unit: true,
               sellingPrice: true,
               costPrice: true,
@@ -390,12 +394,54 @@ export async function createSale(
           const maxRemainingAfterItem = Math.max(0, subtotal - totalItemDiscount);
           const cartDiscountAmount = roundMoney(Math.min(cartDiscount || 0, maxRemainingAfterItem));
           const maxRemainingAfterCart = Math.max(0, maxRemainingAfterItem - cartDiscountAmount);
+
+          // Server-side Best Single Promotion evaluation
+          const nowTs = new Date();
+          const activePromosRaw = await tx.promotion.findMany({
+            where: {
+              isActive: true,
+              startDate: { lte: nowTs },
+              endDate: { gte: nowTs },
+            },
+          });
+          const evaluablePromos: EvaluablePromotion[] = activePromosRaw.map((p) => ({
+            id: p.id,
+            name: p.name,
+            nameMm: p.nameMm,
+            code: p.code,
+            type: p.type as EvaluablePromotion['type'],
+            discountValue: toNumber(p.discountValue),
+            minSpend: p.minSpend !== null ? toNumber(p.minSpend) : null,
+            buyQty: p.buyQty,
+            getQty: p.getQty,
+            categoryId: p.categoryId,
+            productId: p.productId,
+            startDate: p.startDate,
+            endDate: p.endDate,
+            usageLimit: p.usageLimit,
+            usedCount: p.usedCount,
+            isActive: p.isActive,
+          }));
+          const promoLines = saleItemsData.map((si) => ({
+            productId: si.productId,
+            categoryId: productMap.get(si.productId)?.categoryId ?? null,
+            quantity: si.quantity,
+            unitPrice: si.unitPrice,
+            lineTotal: si.total,
+          }));
+          const promoEval = evaluateBestPromotion(promoLines, evaluablePromos, promotionCode, nowTs);
+          const appliedPromo = promoEval.best?.promotion ?? null;
+          const promotionDiscount = appliedPromo
+            ? roundMoney(Math.min(promoEval.best!.discountAmount, maxRemainingAfterCart))
+            : 0;
+
+          const maxRemainingAfterPromo = Math.max(0, maxRemainingAfterCart - promotionDiscount);
           const loyaltyDiscountAmount =
             pointsRedeemed > 0
-              ? roundMoney(Math.min(pointsRedeemed * loyaltyRedeemRate, maxRemainingAfterCart))
+              ? roundMoney(Math.min(pointsRedeemed * loyaltyRedeemRate, maxRemainingAfterPromo))
               : 0;
           const effectiveDiscount = roundMoney(
-            totalItemDiscount + cartDiscountAmount + loyaltyDiscountAmount
+            totalItemDiscount + cartDiscountAmount + promotionDiscount + loyaltyDiscountAmount
           );
           const discountedSubtotal = roundMoney(Math.max(0, subtotal - effectiveDiscount));
           const taxAmount = roundMoney(discountedSubtotal * (taxRate / 100));
@@ -499,6 +545,7 @@ export async function createSale(
             }
             if (
               customerRecord.creditLimit !== null &&
+              customerRecord.creditLimit > 0 &&
               roundMoney(customerRecord.creditBalance + dueAmount) > customerRecord.creditLimit
             ) {
               throw new ApiError(
@@ -594,6 +641,9 @@ export async function createSale(
               changeAmount,
               pointsEarned,
               pointsRedeemed,
+              promotionId: appliedPromo?.id ?? null,
+              promotionCode: appliedPromo?.code ?? null,
+              promotionDiscount,
               paymentMethod,
               paymentStatus,
               paymentReference: cleanPaymentReference,
@@ -667,6 +717,20 @@ export async function createSale(
                 amount: netCashCollected,
                 reason: `Sale: ${invoiceNumber}`,
               },
+            });
+          }
+
+          if (appliedPromo) {
+            await tx.promotion.update({
+              where: { id: appliedPromo.id },
+              data: { usedCount: { increment: 1 } },
+            });
+          }
+
+          if (quotationId) {
+            await tx.quotation.updateMany({
+              where: { id: quotationId, status: { not: 'CONVERTED' } },
+              data: { status: 'CONVERTED', convertedSaleId: newSale.id },
             });
           }
 
@@ -949,11 +1013,21 @@ export async function refundOrVoidSale(
       }
 
       if (existingSale.customerId) {
+        let safeDebtDecrement = 0;
+        if (debtReduction > 0) {
+          const cust = await tx.customer.findUnique({
+            where: { id: existingSale.customerId },
+            select: { creditBalance: true },
+          });
+          const currentBalance = Math.max(0, toNumber(cust?.creditBalance));
+          safeDebtDecrement = roundMoney(Math.min(currentBalance, debtReduction));
+        }
+
         await tx.customer.update({
           where: { id: existingSale.customerId },
           data: {
             totalPurchases: { decrement: refundAmount },
-            ...(debtReduction > 0 && { creditBalance: { decrement: debtReduction } }),
+            ...(safeDebtDecrement > 0 && { creditBalance: { decrement: safeDebtDecrement } }),
           },
         });
       }

@@ -28,6 +28,10 @@ const ACTION_LABELS: Record<string, { en: string; mm: string }> = {
   USER_UPDATED: { en: 'User Account Updated', mm: 'ဝန်ထမ်းအကောင့် ပြင်ဆင်ခြင်း' },
   SETTINGS_UPDATED: { en: 'Settings Updated', mm: 'ဆိုင်ဆက်တင် ပြင်ဆင်ခြင်း' },
   DATA_MIGRATION_IMPORT: { en: 'Excel Data Imported', mm: 'Excel ဒေတာ သွင်းယူခြင်း' },
+  CUSTOMER_CREDIT_RECONCILED: { en: 'Customer Credit Reconciled', mm: 'ဖောက်သည်အကြွေးစာရင်း တိုက်ဆိုင်ပြင်ဆင်ခြင်း' },
+  STOCKTAKE_COMPLETED: { en: 'Stocktake Completed', mm: 'ကုန်လက်ကျန်စစ်ဆေးမှု အတည်ပြုခြင်း' },
+  PROMOTION_UPDATED: { en: 'Promotion Saved', mm: 'ပရိုမိုးရှင်း သိမ်းဆည်းခြင်း' },
+  QUOTATION_CREATED: { en: 'Quotation Created', mm: 'ဈေးနှုန်းကမ်းလှမ်းလွှာ ဖန်တီးခြင်း' },
 };
 
 const ENTITY_LABELS: Record<string, { en: string; mm: string }> = {
@@ -41,6 +45,9 @@ const ENTITY_LABELS: Record<string, { en: string; mm: string }> = {
   USER: { en: 'User', mm: 'ဝန်ထမ်း' },
   SETTINGS: { en: 'Settings', mm: 'ဆက်တင်' },
   DATA_MIGRATION: { en: 'Data Migration', mm: 'ဒေတာကူးပြောင်းမှု' },
+  STOCKTAKE: { en: 'Stocktake', mm: 'ကုန်လက်ကျန်စစ်ဆေးမှု' },
+  PROMOTION: { en: 'Promotion', mm: 'ပရိုမိုးရှင်း' },
+  QUOTATION: { en: 'Quotation', mm: 'ဈေးနှုန်းကမ်းလှမ်းလွှာ' },
 };
 
 const ACTION_OPTIONS = Object.keys(ACTION_LABELS);

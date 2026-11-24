@@ -11,13 +11,17 @@ import {
   Banknote,
   AlertTriangle,
   RotateCcw,
+  Sparkles,
+  Tag,
 } from '@/components/ui/Icons';
-import { useState } from 'react';
+import { evaluateBestPromotion, type EvaluablePromotion } from '@/lib/promotionEngine';
+import { useState, useMemo } from 'react';
 
 interface CartProps {
   onOpenPayment: () => void;
   onOpenHeldBills?: () => void;
   taxRate: number;
+  activePromotions?: EvaluablePromotion[];
   isMobileOpen?: boolean;
   onClose?: () => void;
 }
@@ -26,13 +30,16 @@ export default function Cart({
   onOpenPayment,
   onOpenHeldBills,
   taxRate,
+  activePromotions = [],
   isMobileOpen = false,
   onClose,
 }: CartProps) {
-  const { t } = useI18n();
+  const { language, t } = useI18n();
   const items = useCartStore((s) => s.items);
   const discount = useCartStore((s) => s.discount);
   const discountType = useCartStore((s) => s.discountType);
+  const promoCode = useCartStore((s) => s.promoCode);
+  const setPromoCode = useCartStore((s) => s.setPromoCode);
   const heldBills = useCartStore((s) => s.heldBills);
   const removeItem = useCartStore((s) => s.removeItem);
   const updateQuantity = useCartStore((s) => s.updateQuantity);
@@ -62,8 +69,29 @@ export default function Cart({
   const subtotal = getSubtotal();
   const itemDiscountTotal = getItemDiscountTotal();
   const cartDiscountAmount = getCartDiscountAmount();
-  const totalDiscountAmount = itemDiscountTotal + cartDiscountAmount;
-  const total = getTotal();
+
+  const promoEval = useMemo(() => {
+    const promoLines = items.map((item) => {
+      const lineGross = Math.round(item.unitPrice * item.quantity);
+      const lineDisc = Math.min(item.discount || 0, lineGross);
+      return {
+        productId: item.productId,
+        categoryId: item.categoryId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        lineTotal: Math.max(0, lineGross - lineDisc),
+      };
+    });
+    return evaluateBestPromotion(promoLines, activePromotions, promoCode);
+  }, [items, activePromotions, promoCode]);
+
+  const afterCartDiscount = getTotal();
+  const promoDiscountAmount = Math.min(
+    afterCartDiscount,
+    Math.round(promoEval.best?.discountAmount ?? 0)
+  );
+  const totalDiscountAmount = itemDiscountTotal + cartDiscountAmount + promoDiscountAmount;
+  const total = Math.max(0, afterCartDiscount - promoDiscountAmount);
   const taxAmount = Math.round(total * (taxRate / 100));
   const grandTotal = total + taxAmount;
 
@@ -485,6 +513,84 @@ export default function Cart({
                 {cartDiscountAmount > 0 ? '−' : ''}{formatCurrency(cartDiscountAmount)}
               </span>
             </div>
+
+            {/* Promo Code & Auto-Promotion Row */}
+            {activePromotions.length > 0 && (
+              <div style={{ margin: '6px 0' }}>
+                <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                  <div style={{ position: 'relative', flex: 1 }}>
+                    <input
+                      type="text"
+                      className="input"
+                      style={{ height: 28, fontSize: 11, paddingLeft: 24, paddingRight: 22 }}
+                      placeholder={t('Promo code (optional)...', 'Promo Code ရှိလျှင်ထည့်ပါ...')}
+                      value={promoCode}
+                      onChange={(e) => setPromoCode(e.target.value)}
+                    />
+                    <Tag
+                      size={11}
+                      strokeWidth={1.75}
+                      style={{
+                        position: 'absolute',
+                        left: 8,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        color: 'var(--text-muted)',
+                      }}
+                    />
+                    {promoCode && (
+                      <button
+                        type="button"
+                        onClick={() => setPromoCode('')}
+                        style={{
+                          position: 'absolute',
+                          right: 6,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          color: 'var(--text-muted)',
+                          padding: 0,
+                          display: 'inline-flex',
+                        }}
+                      >
+                        <X size={11} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {promoEval.best && promoDiscountAmount > 0 && (
+                  <div
+                    className="pos-cart-summary-row"
+                    style={{
+                      marginTop: 4,
+                      padding: '4px 8px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--success-light)',
+                      color: 'var(--success)',
+                      fontSize: 11,
+                      fontWeight: 600,
+                    }}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <Sparkles size={11} strokeWidth={2} />
+                      {language === 'mm' && promoEval.best.promotion.nameMm
+                        ? promoEval.best.promotion.nameMm
+                        : promoEval.best.promotion.name}
+                    </span>
+                    <span style={{ fontFamily: 'var(--font-mono)' }}>
+                      −{formatCurrency(promoDiscountAmount)}
+                    </span>
+                  </div>
+                )}
+                {promoCode.trim() && !promoEval.codeMatched && (
+                  <div style={{ fontSize: 10, color: 'var(--warning)', marginTop: 2 }}>
+                    {t('Promo code not valid or not eligible yet', 'Promo Code မမှန်ကန် သို့မဟုတ် သတ်မှတ်ချက်မပြည့်သေးပါ')}
+                  </div>
+                )}
+              </div>
+            )}
             {taxRate > 0 && (
               <div className="pos-cart-summary-row">
                 <span style={{ color: 'var(--text-secondary)' }}>{t('Tax', 'အခွန်')} ({taxRate}%)</span>

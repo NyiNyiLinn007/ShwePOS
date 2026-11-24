@@ -102,6 +102,33 @@ export async function POST(
         },
       });
 
+      // FIFO settle oldest unpaid credit sales so Sale.dueAmount stays synced with creditBalance
+      const unpaidSales = await tx.sale.findMany({
+        where: {
+          customerId: customer.id,
+          status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
+          dueAmount: { gt: 0 },
+        },
+        select: { id: true, dueAmount: true },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      let remainingToAllocate = amount;
+      for (const unpaidSale of unpaidSales) {
+        if (remainingToAllocate <= 0) break;
+        const saleDue = roundMoney(toNumber(unpaidSale.dueAmount));
+        const applied = roundMoney(Math.min(saleDue, remainingToAllocate));
+        const nextDue = roundMoney(Math.max(0, saleDue - applied));
+        await tx.sale.update({
+          where: { id: unpaidSale.id },
+          data: {
+            dueAmount: nextDue,
+            paymentStatus: nextDue <= 0 ? 'PAID' : 'PARTIAL',
+          },
+        });
+        remainingToAllocate = roundMoney(remainingToAllocate - applied);
+      }
+
       const newCreditBalance = roundMoney(toNumber(updatedCustomer.creditBalance));
 
       await logAudit(

@@ -95,6 +95,8 @@ export const createSaleSchema = z.object({
   payments: z.array(salePaymentLegSchema).max(10).optional(),
   pointsRedeemed: z.number().int().min(0).max(10_000_000).default(0),
   cartDiscount: moneySchema.default(0),
+  promotionCode: z.string().max(50).optional().nullable(),
+  quotationId: z.string().max(100).optional().nullable(),
   clientSaleId: z.string().uuid('Invalid idempotency key').optional(),
   paymentReference: z.string().max(100).optional().nullable(),
   notes: z.string().max(500).optional().nullable(),
@@ -289,3 +291,112 @@ export type CreateSupplierInput = z.infer<typeof createSupplierSchema>;
 export type UpdateSupplierInput = z.infer<typeof updateSupplierSchema>;
 export type RepaySupplierDebtInput = z.infer<typeof repaySupplierDebtSchema>;
 export type CreatePurchaseOrderInput = z.infer<typeof createPurchaseOrderSchema>;
+
+// ---- Stocktake Schemas ----
+
+export const createStocktakeSchema = z.object({
+  categoryId: z.string().optional().nullable(),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export const updateStocktakeItemsSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        itemId: z.string().min(1),
+        countedQty: quantitySchema.nullable(),
+        notes: z.string().max(300).optional().nullable(),
+      })
+    )
+    .min(1)
+    .max(500),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export const completeStocktakeSchema = z.object({
+  applyUncountedAsZero: z.boolean().optional().default(false),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export type CreateStocktakeInput = z.infer<typeof createStocktakeSchema>;
+export type UpdateStocktakeItemsInput = z.infer<typeof updateStocktakeItemsSchema>;
+export type CompleteStocktakeInput = z.infer<typeof completeStocktakeSchema>;
+
+// ---- Promotion Schemas ----
+
+export const PromotionTypeEnum = z.enum([
+  'PERCENT_OFF',
+  'FIXED_OFF',
+  'BUY_X_GET_Y',
+  'MIN_SPEND_PERCENT',
+  'MIN_SPEND_FIXED',
+]);
+
+export const createPromotionSchema = z.object({
+  name: z.string().min(1, 'Promotion name is required').max(150),
+  nameMm: z.string().max(150).optional().nullable(),
+  code: z.string().max(50).optional().nullable(),
+  type: PromotionTypeEnum,
+  discountValue: moneySchema.default(0),
+  minSpend: moneySchema.optional().nullable(),
+  buyQty: z.number().int().min(1).max(1000).optional().nullable(),
+  getQty: z.number().int().min(1).max(1000).optional().nullable(),
+  categoryId: z.string().optional().nullable(),
+  productId: z.string().optional().nullable(),
+  startDate: dateStringSchema,
+  endDate: dateStringSchema,
+  usageLimit: z.number().int().min(1).max(1_000_000).optional().nullable(),
+  isActive: z.boolean().optional().default(true),
+});
+
+export const updatePromotionSchema = createPromotionSchema.partial();
+
+export type CreatePromotionInput = z.infer<typeof createPromotionSchema>;
+export type UpdatePromotionInput = z.infer<typeof updatePromotionSchema>;
+
+// ---- Quotation Schemas ----
+
+export const QuotationStatusEnum = z.enum([
+  'DRAFT',
+  'SENT',
+  'ACCEPTED',
+  'CONVERTED',
+  'EXPIRED',
+  'CANCELLED',
+]);
+
+export const quotationItemInputSchema = z.object({
+  productId: z.string().min(1, 'Product is required'),
+  quantity: positiveQuantitySchema,
+  unitName: z.string().max(50).optional().nullable(),
+  unitFactor: positiveQuantitySchema.default(1),
+  unitPrice: moneySchema,
+  discount: moneySchema.default(0),
+});
+
+export const createQuotationSchema = z.object({
+  customerId: z.string().optional().nullable(),
+  customerName: z.string().max(200).optional().nullable(),
+  customerPhone: z.string().max(30).optional().nullable(),
+  items: z.array(quotationItemInputSchema).min(1, 'At least one item is required'),
+  discountAmount: moneySchema.default(0),
+  taxRate: z.number().min(0).max(100).optional(),
+  validUntil: dateStringSchema,
+  status: z.enum(['DRAFT', 'SENT', 'ACCEPTED']).optional().default('SENT'),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export const updateQuotationSchema = z.object({
+  customerId: z.string().optional().nullable(),
+  customerName: z.string().max(200).optional().nullable(),
+  customerPhone: z.string().max(30).optional().nullable(),
+  items: z.array(quotationItemInputSchema).min(1).optional(),
+  discountAmount: moneySchema.optional(),
+  taxRate: z.number().min(0).max(100).optional(),
+  validUntil: dateStringSchema.optional(),
+  status: QuotationStatusEnum.optional(),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+export type CreateQuotationInput = z.infer<typeof createQuotationSchema>;
+export type UpdateQuotationInput = z.infer<typeof updateQuotationSchema>;

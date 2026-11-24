@@ -32,11 +32,23 @@ interface CartState {
   /** Whether cart discount is PERCENT (%) or FIXED (Kyat). */
   discountType: DiscountType;
 
+  /** Optional promo/coupon code entered by cashier. */
+  promoCode: string;
+
+  /** Optional quotation ID being converted to a POS sale. */
+  activeQuotationId: string | null;
+
   /** Parked/held bills that can be resumed later. */
   heldBills: HeldBill[];
 
   /** Add a product to the cart (optionally in a specific alternate packaging unit). */
   addItem: (product: Product, qty?: number, unitOverride?: ProductUnit | null) => void;
+
+  /** Load items from a Quotation directly into the cart. */
+  loadQuotationItems: (quotationId: string, items: CartItem[], discountFixed?: number) => void;
+
+  /** Set promo code for promotion evaluation. */
+  setPromoCode: (code: string) => void;
 
   /** Remove a product from the cart by product ID. */
   removeItem: (productId: string) => void;
@@ -93,6 +105,8 @@ export const useCartStore = create<CartState>()(
       items: [],
       discount: 0,
       discountType: 'PERCENT',
+      promoCode: '',
+      activeQuotationId: null,
       heldBills: [],
 
       addItem: (product: Product, qty: number = 1, unitOverride?: ProductUnit | null) => {
@@ -146,6 +160,7 @@ export const useCartStore = create<CartState>()(
 
           const cartItem: CartItem = {
             productId: product.id,
+            categoryId: product.categoryId,
             name: product.name,
             nameMm: product.nameMm,
             sku: product.sku,
@@ -289,7 +304,27 @@ export const useCartStore = create<CartState>()(
       },
 
       clearCart: () => {
-        set({ items: [], discount: 0, discountType: 'PERCENT' });
+        set({
+          items: [],
+          discount: 0,
+          discountType: 'PERCENT',
+          promoCode: '',
+          activeQuotationId: null,
+        });
+      },
+
+      setPromoCode: (promoCode: string) => {
+        set({ promoCode: promoCode.toUpperCase() });
+      },
+
+      loadQuotationItems: (quotationId: string, items: CartItem[], discountFixed = 0) => {
+        set({
+          items,
+          discount: Math.max(0, Math.round(discountFixed)),
+          discountType: discountFixed > 0 ? 'FIXED' : 'PERCENT',
+          promoCode: '',
+          activeQuotationId: quotationId,
+        });
       },
 
       setDiscount: (amount: number) => {

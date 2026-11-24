@@ -16,8 +16,13 @@ import {
   PlayCircle,
   X,
   Keyboard,
+  Camera,
+  Monitor,
 } from '@/components/ui/Icons';
 import type { ProductUnit } from '@/types';
+import { evaluateBestPromotion, type EvaluablePromotion } from '@/lib/promotionEngine';
+import { broadcastCustomerDisplay } from '@/lib/customerDisplayChannel';
+import { CameraBarcodeModal } from '@/components/ui/CameraBarcodeModal';
 import ProductGrid from '@/components/pos/ProductGrid';
 import Cart from '@/components/pos/Cart';
 import PaymentModal, { type SaleResponse } from '@/components/pos/PaymentModal';
@@ -53,12 +58,14 @@ interface Product {
 interface POSClientProps {
   initialProducts: Product[];
   initialCategories: Category[];
+  initialPromotions?: EvaluablePromotion[];
   taxRate: number;
 }
 
 export default function POSClient({
   initialProducts,
   initialCategories,
+  initialPromotions = [],
   taxRate,
 }: POSClientProps) {
   const router = useRouter();
@@ -76,10 +83,15 @@ export default function POSClient({
   const [showPayment, setShowPayment] = useState(false);
   const [focusPaymentCustomer, setFocusPaymentCustomer] = useState(false);
   const [showShortcutsModal, setShowShortcutsModal] = useState(false);
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
   const [receiptData, setReceiptData] = useState<ReceiptData | null>(null);
   const [hasOpenShift, setHasOpenShift] = useState<boolean | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  const cartItems = useCartStore((s) => s.items);
+  const cartDiscount = useCartStore((s) => s.discount);
+  const cartDiscountType = useCartStore((s) => s.discountType);
+  const cartPromoCode = useCartStore((s) => s.promoCode);
   const clearCart = useCartStore((s) => s.clearCart);
   const cartItemCount = useCartStore((s) => s.getItemCount());
   const heldBills = useCartStore((s) => s.heldBills);
@@ -91,7 +103,9 @@ export default function POSClient({
   const syncAllQueuedSales = useOfflineQueueStore((s) => s.syncAllQueuedSales);
 
   const businessName = useSettingsStore((s) => s.businessName);
-  const { t } = useI18n();
+  const businessNameMm = useSettingsStore((s) => s.businessNameMm);
+  const businessLogo = useSettingsStore((s) => s.logo);
+  const { language, t } = useI18n();
 
   // Full-screen mode: hide sidebar, remove main-content margin
   useEffect(() => {
@@ -173,75 +187,179 @@ export default function POSClient({
     });
   }, [products, searchQuery, selectedCategory, showOutOfStock]);
 
+  // Broadcast cart / completed state to dual-screen Customer Display (/pos/display)
+  useEffect(() => {
+    if (showPayment) return; // PaymentModal manages QR broadcast while open
+    if (receiptData) {
+      broadcastCustomerDisplay({
+        mode: 'COMPLETED',
+        businessName,
+        businessNameMm,
+        logo: businessLogo,
+        items: [],
+        subtotal: receiptData.subtotal,
+        discountAmount: receiptData.discountAmount,
+        taxAmount: receiptData.taxAmount,
+        grandTotal: receiptData.totalAmount,
+        paidAmount: receiptData.paidAmount,
+        changeAmount: receiptData.changeAmount,
+        invoiceNumber: receiptData.invoiceNumber,
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+    if (cartItems.length === 0) {
+      broadcastCustomerDisplay({
+        mode: 'IDLE',
+        businessName,
+        businessNameMm,
+        logo: businessLogo,
+        items: [],
+        subtotal: 0,
+        discountAmount: 0,
+        taxAmount: 0,
+        grandTotal: 0,
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+
+    const store = useCartStore.getState();
+    const subtotal = store.getSubtotal();
+    const itemDisc = store.getItemDiscountTotal();
+    const cartDisc = store.getCartDiscountAmount();
+    const promoLines = cartItems.map((item) => {
+      const gross = Math.round(item.unitPrice * item.quantity);
+      return {
+        productId: item.productId,
+        categoryId: item.categoryId,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        lineTotal: Math.max(0, gross - (item.discount || 0)),
+      };
+    });
+    const promoEval = evaluateBestPromotion(promoLines, initialPromotions, cartPromoCode);
+    const afterCartDisc = store.getTotal();
+    const promoDisc = Math.min(afterCartDisc, Math.round(promoEval.best?.discountAmount ?? 0));
+    const netBeforeTax = Math.max(0, afterCartDisc - promoDisc);
+    const taxAmt = Math.round(netBeforeTax * (taxRate / 100));
+
+    broadcastCustomerDisplay({
+      mode: 'CART',
+      businessName,
+      businessNameMm,
+      logo: businessLogo,
+      items: cartItems.map((i) => ({
+        name: i.name,
+        nameMm: i.nameMm,
+        quantity: i.quantity,
+        unit: i.unit,
+        unitPrice: i.unitPrice,
+        lineTotal: Math.max(0, Math.round(i.unitPrice * i.quantity) - (i.discount || 0)),
+      })),
+      subtotal,
+      discountAmount: itemDisc + cartDisc + promoDisc,
+      promoLabel: promoEval.best
+        ? language === 'mm' && promoEval.best.promotion.nameMm
+          ? promoEval.best.promotion.nameMm
+          : promoEval.best.promotion.name
+        : null,
+      taxAmount: taxAmt,
+      grandTotal: netBeforeTax + taxAmt,
+      updatedAt: Date.now(),
+    });
+  }, [
+    cartItems,
+    cartDiscount,
+    cartDiscountType,
+    cartPromoCode,
+    initialPromotions,
+    taxRate,
+    receiptData,
+    showPayment,
+    businessName,
+    businessNameMm,
+    businessLogo,
+    language,
+  ]);
+
+  const addByScannedCode = useCallback(
+    (rawCode: string): boolean => {
+      const raw = rawCode.trim();
+      if (!raw) return false;
+      const lowered = raw.toLowerCase();
+
+      // 1. Check alternate packaging unit barcodes first
+      for (const product of products) {
+        if (product.stockQuantity <= 0) continue;
+        const matchedUnit = product.productUnits?.find(
+          (u) => u.barcode && u.barcode.toLowerCase() === lowered
+        );
+        if (matchedUnit) {
+          useCartStore.getState().addItem(
+            {
+              id: product.id,
+              name: product.name,
+              nameMm: product.nameMm,
+              sku: product.sku,
+              barcode: product.barcode,
+              categoryId: product.category.id,
+              costPrice: product.costPrice,
+              sellingPrice: product.sellingPrice,
+              stockQuantity: product.stockQuantity,
+              lowStockThreshold: 10,
+              unit: product.unit,
+              imageUrl: product.imageUrl,
+              productUnits: product.productUnits,
+              isActive: true,
+              createdAt: '',
+              updatedAt: '',
+            },
+            1,
+            matchedUnit
+          );
+          return true;
+        }
+      }
+
+      // 2. Check exact product barcode or SKU
+      const exactProduct = products.find(
+        (p) =>
+          p.stockQuantity > 0 &&
+          ((p.barcode && p.barcode.toLowerCase() === lowered) ||
+            p.sku.toLowerCase() === lowered)
+      );
+      if (exactProduct) {
+        useCartStore.getState().addItem({
+          id: exactProduct.id,
+          name: exactProduct.name,
+          nameMm: exactProduct.nameMm,
+          sku: exactProduct.sku,
+          barcode: exactProduct.barcode,
+          categoryId: exactProduct.category.id,
+          costPrice: exactProduct.costPrice,
+          sellingPrice: exactProduct.sellingPrice,
+          stockQuantity: exactProduct.stockQuantity,
+          lowStockThreshold: 10,
+          unit: exactProduct.unit,
+          imageUrl: exactProduct.imageUrl,
+          productUnits: exactProduct.productUnits,
+          isActive: true,
+          createdAt: '',
+          updatedAt: '',
+        });
+        return true;
+      }
+      return false;
+    },
+    [products]
+  );
+
   // Barcode / SKU Enter quick-scan handler
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key !== 'Enter') return;
-    const raw = searchQuery.trim();
-    if (!raw) return;
-    const lowered = raw.toLowerCase();
-
-    // 1. Check alternate packaging unit barcodes first
-    for (const product of products) {
-      if (product.stockQuantity <= 0) continue;
-      const matchedUnit = product.productUnits?.find(
-        (u) => u.barcode && u.barcode.toLowerCase() === lowered
-      );
-      if (matchedUnit) {
-        e.preventDefault();
-        useCartStore.getState().addItem(
-          {
-            id: product.id,
-            name: product.name,
-            nameMm: product.nameMm,
-            sku: product.sku,
-            barcode: product.barcode,
-            categoryId: product.category.id,
-            costPrice: product.costPrice,
-            sellingPrice: product.sellingPrice,
-            stockQuantity: product.stockQuantity,
-            lowStockThreshold: 10,
-            unit: product.unit,
-            imageUrl: product.imageUrl,
-            productUnits: product.productUnits,
-            isActive: true,
-            createdAt: '',
-            updatedAt: '',
-          },
-          1,
-          matchedUnit
-        );
-        setSearchQuery('');
-        return;
-      }
-    }
-
-    // 2. Check exact product barcode or SKU
-    const exactProduct = products.find(
-      (p) =>
-        p.stockQuantity > 0 &&
-        ((p.barcode && p.barcode.toLowerCase() === lowered) ||
-          p.sku.toLowerCase() === lowered)
-    );
-    if (exactProduct) {
+    if (addByScannedCode(searchQuery)) {
       e.preventDefault();
-      useCartStore.getState().addItem({
-        id: exactProduct.id,
-        name: exactProduct.name,
-        nameMm: exactProduct.nameMm,
-        sku: exactProduct.sku,
-        barcode: exactProduct.barcode,
-        categoryId: exactProduct.category.id,
-        costPrice: exactProduct.costPrice,
-        sellingPrice: exactProduct.sellingPrice,
-        stockQuantity: exactProduct.stockQuantity,
-        lowStockThreshold: 10,
-        unit: exactProduct.unit,
-        imageUrl: exactProduct.imageUrl,
-        productUnits: exactProduct.productUnits,
-        isActive: true,
-        createdAt: '',
-        updatedAt: '',
-      });
       setSearchQuery('');
     }
   };
@@ -462,6 +580,26 @@ export default function POSClient({
             )}
             <button
               type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setShowCameraScanner(true)}
+              title={t('Scan Barcode with Camera', 'ကင်မရာဖြင့် ဘားကုဒ်ဖတ်ရန်')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px' }}
+            >
+              <Camera size={14} strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() =>
+                window.open('/pos/display', 'shwepos-customer-display', 'width=1024,height=768')
+              }
+              title={t('Open Customer Display', 'ဖောက်သည်မျက်နှာပြင် ဖွင့်ရန်')}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px' }}
+            >
+              <Monitor size={14} strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
               className="btn btn-ghost btn-sm"
               onClick={() => setShowShortcutsModal(true)}
               title={t('Keyboard Shortcuts (?)', 'ကီးဘုတ်ဖြတ်လမ်းခလုတ်များ (?)')}
@@ -545,6 +683,7 @@ export default function POSClient({
         onOpenPayment={() => setShowPayment(true)}
         onOpenHeldBills={() => setShowHeldBillsModal(true)}
         taxRate={taxRate}
+        activePromotions={initialPromotions}
         isMobileOpen={showMobileCart}
         onClose={() => setShowMobileCart(false)}
       />
@@ -647,10 +786,25 @@ export default function POSClient({
           }}
           onSuccess={handlePaymentSuccess}
           taxRate={taxRate}
+          activePromotions={initialPromotions}
           hasOpenShift={hasOpenShift}
           autoFocusCustomer={focusPaymentCustomer}
         />
       )}
+
+      {/* Camera Barcode Scanner */}
+      <CameraBarcodeModal
+        isOpen={showCameraScanner}
+        continuous
+        onDetected={(code) => {
+          if (addByScannedCode(code)) {
+            addToast(`${t('Added', 'ထည့်ပြီး')}: ${code}`, 'success');
+          } else {
+            addToast(t(`Product not found: ${code}`, `ပစ္စည်းမတွေ့ပါ: ${code}`), 'error');
+          }
+        }}
+        onClose={() => setShowCameraScanner(false)}
+      />
 
       {/* Keyboard Shortcuts Cheat Sheet */}
       <KeyboardShortcutsModal

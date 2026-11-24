@@ -16,7 +16,11 @@ export type AuditAction =
   | 'SHIFT_CLOSED'
   | 'USER_UPDATED'
   | 'SETTINGS_UPDATED'
-  | 'DATA_MIGRATION_IMPORT';
+  | 'DATA_MIGRATION_IMPORT'
+  | 'CUSTOMER_CREDIT_RECONCILED'
+  | 'STOCKTAKE_COMPLETED'
+  | 'PROMOTION_UPDATED'
+  | 'QUOTATION_CREATED';
 
 export type AuditEntityType =
   | 'SALE'
@@ -28,7 +32,10 @@ export type AuditEntityType =
   | 'SHIFT'
   | 'USER'
   | 'SETTINGS'
-  | 'DATA_MIGRATION';
+  | 'DATA_MIGRATION'
+  | 'STOCKTAKE'
+  | 'PROMOTION'
+  | 'QUOTATION';
 
 export interface AuditLogInput {
   userId: string;

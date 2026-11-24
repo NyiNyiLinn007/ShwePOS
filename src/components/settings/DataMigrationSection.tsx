@@ -65,8 +65,8 @@ export function DataMigrationSection() {
         </h3>
         <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
           {t(
-            'Download the formatted 19-sheet Excel workbook (v2.0) covering Products, Multi-Unit Packaging, Suppliers, Purchase Orders, Customers, Sales, Shifts, and Settings. Required columns are color-coded in Amber, and older backups remain backward-compatible.',
-            'ကုန်ပစ္စည်း၊ Multi-Unit ယူနစ်များ၊ ပေးသွင်းသူ၊ အဝယ် (PO)၊ ဖောက်သည်၊ အရောင်း၊ အဆိုင်းနှင့် ဆိုင်ဆက်တင်အပါအဝင် Sheet ၁၉ ခုပါ စနစ်တကျ Format ချထားသော Excel (v2.0) ကို Download/Export/Import ပြုလုပ်နိုင်ပါသည်။ မဖြစ်မနေဖြည့်ရမည့်ကော်လံများကို လိမ္မော်ရောင်ဖြင့် ခွဲခြားပြထားပြီး Backup အဟောင်းများကိုလည်း ပြန်သွင်းနိုင်ပါသည်။'
+            'Download the formatted 24-sheet Excel workbook (v2.1) covering Products, Multi-Unit Packaging, Stocktakes, Promotions, Quotations, Suppliers, Purchase Orders, Customers, Sales, Shifts, and Settings. Required columns are color-coded in Amber, and older backups remain backward-compatible.',
+            'ကုန်ပစ္စည်း၊ Multi-Unit ယူနစ်များ၊ Stocktake၊ ပရိုမိုးရှင်း၊ Quotation၊ ပေးသွင်းသူ၊ အဝယ် (PO)၊ ဖောက်သည်၊ အရောင်း၊ အဆိုင်းနှင့် ဆိုင်ဆက်တင်အပါအဝင် Sheet ၂၄ ခုပါ စနစ်တကျ Format ချထားသော Excel (v2.1) ကို Download/Export/Import ပြုလုပ်နိုင်ပါသည်။ မဖြစ်မနေဖြည့်ရမည့်ကော်လံများကို လိမ္မော်ရောင်ဖြင့် ခွဲခြားပြထားပြီး Backup အဟောင်းများကိုလည်း ပြန်သွင်းနိုင်ပါသည်။'
           )}
         </p>
       </div>

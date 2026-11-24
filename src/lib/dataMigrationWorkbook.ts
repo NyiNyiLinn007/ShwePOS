@@ -402,7 +402,7 @@ function buildInstructionsSheet(data: MigrationRows): MigrationWorkbook[number] 
     // Row 1: Branded Banner
     [
       {
-        value: 'ShwePOS Enterprise Data Migration Workbook (v2.0)',
+        value: 'ShwePOS Enterprise Data Migration Workbook (v2.1)',
         type: String,
         columnSpan: 6,
         fontWeight: 'bold',
@@ -422,7 +422,7 @@ function buildInstructionsSheet(data: MigrationRows): MigrationWorkbook[number] 
     [
       {
         value:
-          'Complete 19-Sheet Retail POS Backup & Migration Template — ရွှေPOS ဒေတာကူးပြောင်းမှုနှင့် Backup Excel ဖိုင်',
+          `Complete ${sheetEntries.length}-Sheet Retail POS Backup & Migration Template — ရွှေPOS ဒေတာကူးပြောင်းမှုနှင့် Backup Excel ဖိုင်`,
         type: String,
         columnSpan: 6,
         fontStyle: 'italic',
@@ -463,7 +463,7 @@ function buildInstructionsSheet(data: MigrationRows): MigrationWorkbook[number] 
       'Total Records Exported',
       totalRecords,
       'Total Data Sheets',
-      `${sheetEntries.length} operational tables (full schema v2.0)`
+      `${sheetEntries.length} operational tables (full schema v2.1)`
     ),
     [],
     // Section 1: Quick Usage Guide

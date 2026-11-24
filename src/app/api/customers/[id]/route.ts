@@ -92,7 +92,10 @@ export async function PUT(
         phone,
         email,
         address,
-        ...(parsed.creditLimit !== undefined && { creditLimit: parsed.creditLimit }),
+        ...(parsed.creditLimit !== undefined && {
+          creditLimit:
+            parsed.creditLimit !== null && parsed.creditLimit > 0 ? parsed.creditLimit : null,
+        }),
       },
     });
 

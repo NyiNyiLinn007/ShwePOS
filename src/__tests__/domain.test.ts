@@ -22,6 +22,12 @@ import {
   validateXlsxContainer,
   workbookBuffer,
 } from '@/lib/dataMigration';
+import {
+  evaluateBestPromotion,
+  type EvaluablePromotion,
+  type PromoCartLine,
+} from '@/lib/promotionEngine';
+import { getAgingBucketKey } from '@/services/agingService';
 import writeXlsxFile from 'write-excel-file/node';
 
 describe('Myanmar Timezone Standardization (Asia/Yangon, UTC+6:30)', () => {
@@ -210,8 +216,8 @@ describe('POS Cart Store Calculations & Hold/Resume Queue', () => {
   });
 });
 
-describe('Excel Data Migration v2.0 Workbook Formatting & Round-Trip', () => {
-  it('generates a valid styled 19-sheet + Instructions workbook and round-trips all fields cleanly', async () => {
+describe('Excel Data Migration v2.1 Workbook Formatting & Round-Trip', () => {
+  it('generates a valid styled 24-sheet + Instructions workbook and round-trips all fields cleanly', async () => {
     const sampleDate = new Date('2026-11-23T08:30:00.000Z');
     const expiryDate = new Date('2027-06-30T00:00:00.000Z');
     const workbook = createDataMigrationWorkbook({
@@ -293,12 +299,14 @@ describe('Excel Data Migration v2.0 Workbook Formatting & Round-Trip', () => {
       InvoiceCounters: [
         { date: '20261123', counter: 12 },
         { date: 'PO-20261123', counter: 3 },
+        { date: 'ST-20261124', counter: 1 },
+        { date: 'QT-20261124', counter: 2 },
       ],
     });
 
-    // 1 Instructions sheet + 19 operational data sheets = 20 sheets total
-    assert.equal(Object.keys(DATA_MIGRATION_SHEETS).length, 19);
-    assert.equal(workbook.length, 20);
+    // 1 Instructions sheet + 24 operational data sheets = 25 sheets total
+    assert.equal(Object.keys(DATA_MIGRATION_SHEETS).length, 24);
+    assert.equal(workbook.length, 25);
     assert.equal(workbook[0].sheet, 'Instructions');
 
     const buffer = await workbookBuffer(workbook);
@@ -323,8 +331,10 @@ describe('Excel Data Migration v2.0 Workbook Formatting & Round-Trip', () => {
 
     assert.equal(parsed.Suppliers?.length, 1);
     assert.equal(parsed.Suppliers?.[0].name, 'Golden Star Wholesale');
-    assert.equal(parsed.InvoiceCounters?.length, 2);
+    assert.equal(parsed.InvoiceCounters?.length, 4);
     assert.equal(parsed.InvoiceCounters?.[1].date, 'PO-20261123');
+    assert.equal(parsed.InvoiceCounters?.[2].date, 'ST-20261124');
+    assert.equal(parsed.InvoiceCounters?.[3].date, 'QT-20261124');
   });
 
   it('remains backward-compatible when parsing legacy v1 sheets missing newer optional columns', async () => {
@@ -350,5 +360,87 @@ describe('Excel Data Migration v2.0 Workbook Formatting & Round-Trip', () => {
     assert.equal(parsed.Customers?.[0].name, 'U Ba');
     assert.equal(parsed.Products?.length, 1);
     assert.equal(parsed.Products?.[0].sku, 'TEA-01');
+  });
+});
+
+describe('Promotions Engine (Best Single Discount, Non-Stacking)', () => {
+  const now = new Date('2026-11-24T06:00:00.000Z');
+  const start = new Date('2026-11-01T00:00:00.000Z');
+  const end = new Date('2026-11-30T23:59:59.000Z');
+
+  const lines: PromoCartLine[] = [
+    { productId: 'p1', categoryId: 'cat-drink', quantity: 6, unitPrice: 1000, lineTotal: 6000 },
+    { productId: 'p2', categoryId: 'cat-snack', quantity: 2, unitPrice: 5000, lineTotal: 10000 },
+  ];
+
+  const promos: EvaluablePromotion[] = [
+    {
+      id: 'promo-b5g1',
+      name: 'Buy 5 Get 1 Free Drinks',
+      code: null,
+      type: 'BUY_X_GET_Y',
+      discountValue: 0,
+      buyQty: 5,
+      getQty: 1,
+      categoryId: 'cat-drink',
+      startDate: start,
+      endDate: end,
+      isActive: true,
+    },
+    {
+      id: 'promo-minspend',
+      name: 'Spend 15k Save 2,500K',
+      code: null,
+      type: 'MIN_SPEND_FIXED',
+      discountValue: 2500,
+      minSpend: 15000,
+      startDate: start,
+      endDate: end,
+      isActive: true,
+    },
+    {
+      id: 'promo-vipcode',
+      name: 'VIP 25% Code',
+      code: 'VIP25',
+      type: 'PERCENT_OFF',
+      discountValue: 25,
+      startDate: start,
+      endDate: end,
+      usageLimit: 10,
+      usedCount: 2,
+      isActive: true,
+    },
+  ];
+
+  it('automatically picks the single highest auto-applied discount without stacking', () => {
+    // Cart total = 16,000: B5G1 gives 1,000 K; MinSpend gives 2,500 K => Best Single = 2,500 K
+    const res = evaluateBestPromotion(lines, promos, '', now);
+    assert.equal(res.best?.promotion.id, 'promo-minspend');
+    assert.equal(res.best?.discountAmount, 2500);
+  });
+
+  it('unlocks coupon code when entered and selects it if better than auto promos', () => {
+    // VIP25 gives 25% of 16,000 = 4,000 K > 2,500 K
+    const res = evaluateBestPromotion(lines, promos, 'vip25', now);
+    assert.equal(res.codeMatched, true);
+    assert.equal(res.best?.promotion.id, 'promo-vipcode');
+    assert.equal(res.best?.discountAmount, 4000);
+  });
+
+  it('calculates Buy X Get Y free units cleanly on exact bundle multiples', () => {
+    const res = evaluateBestPromotion([lines[0]], [promos[0]], '', now);
+    assert.equal(res.best?.discountAmount, 1000);
+  });
+});
+
+describe('AR/AP Aging Bucket Boundaries', () => {
+  it('assigns exact day counts to 0-30, 31-60, 61-90, and 90+ buckets', () => {
+    assert.equal(getAgingBucketKey(0), 'd0_30');
+    assert.equal(getAgingBucketKey(30), 'd0_30');
+    assert.equal(getAgingBucketKey(31), 'd31_60');
+    assert.equal(getAgingBucketKey(60), 'd31_60');
+    assert.equal(getAgingBucketKey(61), 'd61_90');
+    assert.equal(getAgingBucketKey(90), 'd61_90');
+    assert.equal(getAgingBucketKey(91), 'd90_plus');
   });
 });

@@ -31,6 +31,9 @@ model User {
   purchaseOrders PurchaseOrder[]
   supplierPayments SupplierPayment[]
   auditLogs      AuditLog[]
+  stocktakeSessions StocktakeSession[] @relation("StocktakeCreatedBy")
+  completedStocktakes StocktakeSession[] @relation("StocktakeCompletedBy")
+  quotations     Quotation[]
 }
 
 model Category {
@@ -43,6 +46,8 @@ model Category {
   createdAt   DateTime @default(now())
 
   products Product[]
+  promotions Promotion[]
+  stocktakeSessions StocktakeSession[]
 }
 
 model Product {
@@ -69,6 +74,9 @@ model Product {
   stockMovements StockMovement[]
   productUnits   ProductUnit[]
   purchaseItems  PurchaseItem[]
+  stocktakeItems StocktakeItem[]
+  promotions     Promotion[]
+  quotationItems QuotationItem[]
 }
 
 model ProductUnit {
@@ -103,6 +111,7 @@ model Customer {
 
   sales        Sale[]
   salePayments SalePayment[]
+  quotations   Quotation[]
 }
 
 model Sale {
@@ -120,6 +129,9 @@ model Sale {
   changeAmount  Decimal  @default(0) @db.Decimal(18, 2)
   pointsEarned  Int      @default(0)
   pointsRedeemed Int     @default(0)
+  promotionId   String?
+  promotionCode String?
+  promotionDiscount Decimal @default(0) @db.Decimal(18, 2)
   paymentMethod String   @default("CASH") // CASH, CARD, MOBILE_BANKING, CREDIT, SPLIT
   paymentStatus  String   @default("PAID") // PAID, PARTIAL, PENDING, FAILED, REVERSED
   paymentReference String?
@@ -130,11 +142,13 @@ model Sale {
 
   customer       Customer?       @relation(fields: [customerId], references: [id])
   user           User            @relation(fields: [userId], references: [id])
+  promotion      Promotion?      @relation(fields: [promotionId], references: [id], onDelete: SetNull)
   items          SaleItem[]
   payments       SalePayment[]
   stockMovements StockMovement[]
   adjustments    SaleAdjustment[]
   cashDrawerMovements CashDrawerMovement[]
+  convertedQuotations Quotation[] @relation("QuotationConvertedSale")
 }
 
 model SalePayment {
@@ -410,4 +424,121 @@ model AuditLog {
   @@index([action])
   @@index([entityType])
   @@index([createdAt])
+}
+
+model StocktakeSession {
+  id                 String    @id @default(cuid())
+  sessionNumber      String    @unique
+  status             String    @default("IN_PROGRESS") // IN_PROGRESS, COMPLETED, CANCELLED
+  categoryId         String?
+  userId             String
+  completedById      String?
+  notes              String?
+  totalItems         Int       @default(0)
+  varianceItems      Int       @default(0)
+  totalVarianceValue Decimal   @default(0) @db.Decimal(18, 2)
+  createdAt          DateTime  @default(now())
+  completedAt        DateTime?
+  updatedAt          DateTime  @updatedAt
+
+  category    Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  user        User            @relation("StocktakeCreatedBy", fields: [userId], references: [id])
+  completedBy User?           @relation("StocktakeCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  items       StocktakeItem[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model StocktakeItem {
+  id            String   @id @default(cuid())
+  sessionId     String
+  productId     String
+  systemQty     Decimal  @db.Decimal(18, 3)
+  countedQty    Decimal? @db.Decimal(18, 3)
+  varianceQty   Decimal  @default(0) @db.Decimal(18, 3)
+  unitCost      Decimal  @default(0) @db.Decimal(18, 2)
+  varianceValue Decimal  @default(0) @db.Decimal(18, 2)
+  notes         String?
+
+  session StocktakeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  product Product          @relation(fields: [productId], references: [id])
+
+  @@unique([sessionId, productId])
+  @@index([sessionId])
+  @@index([productId])
+}
+
+model Promotion {
+  id            String   @id @default(cuid())
+  name          String
+  nameMm        String?
+  code          String?  @unique
+  type          String   // PERCENT_OFF, FIXED_OFF, BUY_X_GET_Y, MIN_SPEND_PERCENT, MIN_SPEND_FIXED
+  discountValue Decimal  @default(0) @db.Decimal(18, 2)
+  minSpend      Decimal? @db.Decimal(18, 2)
+  buyQty        Int?
+  getQty        Int?
+  categoryId    String?
+  productId     String?
+  startDate     DateTime
+  endDate       DateTime
+  usageLimit    Int?
+  usedCount     Int      @default(0)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  product  Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  sales    Sale[]
+
+  @@index([isActive, startDate, endDate])
+  @@index([code])
+}
+
+model Quotation {
+  id              String   @id @default(cuid())
+  quoteNumber     String   @unique
+  customerId      String?
+  customerName    String?
+  customerPhone   String?
+  userId          String
+  subtotal        Decimal  @default(0) @db.Decimal(18, 2)
+  discountAmount  Decimal  @default(0) @db.Decimal(18, 2)
+  taxAmount       Decimal  @default(0) @db.Decimal(18, 2)
+  totalAmount     Decimal  @default(0) @db.Decimal(18, 2)
+  status          String   @default("DRAFT") // DRAFT, SENT, ACCEPTED, CONVERTED, EXPIRED, CANCELLED
+  validUntil      DateTime
+  convertedSaleId String?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  customer      Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  user          User            @relation(fields: [userId], references: [id])
+  convertedSale Sale?           @relation("QuotationConvertedSale", fields: [convertedSaleId], references: [id], onDelete: SetNull)
+  items         QuotationItem[]
+
+  @@index([status])
+  @@index([customerId])
+  @@index([createdAt])
+}
+
+model QuotationItem {
+  id          String  @id @default(cuid())
+  quotationId String
+  productId   String
+  quantity    Decimal @db.Decimal(18, 3)
+  unitName    String?
+  unitFactor  Decimal @default(1) @db.Decimal(18, 3)
+  unitPrice   Decimal @db.Decimal(18, 2)
+  discount    Decimal @default(0) @db.Decimal(18, 2)
+  total       Decimal @db.Decimal(18, 2)
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product   Product   @relation(fields: [productId], references: [id])
+
+  @@index([quotationId])
+  @@index([productId])
 }

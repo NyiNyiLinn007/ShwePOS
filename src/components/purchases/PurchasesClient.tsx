@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { useAppStore } from '@/lib/store';
@@ -11,6 +11,7 @@ import {
   PurchaseFormModal,
   PurchaseSupplierOption,
   PurchaseProductOption,
+  type PurchasePrefillItem,
 } from '@/components/purchases/PurchaseFormModal';
 
 interface PurchaseOrderRecord {
@@ -54,8 +55,26 @@ export function PurchasesClient({
   const [orders, setOrders] = useState<PurchaseOrderRecord[]>(initialOrders);
   const [supplierFilter, setSupplierFilter] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [prefillItems, setPrefillItems] = useState<PurchasePrefillItem[] | null>(null);
   const [selectedOrder, setSelectedOrder] = useState<PurchaseOrderRecord | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  // Pick up 1-Click Auto-Reorder PO items from Inventory Analytics report
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('shwepos-prefill-po');
+      if (raw) {
+        sessionStorage.removeItem('shwepos-prefill-po');
+        const parsed = JSON.parse(raw) as PurchasePrefillItem[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setPrefillItems(parsed);
+          setShowCreateModal(true);
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
   const filtered = useMemo(() => {
     if (!supplierFilter) return orders;
@@ -286,8 +305,10 @@ export function PurchasesClient({
         isOpen={showCreateModal}
         suppliers={suppliers}
         products={products}
+        prefillItems={prefillItems}
         onCreated={(created) => {
           setOrders((prev) => [created as PurchaseOrderRecord, ...prev]);
+          setPrefillItems(null);
           useAppStore.getState().triggerLowStockRefresh();
         }}
         onClose={() => setShowCreateModal(false)}

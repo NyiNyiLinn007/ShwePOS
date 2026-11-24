@@ -19,9 +19,11 @@ import {
   User,
   UserCog,
   FileSpreadsheet,
+  FileText,
   Printer,
 } from '@/components/ui/Icons';
 import Receipt from '@/components/pos/Receipt';
+import { SaleA4InvoiceModal } from '@/components/sales/SaleA4InvoiceModal';
 import { SaleRefundModal, SaleRefundAction } from '@/components/sales/SaleRefundModal';
 
 export function SaleDetailClient({
@@ -36,6 +38,7 @@ export function SaleDetailClient({
 
   const [modalOpen, setModalOpen] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
+  const [showA4Invoice, setShowA4Invoice] = useState(false);
   const [actionType, setActionType] = useState<SaleRefundAction>('REFUNDED');
 
   const canManageRefund = userRole === 'ADMIN' || userRole === 'MANAGER';
@@ -59,6 +62,14 @@ export function SaleDetailClient({
         >
           <Printer size={14} strokeWidth={1.75} />
           {t('Print Receipt', 'ဘောင်ချာ ပရင့်ထုတ်ရန်')}
+        </button>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={() => setShowA4Invoice(true)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+        >
+          <FileText size={14} strokeWidth={1.75} />
+          {t('A4 Invoice / DO', 'A4 ဘောင်ချာ / ကုန်ပို့လွှာ')}
         </button>
         {canManageRefund &&
           (sale.status === 'COMPLETED' || sale.status === 'PARTIALLY_REFUNDED') && (
@@ -415,6 +426,11 @@ export function SaleDetailClient({
           closeLabel={t('Close', 'ပိတ်ရန်')}
         />
       )}
+
+      <SaleA4InvoiceModal
+        sale={showA4Invoice ? sale : null}
+        onClose={() => setShowA4Invoice(false)}
+      />
     </div>
   );
 }
