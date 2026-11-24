@@ -71,14 +71,33 @@ export default function POSClient({
   const router = useRouter();
   const { addToast } = useToast();
   const [products, setProducts] = useState<Product[]>(initialProducts);
+  const [activePromotions, setActivePromotions] = useState<EvaluablePromotion[]>(initialPromotions);
   const [searchQuery, setSearchQuery] = useState('');
   const [showOutOfStock, setShowOutOfStock] = useState(false);
   const [showMobileCart, setShowMobileCart] = useState(false);
   const [showHeldBillsModal, setShowHeldBillsModal] = useState(false);
+  const [showFailedQueueModal, setShowFailedQueueModal] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
 
   // Sync when server re-renders with fresh data (e.g., inventory adjustments)
   useEffect(() => { setProducts(initialProducts); }, [initialProducts]);
+  useEffect(() => { setActivePromotions(initialPromotions); }, [initialPromotions]);
+
+  const refreshActivePromotions = useCallback(async () => {
+    try {
+      const res = await fetch('/api/promotions/active', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setActivePromotions(data);
+        } else if (Array.isArray(data?.promotions)) {
+          setActivePromotions(data.promotions);
+        }
+      }
+    } catch {
+      // keep existing promotions on network error
+    }
+  }, []);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [showPayment, setShowPayment] = useState(false);
   const [focusPaymentCustomer, setFocusPaymentCustomer] = useState(false);
@@ -99,13 +118,50 @@ export default function POSClient({
   const removeHeldBill = useCartStore((s) => s.removeHeldBill);
 
   const queuedSales = useOfflineQueueStore((s) => s.queuedSales);
+  const failedSales = useOfflineQueueStore((s) => s.failedSales);
   const isSyncing = useOfflineQueueStore((s) => s.isSyncing);
-  const syncAllQueuedSales = useOfflineQueueStore((s) => s.syncAllQueuedSales);
+  const retryFailedSale = useOfflineQueueStore((s) => s.retryFailedSale);
+  const discardFailedSale = useOfflineQueueStore((s) => s.discardFailedSale);
 
   const businessName = useSettingsStore((s) => s.businessName);
   const businessNameMm = useSettingsStore((s) => s.businessNameMm);
   const businessLogo = useSettingsStore((s) => s.logo);
   const { language, t } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
+  const handleRunQueueSync = useCallback(async () => {
+    const res = await useOfflineQueueStore.getState().syncAllQueuedSales();
+    if (res.synced > 0) {
+      addToast(
+        tRef.current(
+          `Synced ${res.synced} offline sale(s)`,
+          `အော့ဖ်လိုင်းအရောင်း ${res.synced} ခု စာရင်းသွင်းပြီးပါပြီ`
+        ),
+        'success'
+      );
+      void refreshActivePromotions();
+    }
+    if (res.authRequired) {
+      addToast(
+        tRef.current(
+          'Session expired — sign in again to sync queued offline sales (your sales are safely kept)',
+          'Session သက်တမ်းကုန်သွားပါပြီ — အော့ဖ်လိုင်းအရောင်းများ စာရင်းသွင်းရန် ထပ်မံဝင်ရောက်ပါ (ဒေတာများ လုံခြုံစွာသိမ်းထားပါသည်)'
+        ),
+        'error'
+      );
+    } else if (res.failed > 0) {
+      addToast(
+        res.lastError
+          ? `${tRef.current('Offline sync pending', 'အော့ဖ်လိုင်းစာရင်းသွင်းရန် ကျန်ရှိသည်')}: ${res.lastError}`
+          : tRef.current(
+              `${res.failed} offline sale(s) could not sync yet`,
+              `အော့ဖ်လိုင်းအရောင်း ${res.failed} ခု စာရင်းမသွင်းနိုင်သေးပါ`
+            ),
+        'warning'
+      );
+    }
+  }, [addToast, refreshActivePromotions]);
 
   // Full-screen mode: hide sidebar, remove main-content margin
   useEffect(() => {
@@ -122,13 +178,7 @@ export default function POSClient({
     }
     const handleOnline = async () => {
       setIsOnline(true);
-      const res = await useOfflineQueueStore.getState().syncAllQueuedSales();
-      if (res.synced > 0) {
-        addToast(
-          t(`Synced ${res.synced} offline sale(s)`, `အော့ဖ်လိုင်းအရောင်း ${res.synced} ခု စာရင်းသွင်းပြီးပါပြီ`),
-          'success'
-        );
-      }
+      await handleRunQueueSync();
     };
     const handleOffline = () => setIsOnline(false);
 
@@ -143,7 +193,7 @@ export default function POSClient({
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [addToast, t]);
+  }, [handleRunQueueSync]);
 
   useEffect(() => {
     let active = true;
@@ -238,7 +288,7 @@ export default function POSClient({
         lineTotal: Math.max(0, gross - (item.discount || 0)),
       };
     });
-    const promoEval = evaluateBestPromotion(promoLines, initialPromotions, cartPromoCode);
+    const promoEval = evaluateBestPromotion(promoLines, activePromotions, cartPromoCode, new Date(), cartDisc);
     const afterCartDisc = store.getTotal();
     const promoDisc = Math.min(afterCartDisc, Math.round(promoEval.best?.discountAmount ?? 0));
     const netBeforeTax = Math.max(0, afterCartDisc - promoDisc);
@@ -273,7 +323,7 @@ export default function POSClient({
     cartDiscount,
     cartDiscountType,
     cartPromoCode,
-    initialPromotions,
+    activePromotions,
     taxRate,
     receiptData,
     showPayment,
@@ -296,7 +346,10 @@ export default function POSClient({
           (u) => u.barcode && u.barcode.toLowerCase() === lowered
         );
         if (matchedUnit) {
-          useCartStore.getState().addItem(
+          if (product.stockQuantity < matchedUnit.conversionFactor) {
+            return false;
+          }
+          return useCartStore.getState().addItem(
             {
               id: product.id,
               name: product.name,
@@ -318,7 +371,6 @@ export default function POSClient({
             1,
             matchedUnit
           );
-          return true;
         }
       }
 
@@ -330,7 +382,7 @@ export default function POSClient({
             p.sku.toLowerCase() === lowered)
       );
       if (exactProduct) {
-        useCartStore.getState().addItem({
+        return useCartStore.getState().addItem({
           id: exactProduct.id,
           name: exactProduct.name,
           nameMm: exactProduct.nameMm,
@@ -348,7 +400,6 @@ export default function POSClient({
           createdAt: '',
           updatedAt: '',
         });
-        return true;
       }
       return false;
     },
@@ -488,6 +539,7 @@ export default function POSClient({
     );
 
     clearCart();
+    void refreshActivePromotions();
   };
 
   const handleNewSale = () => {
@@ -557,7 +609,7 @@ export default function POSClient({
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
-                onClick={() => void syncAllQueuedSales()}
+                onClick={() => void handleRunQueueSync()}
                 disabled={isSyncing || !isOnline}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
               >
@@ -565,6 +617,16 @@ export default function POSClient({
                 {isSyncing
                   ? t('Syncing...', 'ချိတ်ဆက်နေသည်...')
                   : `${t('Queued', 'စောင့်ဆိုင်းနေ')} (${queuedSales.length})`}
+              </button>
+            )}
+            {failedSales.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={() => setShowFailedQueueModal(true)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              >
+                {t('Failed Sync', 'စာရင်းသွင်းမအောင်')} ({failedSales.length})
               </button>
             )}
             {heldBills.length > 0 && (
@@ -680,10 +742,13 @@ export default function POSClient({
         />
       )}
       <Cart
-        onOpenPayment={() => setShowPayment(true)}
+        onOpenPayment={() => {
+          void refreshActivePromotions();
+          setShowPayment(true);
+        }}
         onOpenHeldBills={() => setShowHeldBillsModal(true)}
         taxRate={taxRate}
-        activePromotions={initialPromotions}
+        activePromotions={activePromotions}
         isMobileOpen={showMobileCart}
         onClose={() => setShowMobileCart(false)}
       />
@@ -777,6 +842,76 @@ export default function POSClient({
         </div>
       )}
 
+      {/* Failed Offline Sync Review Modal */}
+      {showFailedQueueModal && (
+        <div className="modal-backdrop" onClick={() => setShowFailedQueueModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <span className="modal-title">
+                {t('Failed Offline Sales', 'စာရင်းမသွင်းနိုင်သေးသော အော့ဖ်လိုင်းအရောင်းများ')} ({failedSales.length})
+              </span>
+              <button
+                className="btn btn-ghost btn-icon"
+                type="button"
+                onClick={() => setShowFailedQueueModal(false)}
+              >
+                <X size={16} strokeWidth={1.75} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
+              {failedSales.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-state-title">{t('No failed sales', 'မအောင်မြင်သောအရောင်း မရှိပါ')}</div>
+                </div>
+              ) : (
+                failedSales.map((sale) => (
+                  <div
+                    key={sale.clientSaleId}
+                    style={{
+                      border: '1px solid var(--danger)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: 'var(--space-sm) var(--space-md)',
+                    }}
+                  >
+                    <div className="flex justify-between items-center" style={{ marginBottom: 4 }}>
+                      <strong style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' }}>
+                        {sale.previewReceipt.invoiceNumber}
+                      </strong>
+                      <strong style={{ color: 'var(--primary)' }}>
+                        {formatCurrency(sale.previewReceipt.totalAmount)}
+                      </strong>
+                    </div>
+                    <div style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)', marginBottom: 8 }}>
+                      {sale.errorMessage}
+                    </div>
+                    <div className="flex gap-xs">
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => {
+                          retryFailedSale(sale.clientSaleId);
+                          void handleRunQueueSync();
+                        }}
+                      >
+                        {t('Retry Sync', 'ထပ်မံစာရင်းသွင်းရန်')}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ color: 'var(--danger)' }}
+                        onClick={() => discardFailedSale(sale.clientSaleId)}
+                      >
+                        {t('Discard', 'ဖယ်ရှားရန်')}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Payment Modal */}
       {showPayment && (
         <PaymentModal
@@ -786,7 +921,7 @@ export default function POSClient({
           }}
           onSuccess={handlePaymentSuccess}
           taxRate={taxRate}
-          activePromotions={initialPromotions}
+          activePromotions={activePromotions}
           hasOpenShift={hasOpenShift}
           autoFocusCustomer={focusPaymentCustomer}
         />

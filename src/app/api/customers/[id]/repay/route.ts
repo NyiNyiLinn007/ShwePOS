@@ -54,19 +54,26 @@ export async function POST(
         );
       }
 
+      // Atomically decrement creditBalance with gte guard (prevents concurrent negative balance race)
+      const updated = await tx.customer.updateMany({
+        where: { id: customer.id, creditBalance: { gte: amount } },
+        data: { creditBalance: { decrement: amount } },
+      });
+      if (updated.count === 0) {
+        throw new ApiError(
+          `Repayment amount (${amount}) exceeds current outstanding balance`,
+          409
+        );
+      }
+
+      // Only record cash PAID_IN into the acting user's OWN open register (never hijack another cashier's drawer)
       let activeShiftId: string | null = null;
       if (method === 'CASH') {
-        const openShift =
-          (await tx.shift.findFirst({
-            where: { userId: user.id, status: 'OPEN' },
-            select: { id: true },
-            orderBy: { openedAt: 'desc' },
-          })) ??
-          (await tx.shift.findFirst({
-            where: { status: 'OPEN' },
-            select: { id: true },
-            orderBy: { openedAt: 'desc' },
-          }));
+        const openShift = await tx.shift.findFirst({
+          where: { userId: user.id, status: 'OPEN' },
+          select: { id: true },
+          orderBy: { openedAt: 'desc' },
+        });
 
         if (openShift) {
           activeShiftId = openShift.id;
@@ -95,11 +102,8 @@ export async function POST(
         },
       });
 
-      const updatedCustomer = await tx.customer.update({
+      const updatedCustomer = await tx.customer.findUniqueOrThrow({
         where: { id: customer.id },
-        data: {
-          creditBalance: { decrement: amount },
-        },
       });
 
       // FIFO settle oldest unpaid credit sales so Sale.dueAmount stays synced with creditBalance

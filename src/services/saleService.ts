@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import { ApiError, AuthUser } from '@/lib/apiAuth';
 import { CreateSaleInput, UpdateSaleStatusInput } from '@/lib/validations';
 import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
+import { calculateLineAmounts, calculateOrderTotals, roundMmk } from '@/lib/saleCalculator';
 import { logAudit } from '@/services/auditService';
 import { evaluateBestPromotion, type EvaluablePromotion } from '@/lib/promotionEngine';
 import {
@@ -58,8 +59,10 @@ export interface ListSalesFilters {
 }
 
 export async function listSales(filters: ListSalesFilters, user: AuthUser) {
-  const page = Math.max(1, filters.page ?? 1);
-  const limit = Math.min(100, Math.max(1, filters.limit ?? 50));
+  const safePage = Number.isFinite(filters.page) ? Number(filters.page) : 1;
+  const safeLimit = Number.isFinite(filters.limit) ? Number(filters.limit) : 50;
+  const page = Math.max(1, Math.floor(safePage));
+  const limit = Math.min(500, Math.max(1, Math.floor(safeLimit)));
 
   const where: Record<string, unknown> = {};
   if (user.role === 'CASHIER') {
@@ -252,6 +255,8 @@ export async function createSale(
           } | null = null;
 
           if (customerId) {
+            // Lock Customer row to prevent concurrent loyalty double-spend or credit limit breach
+            await tx.$executeRaw`SELECT 1 FROM "Customer" WHERE "id" = ${customerId} FOR UPDATE`;
             const cust = await tx.customer.findUnique({
               where: { id: customerId },
               select: {
@@ -350,28 +355,27 @@ export async function createSale(
             }
 
             const sellingPrice =
-              item.unitPrice !== undefined ? roundMoney(item.unitPrice) : catalogPrice;
-            if (sellingPrice !== catalogPrice) {
+              item.unitPrice !== undefined ? roundMmk(item.unitPrice) : roundMmk(catalogPrice);
+            if (sellingPrice !== roundMmk(catalogPrice)) {
               priceOverrides.push({
                 productId: product.id,
                 productName: product.name,
                 unit: activeUnitLabel,
-                catalogPrice,
+                catalogPrice: roundMmk(catalogPrice),
                 overridePrice: sellingPrice,
                 costPrice: effectiveCost,
                 belowCost: effectiveCost > 0 && sellingPrice < effectiveCost,
               });
             }
 
-            const itemSubtotal = roundMoney(sellingPrice * qty);
-            const itemDiscount = roundMoney(Math.min(item.discount || 0, itemSubtotal));
-            if (itemDiscount < 0) {
+            if ((item.discount || 0) < 0) {
               throw new ApiError('Discount cannot be negative', 400);
             }
-            const itemTotal = roundMoney(itemSubtotal - itemDiscount);
+            const { gross: itemSubtotal, discount: itemDiscount, total: itemTotal } =
+              calculateLineAmounts(sellingPrice, qty, item.discount || 0);
 
-            subtotal = roundMoney(subtotal + itemSubtotal);
-            totalDiscount = roundMoney(totalDiscount + itemDiscount);
+            subtotal = roundMmk(subtotal + itemSubtotal);
+            totalDiscount = roundMmk(totalDiscount + itemDiscount);
 
             saleItemsData.push({
               productId: item.productId,
@@ -392,10 +396,10 @@ export async function createSale(
 
           const totalItemDiscount = totalDiscount;
           const maxRemainingAfterItem = Math.max(0, subtotal - totalItemDiscount);
-          const cartDiscountAmount = roundMoney(Math.min(cartDiscount || 0, maxRemainingAfterItem));
+          const cartDiscountAmount = roundMmk(Math.min(cartDiscount || 0, maxRemainingAfterItem));
           const maxRemainingAfterCart = Math.max(0, maxRemainingAfterItem - cartDiscountAmount);
 
-          // Server-side Best Single Promotion evaluation
+          // Server-side Best Single Promotion evaluation (integer MMK rounding)
           const nowTs = new Date();
           const activePromosRaw = await tx.promotion.findMany({
             where: {
@@ -429,23 +433,38 @@ export async function createSale(
             unitPrice: si.unitPrice,
             lineTotal: si.total,
           }));
-          const promoEval = evaluateBestPromotion(promoLines, evaluablePromos, promotionCode, nowTs);
+          const promoEval = evaluateBestPromotion(
+            promoLines,
+            evaluablePromos,
+            promotionCode,
+            nowTs,
+            cartDiscountAmount
+          );
           const appliedPromo = promoEval.best?.promotion ?? null;
           const promotionDiscount = appliedPromo
-            ? roundMoney(Math.min(promoEval.best!.discountAmount, maxRemainingAfterCart))
+            ? roundMmk(Math.min(promoEval.best!.discountAmount, maxRemainingAfterCart))
             : 0;
 
           const maxRemainingAfterPromo = Math.max(0, maxRemainingAfterCart - promotionDiscount);
-          const loyaltyDiscountAmount =
-            pointsRedeemed > 0
-              ? roundMoney(Math.min(pointsRedeemed * loyaltyRedeemRate, maxRemainingAfterPromo))
+          // Clamp redeemed points to what can actually produce discount so excess points are never burned
+          const effectivePointsRedeemed =
+            pointsRedeemed > 0 && loyaltyRedeemRate > 0
+              ? Math.min(pointsRedeemed, Math.floor(maxRemainingAfterPromo / loyaltyRedeemRate))
               : 0;
-          const effectiveDiscount = roundMoney(
-            totalItemDiscount + cartDiscountAmount + promotionDiscount + loyaltyDiscountAmount
-          );
-          const discountedSubtotal = roundMoney(Math.max(0, subtotal - effectiveDiscount));
-          const taxAmount = roundMoney(discountedSubtotal * (taxRate / 100));
-          const totalAmount = roundMoney(discountedSubtotal + taxAmount);
+          const rawLoyaltyDiscount =
+            effectivePointsRedeemed > 0 ? roundMmk(effectivePointsRedeemed * loyaltyRedeemRate) : 0;
+
+          const orderTotals = calculateOrderTotals({
+            subtotal,
+            itemDiscountTotal: totalItemDiscount,
+            cartDiscount: cartDiscountAmount,
+            promotionDiscount,
+            loyaltyDiscount: rawLoyaltyDiscount,
+            taxRate,
+          });
+          const effectiveDiscount = orderTotals.effectiveDiscount;
+          const taxAmount = orderTotals.taxAmount;
+          const totalAmount = orderTotals.totalAmount;
 
           const normalizedLegs: Array<{
             method: 'CASH' | 'CARD' | 'MOBILE_BANKING' | 'CREDIT';
@@ -466,30 +485,30 @@ export async function createSale(
             let cashSum = 0;
 
             for (const leg of inputPayments) {
-              const amt = roundMoney(leg.amount);
+              const amt = roundMmk(leg.amount);
               const ref = leg.reference?.trim() || null;
               if ((leg.method === 'CARD' || leg.method === 'MOBILE_BANKING') && !ref) {
                 throw new ApiError(`Payment reference is required for ${leg.method} leg`, 400);
               }
               if (leg.method === 'CREDIT') {
-                creditSum = roundMoney(creditSum + amt);
+                creditSum = roundMmk(creditSum + amt);
               } else {
-                nonCreditSum = roundMoney(nonCreditSum + amt);
+                nonCreditSum = roundMmk(nonCreditSum + amt);
                 if (leg.method === 'CASH') {
-                  cashSum = roundMoney(cashSum + amt);
+                  cashSum = roundMmk(cashSum + amt);
                 }
               }
               normalizedLegs.push({ method: leg.method, amount: amt, reference: ref });
             }
 
-            const totalCovered = roundMoney(nonCreditSum + creditSum);
+            const totalCovered = roundMmk(nonCreditSum + creditSum);
             if (totalCovered < totalAmount) {
               throw new ApiError(
                 `Split payments (${totalCovered}) do not cover total (${totalAmount})`,
                 400
               );
             }
-            const excess = roundMoney(totalCovered - totalAmount);
+            const excess = roundMmk(totalCovered - totalAmount);
             if (excess > cashSum) {
               throw new ApiError('Non-cash split payment legs cannot exceed the sale total', 400);
             }
@@ -500,9 +519,9 @@ export async function createSale(
             if (!customerRecord) {
               throw new ApiError('Customer is required for credit sales', 400);
             }
-            const upfrontCash = roundMoney(Math.min(paidAmount || 0, totalAmount));
+            const upfrontCash = roundMmk(Math.min(paidAmount || 0, totalAmount));
             finalPaid = upfrontCash;
-            dueAmount = roundMoney(totalAmount - upfrontCash);
+            dueAmount = roundMmk(totalAmount - upfrontCash);
             changeAmount = 0;
             if (upfrontCash > 0) {
               normalizedLegs.push({ method: 'CASH', amount: upfrontCash, reference: null });
@@ -515,19 +534,27 @@ export async function createSale(
               });
             }
           } else if (paymentMethod === 'CASH') {
-            if (paidAmount < totalAmount) {
+            const tendered = roundMmk(paidAmount);
+            if (tendered < totalAmount) {
               throw new ApiError(
-                `Insufficient payment. Total: ${totalAmount}, Paid: ${paidAmount}`,
+                `Insufficient payment. Total: ${totalAmount}, Paid: ${tendered}`,
                 400
               );
             }
-            finalPaid = roundMoney(paidAmount);
-            changeAmount = roundMoney(paidAmount - totalAmount);
+            finalPaid = tendered;
+            changeAmount = roundMmk(tendered - totalAmount);
             dueAmount = 0;
             normalizedLegs.push({ method: 'CASH', amount: totalAmount, reference: null });
           } else {
             if (!cleanPaymentReference) {
               throw new ApiError('Payment reference is required for non-cash payments', 400);
+            }
+            // Reject stale checkout totals (e.g., if a limited promotion expired mid-checkout)
+            if (paidAmount > 0 && Math.abs(roundMmk(paidAmount) - totalAmount) > 0) {
+              throw new ApiError(
+                `Order total changed to ${totalAmount} K (submitted ${roundMmk(paidAmount)} K). Please verify total and retry.`,
+                409
+              );
             }
             finalPaid = totalAmount;
             changeAmount = 0;
@@ -546,7 +573,7 @@ export async function createSale(
             if (
               customerRecord.creditLimit !== null &&
               customerRecord.creditLimit > 0 &&
-              roundMoney(customerRecord.creditBalance + dueAmount) > customerRecord.creditLimit
+              roundMmk(customerRecord.creditBalance + dueAmount) > customerRecord.creditLimit
             ) {
               throw new ApiError(
                 `Credit limit exceeded. Limit: ${customerRecord.creditLimit}, Current balance: ${customerRecord.creditBalance}, New credit: ${dueAmount}`,
@@ -557,10 +584,10 @@ export async function createSale(
 
           const grossCashLegs = normalizedLegs
             .filter((l) => l.method === 'CASH')
-            .reduce((sum, l) => roundMoney(sum + l.amount), 0);
+            .reduce((sum, l) => roundMmk(sum + l.amount), 0);
           const netCashCollected =
             paymentMethod === 'SPLIT'
-              ? roundMoney(Math.max(0, grossCashLegs - changeAmount))
+              ? roundMmk(Math.max(0, grossCashLegs - changeAmount))
               : grossCashLegs;
 
           const openShift =
@@ -618,13 +645,62 @@ export async function createSale(
             });
           }
 
+          // Atomic Promotion usageLimit claim inside transaction (prevents TOCTOU overshoot)
+          if (appliedPromo) {
+            if (appliedPromo.usageLimit !== null && appliedPromo.usageLimit !== undefined) {
+              const claimed = await tx.promotion.updateMany({
+                where: {
+                  id: appliedPromo.id,
+                  isActive: true,
+                  usedCount: { lt: appliedPromo.usageLimit },
+                },
+                data: { usedCount: { increment: 1 } },
+              });
+              if (claimed.count === 0) {
+                throw new ApiError(
+                  `Promotion "${appliedPromo.name}" has reached its usage limit. Please review total and retry.`,
+                  409
+                );
+              }
+            } else {
+              await tx.promotion.update({
+                where: { id: appliedPromo.id },
+                data: { usedCount: { increment: 1 } },
+              });
+            }
+          }
+
           const pointsEarned =
             customerRecord && loyaltyEnabled
               ? Math.floor(Math.max(0, totalAmount - dueAmount) / loyaltyEarnRate)
               : 0;
 
+          // Compute paymentStatus from NET paid (after change) rather than gross tendered
+          const netPaidAtCheckout = roundMmk(Math.max(0, finalPaid - changeAmount));
           const paymentStatus =
-            dueAmount > 0 ? (finalPaid > 0 ? 'PARTIAL' : 'PENDING') : 'PAID';
+            dueAmount > 0 ? (netPaidAtCheckout > 0 ? 'PARTIAL' : 'PENDING') : 'PAID';
+
+          // Allocate change sequentially across CASH split legs so multiple CASH legs never double-subtract change
+          let remainingSplitChange = paymentMethod === 'SPLIT' ? changeAmount : 0;
+          const persistedPayments = normalizedLegs
+            .map((leg) => {
+              let netAmount = leg.amount;
+              if (paymentMethod === 'SPLIT' && leg.method === 'CASH' && remainingSplitChange > 0) {
+                const deducted = Math.min(leg.amount, remainingSplitChange);
+                netAmount = roundMmk(leg.amount - deducted);
+                remainingSplitChange = roundMmk(remainingSplitChange - deducted);
+              }
+              return {
+                customerId: customerId || null,
+                userId: user.id,
+                shiftId: leg.method === 'CASH' ? openShift?.id ?? null : null,
+                method: leg.method,
+                amount: netAmount,
+                reference: leg.reference,
+                type: 'CHECKOUT' as const,
+              };
+            })
+            .filter((leg) => leg.amount > 0);
 
           const newSale = await tx.sale.create({
             data: {
@@ -640,7 +716,7 @@ export async function createSale(
               dueAmount,
               changeAmount,
               pointsEarned,
-              pointsRedeemed,
+              pointsRedeemed: effectivePointsRedeemed,
               promotionId: appliedPromo?.id ?? null,
               promotionCode: appliedPromo?.code ?? null,
               promotionDiscount,
@@ -663,18 +739,7 @@ export async function createSale(
                 })),
               },
               payments: {
-                create: normalizedLegs.map((leg) => ({
-                  customerId: customerId || null,
-                  userId: user.id,
-                  shiftId: leg.method === 'CASH' ? openShift?.id ?? null : null,
-                  method: leg.method,
-                  amount:
-                    leg.method === 'CASH' && paymentMethod === 'SPLIT'
-                      ? roundMoney(Math.max(0, leg.amount - changeAmount))
-                      : leg.amount,
-                  reference: leg.reference,
-                  type: 'CHECKOUT',
-                })),
+                create: persistedPayments,
               },
             },
             include: saleResponseInclude,
@@ -696,7 +761,7 @@ export async function createSale(
           }
 
           if (customerRecord) {
-            const netPointsDelta = pointsEarned - pointsRedeemed;
+            const netPointsDelta = pointsEarned - effectivePointsRedeemed;
             await tx.customer.update({
               where: { id: customerRecord.id },
               data: {
@@ -720,18 +785,21 @@ export async function createSale(
             });
           }
 
-          if (appliedPromo) {
-            await tx.promotion.update({
-              where: { id: appliedPromo.id },
-              data: { usedCount: { increment: 1 } },
-            });
-          }
-
           if (quotationId) {
-            await tx.quotation.updateMany({
-              where: { id: quotationId, status: { not: 'CONVERTED' } },
+            const converted = await tx.quotation.updateMany({
+              where: {
+                id: quotationId,
+                status: { in: ['DRAFT', 'SENT', 'ACCEPTED'] },
+                validUntil: { gte: nowTs },
+              },
               data: { status: 'CONVERTED', convertedSaleId: newSale.id },
             });
+            if (converted.count === 0) {
+              throw new ApiError(
+                'Quotation is expired, cancelled, or already converted to a sale',
+                409
+              );
+            }
           }
 
           if (priceOverrides.length > 0) {
@@ -783,17 +851,29 @@ export async function refundOrVoidSale(
 ) {
   const { status: requestedStatus, reason, refundMethod, items: requestedItems } = input;
 
+  if (
+    requestedStatus === 'PARTIALLY_REFUNDED' &&
+    (!Array.isArray(requestedItems) || requestedItems.length === 0)
+  ) {
+    throw new ApiError('Partial refund requires at least one item to refund', 400);
+  }
+
   const updatedSale = await prisma.$transaction(
     async (tx) => {
+      // Lock the Sale row to serialize concurrent partial refunds / voids
+      await tx.$executeRaw`SELECT 1 FROM "Sale" WHERE "id" = ${id} FOR UPDATE`;
+
       const existingSale = await tx.sale.findUnique({
         where: { id },
         include: {
-          items: true,
+          items: {
+            include: {
+              product: { select: { unit: true, name: true } },
+            },
+          },
           payments: true,
           cashDrawerMovements: {
-            where: { type: 'CASH_SALE' },
-            select: { shiftId: true },
-            take: 1,
+            select: { shiftId: true, type: true, amount: true },
           },
         },
       });
@@ -821,15 +901,28 @@ export async function refundOrVoidSale(
 
       if (isPartialRequest) {
         const itemMap = new Map(existingSale.items.map((i) => [i.id, i]));
+        // Aggregate duplicate saleItemId entries to prevent double-refund / phantom stock exploit
+        const aggregatedReq = new Map<string, number>();
         for (const reqItem of requestedItems!) {
-          const saleItem = itemMap.get(reqItem.saleItemId);
+          const prev = aggregatedReq.get(reqItem.saleItemId) ?? 0;
+          aggregatedReq.set(reqItem.saleItemId, roundQuantity(prev + roundQuantity(reqItem.quantity)));
+        }
+
+        for (const [saleItemId, reqQty] of aggregatedReq) {
+          const saleItem = itemMap.get(saleItemId);
           if (!saleItem) {
-            throw new ApiError(`Sale item not found: ${reqItem.saleItemId}`, 400);
+            throw new ApiError(`Sale item not found: ${saleItemId}`, 400);
+          }
+          const activeUnitLabel = saleItem.unitName ?? saleItem.product.unit;
+          if (!isFractionalUnit(activeUnitLabel) && !Number.isInteger(reqQty)) {
+            throw new ApiError(
+              `Fractional refund quantity (${reqQty}) is not allowed for unit '${activeUnitLabel}' on ${saleItem.product.name}`,
+              400
+            );
           }
           const origQty = toNumber(saleItem.quantity);
           const alreadyRefunded = toNumber(saleItem.refundedQuantity);
           const remainingQty = roundQuantity(origQty - alreadyRefunded);
-          const reqQty = roundQuantity(reqItem.quantity);
           if (reqQty <= 0 || reqQty > remainingQty) {
             throw new ApiError(
               `Invalid refund quantity (${reqQty}) for item. Remaining refundable: ${remainingQty}`,
@@ -838,7 +931,7 @@ export async function refundOrVoidSale(
           }
           const unitEffective =
             origQty > 0 ? toNumber(saleItem.total) / origQty : toNumber(saleItem.unitPrice);
-          const lineRefundAmount = roundMoney(unitEffective * reqQty);
+          const lineRefundAmount = roundMmk(unitEffective * reqQty);
           refundLines.push({ saleItem, refundQty: reqQty, lineRefundAmount });
         }
       } else {
@@ -849,7 +942,7 @@ export async function refundOrVoidSale(
           if (remainingQty > 0) {
             const unitEffective =
               origQty > 0 ? toNumber(saleItem.total) / origQty : toNumber(saleItem.unitPrice);
-            const lineRefundAmount = roundMoney(unitEffective * remainingQty);
+            const lineRefundAmount = roundMmk(unitEffective * remainingQty);
             refundLines.push({ saleItem, refundQty: remainingQty, lineRefundAmount });
           }
         }
@@ -880,23 +973,48 @@ export async function refundOrVoidSale(
         return sum + (orig > 0 ? (toNumber(i.total) * rem) / orig : 0);
       }, 0);
       const rawLinesRefund = refundLines.reduce((sum, l) => sum + l.lineRefundAmount, 0);
-      const saleTotalNumber = toNumber(existingSale.totalAmount);
+      const saleTotalNumber = roundMmk(toNumber(existingSale.totalAmount));
       const refundAmount = allItemsFullyRefunded
         ? saleTotalNumber
         : currentSaleSubtotal > 0
-          ? roundMoney(
+          ? roundMmk(
               Math.min(saleTotalNumber, (rawLinesRefund / currentSaleSubtotal) * saleTotalNumber)
             )
-          : roundMoney(Math.min(saleTotalNumber, rawLinesRefund));
+          : roundMmk(Math.min(saleTotalNumber, rawLinesRefund));
 
-      const isCashReversal =
-        existingSale.paymentMethod === 'CASH' ||
-        refundMethod === 'CASH' ||
-        (existingSale.paymentMethod === 'SPLIT' &&
-          existingSale.payments.some((p) => p.method === 'CASH'));
+      const currentDue = roundMmk(toNumber(existingSale.dueAmount));
+      const debtReduction = roundMmk(Math.min(currentDue, refundAmount));
+      const nonDebtRefund = roundMmk(Math.max(0, refundAmount - debtReduction));
+
+      // Calculate exact cash drawer outflow:
+      // - refundMethod === 'CASH' => full non-debt refund leaves cash drawer
+      // - refundMethod === 'ORIGINAL' => CASH sales refund full non-debt; SPLIT / CREDIT (upfront cash)
+      //   refund only up to remaining net CASH leg collected on this sale
+      const totalCashPaidOnSale = roundMmk(
+        existingSale.payments
+          .filter((p) => p.method === 'CASH')
+          .reduce((sum, p) => sum + toNumber(p.amount), 0)
+      );
+      const priorCashDrawerRefunds = roundMmk(
+        existingSale.cashDrawerMovements
+          .filter((m) => m.type === 'REFUND' || m.type === 'VOID')
+          .reduce((sum, m) => sum + Math.abs(toNumber(m.amount)), 0)
+      );
+      const remainingCashLeg = Math.max(0, roundMmk(totalCashPaidOnSale - priorCashDrawerRefunds));
+
+      const cashRefundOut =
+        nonDebtRefund <= 0
+          ? 0
+          : refundMethod === 'CASH'
+            ? nonDebtRefund
+            : existingSale.paymentMethod === 'CASH'
+              ? nonDebtRefund
+              : existingSale.paymentMethod === 'SPLIT' || existingSale.paymentMethod === 'CREDIT'
+                ? roundMmk(Math.min(nonDebtRefund, remainingCashLeg))
+                : 0;
 
       let targetShiftId: string | null = null;
-      if (isCashReversal) {
+      if (cashRefundOut > 0) {
         const openShift =
           (await tx.shift.findFirst({
             where: { userId: user.id, status: 'OPEN' },
@@ -929,33 +1047,56 @@ export async function refundOrVoidSale(
 
       const newTotalAmount =
         finalStatus === 'PARTIALLY_REFUNDED'
-          ? roundMoney(Math.max(0, saleTotalNumber - refundAmount))
+          ? roundMmk(Math.max(0, saleTotalNumber - refundAmount))
           : existingSale.totalAmount;
+      const nextDue = roundMmk(Math.max(0, currentDue - debtReduction));
 
-      const currentDue = toNumber(existingSale.dueAmount);
-      const debtReduction = roundMoney(Math.min(currentDue, refundAmount));
-      const cashRefundOut = roundMoney(Math.max(0, refundAmount - debtReduction));
+      // Compute proportional loyalty point reversals and decrement remaining reversible points on Sale
+      const refundRatio =
+        saleTotalNumber > 0
+          ? Math.min(1, refundAmount / saleTotalNumber)
+          : allItemsFullyRefunded
+            ? 1
+            : 0;
+      const pointsEarnedToReverse =
+        existingSale.customerId && existingSale.pointsEarned > 0
+          ? allItemsFullyRefunded || finalStatus === 'VOIDED'
+            ? existingSale.pointsEarned
+            : Math.min(existingSale.pointsEarned, Math.floor(existingSale.pointsEarned * refundRatio))
+          : 0;
+      const pointsRedeemedToRestore =
+        existingSale.customerId && existingSale.pointsRedeemed > 0
+          ? allItemsFullyRefunded || finalStatus === 'VOIDED'
+            ? existingSale.pointsRedeemed
+            : Math.min(
+                existingSale.pointsRedeemed,
+                Math.floor(existingSale.pointsRedeemed * refundRatio)
+              )
+          : 0;
 
-      const transitioned = await tx.sale.updateMany({
-        where: { id, status: existingSale.status },
+      const nextPaymentStatus =
+        finalStatus === 'REFUNDED' || finalStatus === 'VOIDED'
+          ? 'REVERSED'
+          : nextDue <= 0
+            ? 'PAID'
+            : existingSale.paymentStatus;
+
+      await tx.sale.update({
+        where: { id },
         data: {
           status: finalStatus,
           totalAmount: newTotalAmount,
-          dueAmount: roundMoney(Math.max(0, currentDue - debtReduction)),
-          paymentStatus:
-            finalStatus === 'REFUNDED' || finalStatus === 'VOIDED'
-              ? 'REVERSED'
-              : existingSale.paymentStatus,
+          dueAmount: nextDue,
+          paymentStatus: nextPaymentStatus,
+          ...(pointsEarnedToReverse > 0 && {
+            pointsEarned: Math.max(0, existingSale.pointsEarned - pointsEarnedToReverse),
+          }),
+          ...(pointsRedeemedToRestore > 0 && {
+            pointsRedeemed: Math.max(0, existingSale.pointsRedeemed - pointsRedeemedToRestore),
+          }),
           notes: updatedNotes.slice(0, 500),
         },
       });
-
-      if (transitioned.count === 0) {
-        throw new ApiError(
-          'Sale was modified by another request. Please refresh and try again.',
-          409
-        );
-      }
 
       await tx.saleAdjustment.create({
         data: {
@@ -969,7 +1110,12 @@ export async function refundOrVoidSale(
                 : 'REFUND',
           reason,
           amount: refundAmount,
-          paymentMethod: refundMethod === 'CASH' ? 'CASH' : existingSale.paymentMethod,
+          paymentMethod:
+            refundMethod === 'CASH'
+              ? 'CASH'
+              : cashRefundOut > 0 && existingSale.paymentMethod !== 'CASH'
+                ? 'CASH'
+                : existingSale.paymentMethod,
           paymentReversalStatus: 'COMPLETED',
         },
       });
@@ -1013,26 +1159,32 @@ export async function refundOrVoidSale(
       }
 
       if (existingSale.customerId) {
-        let safeDebtDecrement = 0;
-        if (debtReduction > 0) {
-          const cust = await tx.customer.findUnique({
-            where: { id: existingSale.customerId },
-            select: { creditBalance: true },
-          });
-          const currentBalance = Math.max(0, toNumber(cust?.creditBalance));
-          safeDebtDecrement = roundMoney(Math.min(currentBalance, debtReduction));
-        }
-
-        await tx.customer.update({
+        await tx.$executeRaw`SELECT 1 FROM "Customer" WHERE "id" = ${existingSale.customerId} FOR UPDATE`;
+        const cust = await tx.customer.findUnique({
           where: { id: existingSale.customerId },
-          data: {
-            totalPurchases: { decrement: refundAmount },
-            ...(safeDebtDecrement > 0 && { creditBalance: { decrement: safeDebtDecrement } }),
-          },
+          select: { creditBalance: true, totalPurchases: true, loyaltyPoints: true },
         });
+        if (cust) {
+          const currentBalance = Math.max(0, toNumber(cust.creditBalance));
+          const safeDebtDecrement = roundMmk(Math.min(currentBalance, debtReduction));
+          const nextTotalPurchases = roundMmk(Math.max(0, toNumber(cust.totalPurchases) - refundAmount));
+          const nextLoyaltyPoints = Math.max(
+            0,
+            cust.loyaltyPoints - pointsEarnedToReverse + pointsRedeemedToRestore
+          );
+
+          await tx.customer.update({
+            where: { id: existingSale.customerId },
+            data: {
+              totalPurchases: nextTotalPurchases,
+              creditBalance: roundMmk(Math.max(0, currentBalance - safeDebtDecrement)),
+              loyaltyPoints: nextLoyaltyPoints,
+            },
+          });
+        }
       }
 
-      if (isCashReversal && targetShiftId && cashRefundOut > 0) {
+      if (cashRefundOut > 0 && targetShiftId) {
         await tx.cashDrawerMovement.create({
           data: {
             shiftId: targetShiftId,
@@ -1042,6 +1194,17 @@ export async function refundOrVoidSale(
             amount: -cashRefundOut,
             reason: `${finalStatus}: ${reason} (Invoice: ${existingSale.invoiceNumber})`,
           },
+        });
+      }
+
+      // Release Promotion usage slot when an entire sale is voided or fully refunded
+      if (
+        (finalStatus === 'VOIDED' || finalStatus === 'REFUNDED') &&
+        existingSale.promotionId
+      ) {
+        await tx.promotion.updateMany({
+          where: { id: existingSale.promotionId, usedCount: { gt: 0 } },
+          data: { usedCount: { decrement: 1 } },
         });
       }
 

@@ -10,12 +10,14 @@ import { authConfig } from '@/lib/auth.config';
 import { loginCredentialsSchema } from '@/lib/validations';
 import {
   consumeRateLimit,
+  getClientIp,
   normalizeRateLimitPart,
   resetRateLimit,
 } from '@/lib/rateLimit';
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_EMAIL_LIMIT = 10;
+const LOGIN_IP_EMAIL_LIMIT = 10;
+const LOGIN_IP_LIMIT = 40;
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   ...authConfig,
@@ -27,7 +29,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: 'Password', type: 'password' },
         force: { label: 'Force', type: 'text' },
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
         const parsed = loginCredentialsSchema.safeParse({
           email: credentials?.email,
           password: credentials?.password,
@@ -38,13 +40,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
         const email = normalizeRateLimitPart(parsed.data.email);
         const password = parsed.data.password;
-        const emailKey = `login:email:${email}`;
-        const emailLimit = await consumeRateLimit(emailKey, {
-          limit: LOGIN_EMAIL_LIMIT,
-          windowMs: LOGIN_WINDOW_MS,
-        });
+        const clientIp = request?.headers ? getClientIp(request.headers) : 'unknown';
 
-        if (!emailLimit.allowed) {
+        // Per-IP quota blocks credential stuffing/password spraying across emails,
+        // while composite IP+email quota prevents attackers from locking out an
+        // admin logging in from a different network/store IP.
+        const ipKey = `login:ip:${clientIp}`;
+        const ipEmailKey = `login:ip-email:${clientIp}:${email}`;
+        const [ipLimit, ipEmailLimit] = await Promise.all([
+          consumeRateLimit(ipKey, {
+            limit: LOGIN_IP_LIMIT,
+            windowMs: LOGIN_WINDOW_MS,
+          }),
+          consumeRateLimit(ipEmailKey, {
+            limit: LOGIN_IP_EMAIL_LIMIT,
+            windowMs: LOGIN_WINDOW_MS,
+          }),
+        ]);
+
+        if (!ipLimit.allowed || !ipEmailLimit.allowed) {
           return null;
         }
 
@@ -72,7 +86,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           },
         });
 
-        await resetRateLimit(emailKey);
+        await resetRateLimit(ipEmailKey);
 
         return {
           id: updated.id,

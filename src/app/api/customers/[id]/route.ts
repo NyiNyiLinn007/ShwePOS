@@ -60,10 +60,10 @@ export async function PUT(
 
     const { id } = await params;
     const parsed = updateCustomerSchema.parse(await request.json());
-    const name = parsed.name?.trim();
-    const phone = parsed.phone?.trim() || null;
-    const email = parsed.email?.trim() || null;
-    const address = parsed.address?.trim() || null;
+    const name = parsed.name !== undefined ? parsed.name.trim() : undefined;
+    const phone = parsed.phone !== undefined ? parsed.phone?.trim() || null : undefined;
+    const email = parsed.email !== undefined ? parsed.email?.trim() || null : undefined;
+    const address = parsed.address !== undefined ? parsed.address?.trim() || null : undefined;
 
     const existing = await prisma.customer.findUnique({ where: { id } });
     if (!existing) {
@@ -88,10 +88,10 @@ export async function PUT(
     const customer = await prisma.customer.update({
       where: { id },
       data: {
-        name: name || existing.name,
-        phone,
-        email,
-        address,
+        ...(name !== undefined && { name: name || existing.name }),
+        ...(phone !== undefined && { phone }),
+        ...(email !== undefined && { email }),
+        ...(address !== undefined && { address }),
         ...(parsed.creditLimit !== undefined && {
           creditLimit:
             parsed.creditLimit !== null && parsed.creditLimit > 0 ? parsed.creditLimit : null,
@@ -111,13 +111,16 @@ export async function DELETE(
 ) {
   try {
     await validateCsrf(_request);
-    await requireRole('MANAGER', 'ADMIN');
+    await requireRole('ADMIN');
 
     const { id } = await params;
 
     const existing = await prisma.customer.findUnique({
       where: { id },
-      include: { sales: { select: { id: true }, take: 1 } },
+      include: {
+        sales: { select: { id: true }, take: 1 },
+        salePayments: { select: { id: true }, take: 1 },
+      },
     });
 
     if (!existing) {
@@ -127,9 +130,16 @@ export async function DELETE(
       );
     }
 
-    if (existing.sales.length > 0) {
+    if (
+      existing.sales.length > 0 ||
+      Number(existing.creditBalance) > 0 ||
+      existing.salePayments.length > 0
+    ) {
       return NextResponse.json(
-        { error: 'Cannot delete customer with existing sales. Consider updating their information instead.' },
+        {
+          error:
+            'Cannot delete customer with existing sales, repayments, or outstanding credit balance.',
+        },
         { status: 400 }
       );
     }

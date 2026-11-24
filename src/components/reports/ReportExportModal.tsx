@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settingsStore';
 import { formatCurrency, formatDateTime } from '@/lib/utils';
+import { escapeCsvCell } from '@/lib/csv';
 import { getPaymentMethodLabel } from '@/lib/saleHelpers';
 import { printElementById, type PrintPaperSize } from '@/lib/print';
 import { Printer, X, FileText } from '@/components/ui/Icons';
@@ -42,10 +43,6 @@ export interface PrintableReportData {
     profit: number;
     profitMargin: number;
   }>;
-}
-
-function escapeCsvCell(val: string | number): string {
-  return `"${String(val).replace(/"/g, '""')}"`;
 }
 
 export function downloadReportCsv(

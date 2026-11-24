@@ -35,9 +35,11 @@ const ITEMS_PER_PAGE = 12;
 
 interface CustomersClientProps {
   initialCustomers: CustomerData[];
+  userRole?: string;
 }
 
-export function CustomersClient({ initialCustomers }: CustomersClientProps) {
+export function CustomersClient({ initialCustomers, userRole = 'ADMIN' }: CustomersClientProps) {
+  const isAdmin = userRole === 'ADMIN';
   const router = useRouter();
   const { addToast } = useToast();
   const { language, t } = useI18n();
@@ -311,16 +313,38 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
           ? data.newCreditBalance
           : Math.max(0, (repayTarget.creditBalance ?? 0) - amt);
 
+      const newRepaymentEntry = {
+        id: data.payment?.id || `PAY-${Date.now()}`,
+        amount: amt,
+        method: repayMethod,
+        reference: repayReference.trim() || null,
+        notes: repayNotes.trim() || null,
+        createdAt: data.payment?.createdAt || new Date().toISOString(),
+      };
+
       setCustomers((prev) =>
         prev.map((c) =>
-          c.id === repayTarget.id ? { ...c, creditBalance: updatedBalance } : c
+          c.id === repayTarget.id
+            ? {
+                ...c,
+                creditBalance: updatedBalance,
+                repayments: [newRepaymentEntry, ...(c.repayments ?? [])],
+              }
+            : c
         )
       );
       if (selectedCustomer?.id === repayTarget.id) {
         setSelectedCustomer((prev) =>
-          prev ? { ...prev, creditBalance: updatedBalance } : null
+          prev
+            ? {
+                ...prev,
+                creditBalance: updatedBalance,
+                repayments: [newRepaymentEntry, ...(prev.repayments ?? [])],
+              }
+            : null
         );
       }
+      router.refresh();
 
       addToast(
         t('Debt repayment recorded successfully', 'အကြွေးဆပ်မှု မှတ်တမ်းတင်ပြီးပါပြီ'),
@@ -661,14 +685,16 @@ export function CustomersClient({ initialCustomers }: CustomersClientProps) {
                           >
                             <Pencil size={15} strokeWidth={1.75} />
                           </button>
-                          <button
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => setDeleteTarget(customer)}
-                            title={t('Delete customer', 'ဖောက်သည်ဖျက်ရန်')}
-                            style={{ color: 'var(--danger)' }}
-                          >
-                            <Trash2 size={15} strokeWidth={1.75} />
-                          </button>
+                          {isAdmin && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setDeleteTarget(customer)}
+                              title={t('Delete customer', 'ဖောက်သည်ဖျက်ရန်')}
+                              style={{ color: 'var(--danger)' }}
+                            >
+                              <Trash2 size={15} strokeWidth={1.75} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

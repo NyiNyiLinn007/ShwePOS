@@ -1,5 +1,6 @@
 import { PAYMENT_METHODS, SALE_STATUSES } from '@/lib/constants';
-import { formatDateTime } from '@/lib/utils';
+import { formatDateTime, getMyanmarDateKey } from '@/lib/utils';
+import { escapeCsvCell } from '@/lib/csv';
 import type { ReceiptData } from '@/components/pos/Receipt';
 
 export interface SaleProductRef {
@@ -138,11 +139,13 @@ export function buildReceiptDataFromSale(
           ? item.product.nameMm
           : item.product?.name || 'Item',
       quantity: Number(item.quantity),
+      refundedQuantity: Number(item.refundedQuantity || 0),
       unitPrice: Number(item.unitPrice),
       discount: Number(item.discount || 0),
       total: Number(item.total),
       unit: item.unitName || item.product?.unit,
     })),
+    status: sale.status,
     subtotal: Number(sale.subtotal),
     discountAmount: Number(sale.discountAmount),
     taxAmount: Number(sale.taxAmount),
@@ -177,12 +180,6 @@ export function downloadSalesCsv(sales: SaleRecord[]): void {
     'Payment Method',
     'Status',
   ];
-  const escapeCsv = (val: string | number) => {
-    const str = String(val ?? '');
-    return str.includes(',') || str.includes('"') || str.includes('\n')
-      ? `"${str.replace(/"/g, '""')}"`
-      : str;
-  };
   const rows = sales.map((s) => [
     s.invoiceNumber,
     formatDateTime(s.createdAt),
@@ -200,12 +197,12 @@ export function downloadSalesCsv(sales: SaleRecord[]): void {
   ]);
   const csvContent =
     '\uFEFF' +
-    [headers.map(escapeCsv).join(','), ...rows.map((r) => r.map(escapeCsv).join(','))].join('\n');
+    [headers.map(escapeCsvCell).join(','), ...rows.map((r) => r.map(escapeCsvCell).join(','))].join('\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `shwepos-sales-${new Date().toISOString().slice(0, 10)}.csv`;
+  link.download = `shwepos-sales-${getMyanmarDateKey()}.csv`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

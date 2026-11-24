@@ -139,6 +139,7 @@ export default function PaymentModal({
   const getCartDiscountAmount = useCartStore((s) => s.getCartDiscountAmount);
   const getTotal = useCartStore((s) => s.getTotal);
   const getItemCount = useCartStore((s) => s.getItemCount);
+  const activeCartCustomer = useCartStore((s) => s.activeCustomer);
 
   const businessName = useSettingsStore((s) => s.businessName);
   const businessNameMm = useSettingsStore((s) => s.businessNameMm);
@@ -168,8 +169,19 @@ export default function PaymentModal({
   const [error, setError] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
 
-  // Customer selection & quick creation
-  const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchResult | null>(null);
+  // Customer selection & quick creation (pre-populated if loaded from Quotation / Held Bill)
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerSearchResult | null>(() =>
+    activeCartCustomer
+      ? {
+          id: activeCartCustomer.id,
+          name: activeCartCustomer.name,
+          phone: activeCartCustomer.phone,
+          loyaltyPoints: activeCartCustomer.loyaltyPoints ?? 0,
+          creditBalance: activeCartCustomer.creditBalance ?? 0,
+          creditLimit: activeCartCustomer.creditLimit ?? null,
+        }
+      : null
+  );
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerResults, setCustomerResults] = useState<CustomerSearchResult[]>([]);
   const [showCustomerSearch, setShowCustomerSearch] = useState(false);
@@ -201,8 +213,8 @@ export default function PaymentModal({
         lineTotal: Math.max(0, gross - disc),
       };
     });
-    return evaluateBestPromotion(promoLines, activePromotions, promoCode);
-  }, [items, activePromotions, promoCode]);
+    return evaluateBestPromotion(promoLines, activePromotions, promoCode, new Date(), cartDiscountAmount);
+  }, [items, activePromotions, promoCode, cartDiscountAmount]);
 
   const promoDiscountAmount = Math.min(
     afterCartDiscount,
@@ -217,7 +229,9 @@ export default function PaymentModal({
           Math.floor(afterPromoDiscount / loyaltyRedeemRate)
         )
       : 0;
-  const safePointsRedeemed = Math.max(0, Math.min(pointsToRedeem, maxRedeemablePoints));
+  const safePointsRedeemed = Math.floor(
+    Math.max(0, Math.min(Number(pointsToRedeem) || 0, maxRedeemablePoints))
+  );
   const loyaltyDiscountAmount = Math.round(safePointsRedeemed * loyaltyRedeemRate);
   const discountAmount =
     itemDiscountTotal + cartDiscountAmount + promoDiscountAmount + loyaltyDiscountAmount;
@@ -283,11 +297,23 @@ export default function PaymentModal({
     language,
   ]);
 
-  const paidAmount = parseFloat(paidAmountStr) || 0;
-  const splitTotal = splitLegs.reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0);
+  const rawPaidNum = paidAmountStr.trim() === '' ? 0 : parseFloat(paidAmountStr);
+  const hasNegativePaidInput = Number.isFinite(rawPaidNum) && rawPaidNum < 0;
+  const paidAmount = Math.max(0, Number.isFinite(rawPaidNum) ? Math.round(rawPaidNum) : 0);
+  const hasNegativeSplitInput = splitLegs.some((l) => {
+    const v = parseFloat(l.amountStr);
+    return Number.isFinite(v) && v < 0;
+  });
+  const splitTotal = splitLegs.reduce((sum, l) => {
+    const v = parseFloat(l.amountStr);
+    return sum + (Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
+  }, 0);
   const splitCashTotal = splitLegs
     .filter((l) => l.method === 'CASH')
-    .reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0);
+    .reduce((sum, l) => {
+      const v = parseFloat(l.amountStr);
+      return sum + (Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
+    }, 0);
 
   const changeAmount =
     paymentMethod === 'CASH'
@@ -302,7 +328,10 @@ export default function PaymentModal({
       : paymentMethod === 'SPLIT'
         ? splitLegs
             .filter((l) => l.method === 'CREDIT')
-            .reduce((sum, l) => sum + (parseFloat(l.amountStr) || 0), 0)
+            .reduce((sum, l) => {
+              const v = parseFloat(l.amountStr);
+              return sum + (Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
+            }, 0)
         : 0;
 
   const roundUpAmounts = [
@@ -398,6 +427,7 @@ export default function PaymentModal({
     (paymentMethod === 'SPLIT' && splitCashTotal > 0);
 
   const canProcess = (() => {
+    if (hasNegativePaidInput || hasNegativeSplitInput) return false;
     if (requiresOpenShift && hasOpenShift === false) return false;
     if (paymentMethod === 'CASH') return paidAmount >= grandTotal;
     if (paymentMethod === 'CARD' || paymentMethod === 'MOBILE_BANKING') {
@@ -454,7 +484,7 @@ export default function PaymentModal({
       pointsRedeemed: safePointsRedeemed,
       clientSaleId,
       paymentReference:
-        paymentMethod === 'CARD' || paymentMethod === 'MOBILE_BANKING' || paymentMethod === 'CREDIT'
+        paymentMethod === 'CARD' || paymentMethod === 'MOBILE_BANKING'
           ? paymentReference.trim() || null
           : null,
       paidAmount: finalPaidAmount,
@@ -465,8 +495,11 @@ export default function PaymentModal({
               .filter((l) => (parseFloat(l.amountStr) || 0) > 0)
               .map((l) => ({
                 method: l.method,
-                amount: parseFloat(l.amountStr) || 0,
-                reference: l.reference.trim() || null,
+                amount: Math.round(parseFloat(l.amountStr) || 0),
+                reference:
+                  l.method === 'CARD' || l.method === 'MOBILE_BANKING'
+                    ? l.reference.trim() || null
+                    : null,
               }))
           : undefined,
       notes: notes || null,
@@ -512,10 +545,26 @@ export default function PaymentModal({
           },
         }));
 
+        // Lock unitPrice on every queued item so catalog price changes before reconnect do not cause 400 mismatch
+        const offlineLockedPayload = {
+          ...payload,
+          items: items.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            discount: item.discount || 0,
+            unitPrice: item.unitPrice,
+            ...(item.productUnitId ? { productUnitId: item.productUnitId } : {}),
+          })),
+        };
+        const offlinePayments =
+          paymentMethod === 'SPLIT'
+            ? payload.payments ?? []
+            : [{ method: paymentMethod, amount: grandTotal, reference: payload.paymentReference }];
+
         enqueueSale({
           clientSaleId,
           queuedAt: nowIso,
-          payload,
+          payload: offlineLockedPayload,
           previewReceipt: {
             invoiceNumber: offlineInvoice,
             createdAt: nowIso,
@@ -536,6 +585,8 @@ export default function PaymentModal({
             paidAmount: finalPaidAmount,
             dueAmount: creditDueAmount,
             changeAmount,
+            pointsRedeemed: safePointsRedeemed,
+            payments: offlinePayments,
             customerName: selectedCustomer?.name || null,
           },
         });
@@ -551,6 +602,8 @@ export default function PaymentModal({
           paidAmount: finalPaidAmount,
           dueAmount: creditDueAmount,
           changeAmount,
+          pointsRedeemed: safePointsRedeemed,
+          payments: offlinePayments,
           paymentMethod,
           notes: notes || null,
           isOfflineQueued: true,
@@ -654,6 +707,9 @@ export default function PaymentModal({
                     setPaymentMethod(method.id);
                     if (method.id === 'CREDIT') {
                       setPaidAmountStr('');
+                      setPaymentReference('');
+                    } else if (method.id === 'CASH') {
+                      setPaymentReference('');
                     }
                   }}
                   type="button"

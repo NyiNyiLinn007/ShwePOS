@@ -9,6 +9,7 @@ import {
   formatDate,
   formatQuantity,
   getExpiryInfo,
+  getMyanmarDateKey,
   isFractionalUnit,
 } from '@/lib/utils';
 import {
@@ -79,9 +80,11 @@ const ITEMS_PER_PAGE = 10;
 interface ProductsClientProps {
   initialProducts: Product[];
   categories: Category[];
+  userRole?: string;
 }
 
-export function ProductsClient({ initialProducts, categories }: ProductsClientProps) {
+export function ProductsClient({ initialProducts, categories, userRole = 'ADMIN' }: ProductsClientProps) {
+  const isAdmin = userRole === 'ADMIN';
   const { addToast } = useToast();
   const { language, t } = useI18n();
 
@@ -159,9 +162,7 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
 
   function openEditModal(product: Product) {
     setEditingProduct(product);
-    const expStr = product.expiryDate
-      ? new Date(product.expiryDate).toISOString().slice(0, 10)
-      : '';
+    const expStr = product.expiryDate ? getMyanmarDateKey(product.expiryDate) : '';
     setFormData({
       name: product.name,
       nameMm: product.nameMm || '',
@@ -253,6 +254,23 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
 
   async function handleSave() {
     if (!validateForm()) return;
+
+    const configuredUnits = formData.productUnits.filter(
+      (u) => u.unitName.trim() || u.conversionFactor || u.sellingPrice || u.barcode.trim()
+    );
+    for (const u of configuredUnits) {
+      if (!u.unitName.trim() || !(Number(u.conversionFactor) > 0) || !(Number(u.sellingPrice) > 0)) {
+        addToast(
+          t(
+            'Each alternate unit must have a name, conversion factor > 0, and selling price > 0',
+            'ယူနစ်အခွဲတိုင်းတွင် အမည်၊ ပါဝင်အရေအတွက် (> 0) နှင့် ရောင်းဈေး (> 0) မှန်ကန်စွာ ထည့်သွင်းရပါမည်'
+          ),
+          'error'
+        );
+        return;
+      }
+    }
+
     setSaving(true);
 
     try {
@@ -264,22 +282,21 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
         categoryId: formData.categoryId,
         costPrice: Number(formData.costPrice),
         sellingPrice: Number(formData.sellingPrice),
-        stockQuantity: Number(formData.stockQuantity),
+        ...(!editingProduct ? { stockQuantity: Number(formData.stockQuantity) } : {}),
         lowStockThreshold: Number(formData.lowStockThreshold),
         unit: formData.unit,
         batchNumber: formData.batchNumber.trim() || null,
         expiryDate: formData.expiryDate ? formData.expiryDate : null,
         imageUrl: formData.imageUrl.trim() || null,
         isActive: formData.isActive,
-        productUnits: formData.productUnits
-          .filter((u) => u.unitName.trim() && Number(u.conversionFactor) > 0)
-          .map((u) => ({
-            unitName: u.unitName.trim(),
-            nameMm: u.nameMm.trim() || null,
-            conversionFactor: Number(u.conversionFactor),
-            sellingPrice: Math.max(0, Number(u.sellingPrice) || 0),
-            barcode: u.barcode.trim() || null,
-          })),
+        productUnits: configuredUnits.map((u) => ({
+          ...(u.id ? { id: u.id } : {}),
+          unitName: u.unitName.trim(),
+          nameMm: u.nameMm.trim() || null,
+          conversionFactor: Number(u.conversionFactor),
+          sellingPrice: Number(u.sellingPrice),
+          barcode: u.barcode.trim() || null,
+        })),
       };
 
       const url = editingProduct
@@ -643,14 +660,16 @@ export function ProductsClient({ initialProducts, categories }: ProductsClientPr
                             >
                               <Pencil size={15} strokeWidth={1.75} />
                             </button>
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              onClick={() => setDeleteTarget(product)}
-                              title={t('Delete product', 'ကုန်ပစ္စည်းဖျက်ရန်')}
-                              style={{ color: 'var(--danger)' }}
-                            >
-                              <Trash2 size={15} strokeWidth={1.75} />
-                            </button>
+                            {isAdmin && (
+                              <button
+                                className="btn btn-ghost btn-sm"
+                                onClick={() => setDeleteTarget(product)}
+                                title={t('Delete product', 'ကုန်ပစ္စည်းဖျက်ရန်')}
+                                style={{ color: 'var(--danger)' }}
+                              >
+                                <Trash2 size={15} strokeWidth={1.75} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

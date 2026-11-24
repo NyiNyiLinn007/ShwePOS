@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { useAppStore } from '@/lib/store';
@@ -49,6 +50,7 @@ export function PurchasesClient({
   suppliers,
   products,
 }: PurchasesClientProps) {
+  const router = useRouter();
   const { t } = useI18n();
   const { addToast } = useToast();
 
@@ -310,6 +312,7 @@ export function PurchasesClient({
           setOrders((prev) => [created as PurchaseOrderRecord, ...prev]);
           setPrefillItems(null);
           useAppStore.getState().triggerLowStockRefresh();
+          router.refresh();
         }}
         onClose={() => setShowCreateModal(false)}
       />

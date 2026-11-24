@@ -27,6 +27,7 @@ import {
   type MigrationSheetName,
 } from '@/lib/dataMigrationSchema';
 import {
+  MEDIA_OMITTED_MARKER,
   createDataMigrationWorkbook,
   workbookBuffer,
   type MigrationWorkbook,
@@ -668,9 +669,9 @@ function assertMoneyBalance(
   if (discountAmount > subtotal + 0.01) {
     migrationError('discountAmount', 'discount cannot exceed subtotal', sheet, rowNumber);
   }
-  // Partially refunded sales may have a reduced totalAmount while preserving original subtotal/discount
-  if (status !== 'PARTIALLY_REFUNDED') {
-    const expectedTotal = Math.round((subtotal - discountAmount + taxAmount) * 100) / 100;
+  // Partially refunded, refunded, or voided sales may have a reduced totalAmount from prior partial refunds
+  const expectedTotal = Math.round((subtotal - discountAmount + taxAmount) * 100) / 100;
+  if (status === 'COMPLETED') {
     if (Math.abs(totalAmount - expectedTotal) > 0.01) {
       migrationError(
         'totalAmount',
@@ -679,6 +680,13 @@ function assertMoneyBalance(
         rowNumber
       );
     }
+  } else if (totalAmount > expectedTotal + 0.01) {
+    migrationError(
+      'totalAmount',
+      'totalAmount cannot exceed subtotal - discountAmount + taxAmount',
+      sheet,
+      rowNumber
+    );
   }
   if (changeAmount > paidAmount + 0.01) {
     migrationError('changeAmount', 'changeAmount cannot exceed paidAmount', sheet, rowNumber);
@@ -707,8 +715,16 @@ async function importUsers(
     }
     const password = boundedString(row, 'password', 'Users', rowNumber, 256);
     const existing =
-      (id ? await tx.user.findUnique({ where: { id }, select: { id: true, password: true } }) : null) ??
-      (await tx.user.findUnique({ where: { email }, select: { id: true, password: true } }));
+      (id
+        ? await tx.user.findUnique({
+            where: { id },
+            select: { id: true, email: true, role: true, isActive: true, password: true },
+          })
+        : null) ??
+      (await tx.user.findUnique({
+        where: { email },
+        select: { id: true, email: true, role: true, isActive: true, password: true },
+      }));
     if (!existing && !password) {
       migrationError('password', 'password is required for a new user', 'Users', rowNumber);
     }
@@ -730,26 +746,45 @@ async function importUsers(
       : existing?.password;
     if (!hashedPassword) migrationError('password', 'password is required', 'Users', rowNumber);
 
+    const role = enumValue(row, 'role', USER_ROLES, 'Users', rowNumber, 'CASHIER');
+    const isActive = booleanValue(row, 'isActive', 'Users', rowNumber, true);
+
+    const authChanged =
+      !existing ||
+      existing.email !== email ||
+      existing.role !== role ||
+      existing.isActive !== isActive ||
+      existing.password !== hashedPassword;
+
     const data = {
       name,
       email,
       password: hashedPassword,
-      role: enumValue(row, 'role', USER_ROLES, 'Users', rowNumber, 'CASHIER'),
+      role,
       phone: boundedString(row, 'phone', 'Users', rowNumber, 20),
-      isActive: booleanValue(row, 'isActive', 'Users', rowNumber, true),
-      lastLoginAt: null,
+      isActive,
+      ...(authChanged ? { lastLoginAt: null } : {}),
       createdAt: dateValue(row, 'createdAt', 'Users', rowNumber) ?? new Date(),
       updatedAt: dateValue(row, 'updatedAt', 'Users', rowNumber) ?? new Date(),
     };
     const user = existing
       ? await tx.user.update({
           where: { id: existing.id },
-          data: { ...data, sessionVersion: { increment: 1 } },
+          data: authChanged ? { ...data, sessionVersion: { increment: 1 } } : data,
         })
       : await tx.user.create({ data: id ? { id, ...data } : data });
     track(maps.usersById, id, user.id);
     maps.usersByEmail.set(email, user.id);
   }
+
+  // Prevent accidentally locking everyone out by deactivating/demoting all ADMIN accounts via Excel
+  const activeAdmins = await tx.user.count({ where: { role: 'ADMIN', isActive: true } });
+  if (activeAdmins < 1) {
+    throw new DataMigrationError('Import aborted: at least one active ADMIN account must remain', [
+      { sheet: 'Users', row: 2, message: 'At least one active ADMIN user is required' },
+    ]);
+  }
+
   return rows.length;
 }
 
@@ -798,8 +833,11 @@ async function importProducts(
     const sku = boundedString(row, 'sku', 'Products', rowNumber, 50, true) as string;
     const categoryId = await resolveCategory(tx, row.categoryId, maps, 'Products', rowNumber);
     const existing =
-      (id ? await tx.product.findUnique({ where: { id }, select: { id: true } }) : null) ??
-      (await tx.product.findUnique({ where: { sku }, select: { id: true } }));
+      (id ? await tx.product.findUnique({ where: { id }, select: { id: true, imageUrl: true } }) : null) ??
+      (await tx.product.findUnique({ where: { sku }, select: { id: true, imageUrl: true } }));
+    const rawImageUrl = boundedString(row, 'imageUrl', 'Products', rowNumber, 500_000);
+    const resolvedImageUrl =
+      rawImageUrl === MEDIA_OMITTED_MARKER ? existing?.imageUrl ?? null : rawImageUrl;
     const data = {
       name,
       nameMm: boundedString(row, 'nameMm', 'Products', rowNumber, 200),
@@ -813,7 +851,7 @@ async function importProducts(
       unit: enumValue(row, 'unit', PRODUCT_UNITS, 'Products', rowNumber, 'pcs'),
       batchNumber: boundedString(row, 'batchNumber', 'Products', rowNumber, 100),
       expiryDate: dateValue(row, 'expiryDate', 'Products', rowNumber),
-      imageUrl: boundedString(row, 'imageUrl', 'Products', rowNumber, 500_000),
+      imageUrl: resolvedImageUrl,
       isActive: booleanValue(row, 'isActive', 'Products', rowNumber, true),
       createdAt: dateValue(row, 'createdAt', 'Products', rowNumber) ?? new Date(),
       updatedAt: dateValue(row, 'updatedAt', 'Products', rowNumber) ?? new Date(),
@@ -1154,7 +1192,7 @@ async function importShifts(
       userId,
       openingCash: nonNegativeNumberValue(row, 'openingCash', 'Shifts', rowNumber, true) as number,
       closingCash: nonNegativeNumberValue(row, 'closingCash', 'Shifts', rowNumber),
-      expectedCash: nonNegativeNumberValue(row, 'expectedCash', 'Shifts', rowNumber),
+      expectedCash: numberValue(row, 'expectedCash', 'Shifts', rowNumber),
       actualCash: nonNegativeNumberValue(row, 'actualCash', 'Shifts', rowNumber),
       variance: numberValue(row, 'variance', 'Shifts', rowNumber),
       status,
@@ -1194,9 +1232,26 @@ async function importSales(
       (await tx.sale.findUnique({ where: { invoiceNumber }, select: { id: true } }));
 
     const rawPromoId = stringValue(row.promotionId);
-    const promotionId = rawPromoId
-      ? maps.promotionsById.get(rawPromoId) ?? maps.promotionsByCode.get(rawPromoId.toUpperCase()) ?? null
-      : null;
+    let promotionId: string | null = null;
+    if (rawPromoId) {
+      promotionId =
+        maps.promotionsById.get(rawPromoId) ??
+        maps.promotionsByCode.get(rawPromoId.toUpperCase()) ??
+        null;
+      if (!promotionId) {
+        const dbPromo = await tx.promotion.findFirst({
+          where: { OR: [{ id: rawPromoId }, { code: rawPromoId.toUpperCase() }] },
+          select: { id: true, code: true },
+        });
+        if (dbPromo) {
+          promotionId = dbPromo.id;
+          maps.promotionsById.set(dbPromo.id, dbPromo.id);
+          if (dbPromo.code) maps.promotionsByCode.set(dbPromo.code.toUpperCase(), dbPromo.id);
+        } else {
+          relationError('promotionId', rawPromoId, 'Sales', rowNumber);
+        }
+      }
+    }
 
     const status = enumValue(row, 'status', SALE_STATUSES, 'Sales', rowNumber, 'COMPLETED');
     const data = {
@@ -1354,7 +1409,7 @@ async function importSaleAdjustments(
       approverUserId: await resolveUser(tx, row.approverUserId, maps, 'SaleAdjustments', rowNumber),
       type: enumValue(row, 'type', ADJUSTMENT_TYPES, 'SaleAdjustments', rowNumber),
       reason: boundedString(row, 'reason', 'SaleAdjustments', rowNumber, 500, true) as string,
-      amount: positiveNumberValue(row, 'amount', 'SaleAdjustments', rowNumber, true) as number,
+      amount: nonNegativeNumberValue(row, 'amount', 'SaleAdjustments', rowNumber, true) as number,
       paymentMethod: enumValue(row, 'paymentMethod', PAYMENT_METHODS, 'SaleAdjustments', rowNumber),
       paymentReversalStatus: enumValue(
         row,
@@ -1579,6 +1634,12 @@ async function importSettings(
     const row = rows[index];
     const rowNumber = index + 2;
     const id = boundedString(row, 'id', 'Settings', rowNumber, 100) || 'default';
+    const existingSettings = await tx.settings.findUnique({
+      where: { id },
+      select: { mobileBankingQrUrl: true, logo: true },
+    });
+    const rawQrUrl = boundedString(row, 'mobileBankingQrUrl', 'Settings', rowNumber, 500_000);
+    const rawLogo = boundedString(row, 'logo', 'Settings', rowNumber, 500_000);
     const data = {
       businessName: boundedString(row, 'businessName', 'Settings', rowNumber, 200, true) as string,
       businessNameMm: boundedString(row, 'businessNameMm', 'Settings', rowNumber, 200),
@@ -1593,12 +1654,13 @@ async function importSettings(
       taxRate: nonNegativeNumberValue(row, 'taxRate', 'Settings', rowNumber, true) as number,
       currencySymbol: boundedString(row, 'currencySymbol', 'Settings', rowNumber, 10, true) as string,
       loyaltyEnabled: booleanValue(row, 'loyaltyEnabled', 'Settings', rowNumber, true),
-      loyaltyEarnRate: nonNegativeNumberValue(row, 'loyaltyEarnRate', 'Settings', rowNumber) ?? 1000,
-      loyaltyRedeemRate: nonNegativeNumberValue(row, 'loyaltyRedeemRate', 'Settings', rowNumber) ?? 10,
+      loyaltyEarnRate: positiveNumberValue(row, 'loyaltyEarnRate', 'Settings', rowNumber) ?? 1000,
+      loyaltyRedeemRate: positiveNumberValue(row, 'loyaltyRedeemRate', 'Settings', rowNumber) ?? 10,
       mobileBankingName:
         boundedString(row, 'mobileBankingName', 'Settings', rowNumber, 120) ?? 'KBZPay / WavePay',
-      mobileBankingQrUrl: boundedString(row, 'mobileBankingQrUrl', 'Settings', rowNumber, 500_000),
-      logo: boundedString(row, 'logo', 'Settings', rowNumber, 500_000),
+      mobileBankingQrUrl:
+        rawQrUrl === MEDIA_OMITTED_MARKER ? existingSettings?.mobileBankingQrUrl ?? null : rawQrUrl,
+      logo: rawLogo === MEDIA_OMITTED_MARKER ? existingSettings?.logo ?? null : rawLogo,
       receiptFooter: boundedString(row, 'receiptFooter', 'Settings', rowNumber, 500),
     };
     if (data.taxRate > 100) {

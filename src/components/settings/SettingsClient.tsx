@@ -6,6 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useToast } from '@/contexts/ToastContext';
 import { resizeImageToDataUrl } from '@/lib/image';
+import { formatDateTime } from '@/lib/utils';
 import {
   Settings,
   DollarSign,
@@ -56,6 +57,9 @@ export function SettingsClient({
   initialUsers,
 }: SettingsClientProps) {
   const { language, t } = useI18n();
+  const theme = useAppStore((s) => s.theme);
+  const setTheme = useAppStore((s) => s.setTheme);
+  const setLanguage = useAppStore((s) => s.setLanguage);
   const { updateSettings, setTaxRate } = useSettingsStore();
   const { addToast } = useToast();
 
@@ -591,9 +595,10 @@ export function SettingsClient({
                       if (!file) return;
                       try {
                         const dataUrl = await resizeImageToDataUrl(file, {
-                          maxSize: 640,
-                          mimeType: 'image/png',
-                          quality: 0.92,
+                          maxSize: 512,
+                          mimeType: 'image/webp',
+                          quality: 0.9,
+                          maxChars: 450_000,
                         });
                         setMobileBankingQrUrl(dataUrl);
                       } catch {
@@ -745,7 +750,7 @@ export function SettingsClient({
               )}
               <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
               <div>INV-20260523-0001</div>
-              <div>{new Date().toLocaleString()}</div>
+              <div>{formatDateTime(new Date())}</div>
               <div style={{ borderTop: '1px dashed #000', margin: '8px 0' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>Sample Item x2</span>
@@ -781,13 +786,13 @@ export function SettingsClient({
           <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
             <button
               className={`btn ${language === 'en' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => useAppStore.getState().setLanguage('en')}
+              onClick={() => setLanguage('en')}
             >
               English
             </button>
             <button
               className={`btn ${language === 'mm' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => useAppStore.getState().setLanguage('mm')}
+              onClick={() => setLanguage('mm')}
             >
               မြန်မာ
             </button>
@@ -818,16 +823,16 @@ export function SettingsClient({
           </div>
           <div style={{ display: 'flex', gap: 'var(--space-md)' }}>
             <button
-              className={`btn ${useAppStore.getState().theme === 'dark' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => useAppStore.getState().setTheme('dark')}
+              className={`btn ${theme === 'dark' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setTheme('dark')}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
               <Moon size={15} strokeWidth={1.75} />
               {t('darkMode')}
             </button>
             <button
-              className={`btn ${useAppStore.getState().theme === 'light' ? 'btn-primary' : 'btn-secondary'}`}
-              onClick={() => useAppStore.getState().setTheme('light')}
+              className={`btn ${theme === 'light' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setTheme('light')}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
             >
               <Sun size={15} strokeWidth={1.75} />

@@ -54,14 +54,40 @@ export function SaleRefundModal({
 
     let itemsPayload: { saleItemId: string; quantity: number }[] | undefined;
     if (actionType === 'PARTIALLY_REFUNDED') {
-      itemsPayload = Object.entries(refundQuantities)
-        .map(([saleItemId, qtyStr]) => ({
-          saleItemId,
-          quantity: parseFloat(qtyStr) || 0,
-        }))
-        .filter((i) => i.quantity > 0);
+      const parsedItems: { saleItemId: string; quantity: number }[] = [];
+      for (const item of sale.items ?? []) {
+        const raw = refundQuantities[item.id] ?? '0';
+        const qty = parseFloat(raw) || 0;
+        if (qty <= 0) continue;
+        const remaining = Math.max(0, Number(item.quantity) - Number(item.refundedQuantity || 0));
+        const soldUnit = item.unitName || item.product?.unit || 'pcs';
+        const displayName =
+          language === 'mm' && item.product?.nameMm
+            ? item.product.nameMm
+            : item.product?.name || 'Item';
 
-      if (itemsPayload.length === 0) {
+        if (qty > remaining + 1e-6) {
+          addToast(
+            language === 'mm'
+              ? `${displayName} ၏ ပြန်အမ်းမည့်အရေအတွက်သည် ကျန်ရှိသောအရေအတွက်ထက် ကျော်လွန်နေပါသည်`
+              : `Refund quantity for ${displayName} exceeds remaining quantity`,
+            'error'
+          );
+          return;
+        }
+        if (!isFractionalUnit(soldUnit) && !Number.isInteger(qty)) {
+          addToast(
+            language === 'mm'
+              ? `${displayName} (${soldUnit}) အတွက် ကိန်းပြည့်အရေအတွက်သာ ထည့်သွင်းနိုင်ပါသည်`
+              : `${displayName} (${soldUnit}) requires a whole number quantity`,
+            'error'
+          );
+          return;
+        }
+        parsedItems.push({ saleItemId: item.id, quantity: qty });
+      }
+
+      if (parsedItems.length === 0) {
         addToast(
           t(
             'Please enter quantity for at least one item to refund',
@@ -71,6 +97,7 @@ export function SaleRefundModal({
         );
         return;
       }
+      itemsPayload = parsedItems;
     }
 
     setProcessing(true);

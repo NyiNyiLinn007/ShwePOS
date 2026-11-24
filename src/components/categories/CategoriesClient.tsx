@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import {
@@ -53,9 +54,12 @@ function slugify(text: string): string {
 
 interface CategoriesClientProps {
   initialCategories: Category[];
+  userRole?: string;
 }
 
-export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
+export function CategoriesClient({ initialCategories, userRole = 'ADMIN' }: CategoriesClientProps) {
+  const router = useRouter();
+  const isAdmin = userRole === 'ADMIN';
   const { addToast } = useToast();
   const { language, t } = useI18n();
   const [categories, setCategories] = useState<Category[]>(initialCategories);
@@ -174,6 +178,7 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
       }
 
       closeModal();
+      router.refresh();
     } catch {
       addToast(t('Network error. Please try again.', '\u1000\u103d\u1014\u103a\u101b\u1000\u103a\u1001\u103b\u102d\u102f\u1037\u101a\u103d\u1004\u103a\u1038\u1001\u103b\u1000\u103a\u104b \u1011\u1015\u103a\u1000\u103c\u102d\u102f\u1038\u1005\u102c\u1038\u1015\u102b\u104b'), 'error');
     } finally {
@@ -200,6 +205,7 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
       setCategories((prev) => prev.filter((c) => c.id !== deleteTarget.id));
       addToast(t('Category deleted successfully', 'အမျိုးအစားဖျက်ပြီးပါပြီ'), 'success');
       setDeleteTarget(null);
+      router.refresh();
     } catch {
       addToast(t('Network error. Please try again.', '\u1000\u103d\u1014\u103a\u101b\u1000\u103a\u1001\u103b\u102d\u102f\u1037\u101a\u103d\u1004\u103a\u1038\u1001\u103b\u1000\u103a\u104b \u1011\u1015\u103a\u1000\u103c\u102d\u102f\u1038\u1005\u102c\u1038\u1015\u102b\u104b'), 'error');
     } finally {
@@ -317,14 +323,16 @@ export function CategoriesClient({ initialCategories }: CategoriesClientProps) {
                     >
                       <Pencil size={15} strokeWidth={1.75} />
                     </button>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => setDeleteTarget(category)}
-                      title={t('Delete', 'ဖျက်ရန်')}
-                      style={{ color: 'var(--danger)' }}
-                    >
-                      <Trash2 size={15} strokeWidth={1.75} />
-                    </button>
+                    {isAdmin && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setDeleteTarget(category)}
+                        title={t('Delete', 'ဖျက်ရန်')}
+                        style={{ color: 'var(--danger)' }}
+                      >
+                        <Trash2 size={15} strokeWidth={1.75} />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

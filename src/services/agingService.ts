@@ -38,8 +38,9 @@ export function getAgingBucketKey(ageDays: number): AgingBucketKey {
 export function calculateMyanmarAgeDays(docDate: Date, now: Date = new Date()): number {
   const docParts = getMyanmarDateParts(docDate);
   const nowParts = getMyanmarDateParts(now);
-  const docUtc = Date.UTC(docParts.year, docParts.month - 1, docParts.day);
-  const nowUtc = Date.UTC(nowParts.year, nowParts.month - 1, nowParts.day);
+  // getMyanmarDateParts().month is already 0-indexed (0..11)
+  const docUtc = Date.UTC(docParts.year, docParts.month, docParts.day);
+  const nowUtc = Date.UTC(nowParts.year, nowParts.month, nowParts.day);
   return Math.max(0, Math.floor((nowUtc - docUtc) / 86_400_000));
 }
 
@@ -52,22 +53,61 @@ function addToBuckets(target: AgingBuckets, bucket: AgingBucketKey, amount: numb
   target.totalDue = roundMoney(target.totalDue + amount);
 }
 
+/**
+ * Allocates an account's current outstanding balance across its unpaid documents.
+ * Because repayments settle oldest invoices first (FIFO), any remaining unpaid balance
+ * belongs to the NEWEST invoices first (LIFO allocation of remaining balance).
+ */
+function buildAgingRow(
+  account: { id: string; name: string; phone: string | null; creditBalance: unknown },
+  docsDesc: Array<{ dueAmount: unknown; createdAt: Date }>,
+  now: Date
+): AgingAccountRow | null {
+  const balance = roundMoney(Math.max(0, toNumber(account.creditBalance)));
+  // Paid-off accounts (creditBalance === 0) must NEVER show overdue due to stale doc.dueAmount
+  if (balance <= 0) return null;
+
+  const row: AgingAccountRow = {
+    id: account.id,
+    name: account.name,
+    phone: account.phone,
+    unpaidCount: 0,
+    oldestDate: null,
+    ...emptyBuckets(),
+  };
+
+  let remaining = balance;
+  let oldestAllocated: Date | null = null;
+
+  for (const doc of docsDesc) {
+    if (remaining <= 0) break;
+    const docDue = roundMoney(toNumber(doc.dueAmount));
+    if (docDue <= 0) continue;
+    const alloc = roundMoney(Math.min(docDue, remaining));
+    if (alloc > 0) {
+      const age = calculateMyanmarAgeDays(doc.createdAt, now);
+      addToBuckets(row, getAgingBucketKey(age), alloc);
+      row.unpaidCount += 1;
+      if (!oldestAllocated || doc.createdAt < oldestAllocated) {
+        oldestAllocated = doc.createdAt;
+      }
+      remaining = roundMoney(remaining - alloc);
+    }
+  }
+
+  // Any opening/unlinked balance with no matching document defaults to 0-30 days
+  if (remaining > 0.009) {
+    addToBuckets(row, 'd0_30', remaining);
+  }
+
+  row.oldestDate = oldestAllocated ? oldestAllocated.toISOString() : null;
+  return row.totalDue > 0 ? row : null;
+}
+
 export async function generateArApAgingReport(now: Date = new Date()): Promise<AgingReport> {
   const [customers, suppliers] = await Promise.all([
     prisma.customer.findMany({
-      where: {
-        OR: [
-          { creditBalance: { gt: 0 } },
-          {
-            sales: {
-              some: {
-                status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
-                dueAmount: { gt: 0 },
-              },
-            },
-          },
-        ],
-      },
+      where: { creditBalance: { gt: 0 } },
       select: {
         id: true,
         name: true,
@@ -79,24 +119,12 @@ export async function generateArApAgingReport(now: Date = new Date()): Promise<A
             dueAmount: { gt: 0 },
           },
           select: { id: true, dueAmount: true, createdAt: true },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
         },
       },
     }),
     prisma.supplier.findMany({
-      where: {
-        OR: [
-          { creditBalance: { gt: 0 } },
-          {
-            purchaseOrders: {
-              some: {
-                status: 'RECEIVED',
-                dueAmount: { gt: 0 },
-              },
-            },
-          },
-        ],
-      },
+      where: { creditBalance: { gt: 0 } },
       select: {
         id: true,
         name: true,
@@ -108,7 +136,7 @@ export async function generateArApAgingReport(now: Date = new Date()): Promise<A
             dueAmount: { gt: 0 },
           },
           select: { id: true, dueAmount: true, createdAt: true },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
         },
       },
     }),
@@ -118,35 +146,8 @@ export async function generateArApAgingReport(now: Date = new Date()): Promise<A
   const receivables: AgingAccountRow[] = [];
 
   for (const cust of customers) {
-    const row: AgingAccountRow = {
-      id: cust.id,
-      name: cust.name,
-      phone: cust.phone,
-      unpaidCount: cust.sales.length,
-      oldestDate: cust.sales[0]?.createdAt ? cust.sales[0].createdAt.toISOString() : null,
-      ...emptyBuckets(),
-    };
-
-    const balanceCap = roundMoney(Math.max(0, toNumber(cust.creditBalance)));
-    let remainingToBucket = balanceCap;
-
-    // Distribute current creditBalance across unpaid invoices (newest-unpaid or FIFO oldest-unpaid)
-    for (const sale of cust.sales) {
-      if (remainingToBucket <= 0 && balanceCap > 0) break;
-      const saleDue = roundMoney(toNumber(sale.dueAmount));
-      const alloc = balanceCap > 0 ? roundMoney(Math.min(saleDue, remainingToBucket)) : saleDue;
-      if (alloc > 0) {
-        const age = calculateMyanmarAgeDays(sale.createdAt, now);
-        addToBuckets(row, getAgingBucketKey(age), alloc);
-        if (balanceCap > 0) remainingToBucket = roundMoney(remainingToBucket - alloc);
-      }
-    }
-
-    if (remainingToBucket > 0.009) {
-      addToBuckets(row, 'd0_30', remainingToBucket);
-    }
-
-    if (row.totalDue > 0) {
+    const row = buildAgingRow(cust, cust.sales, now);
+    if (row) {
       receivables.push(row);
       receivablesSummary.accountCount += 1;
       receivablesSummary.d0_30 = roundMoney(receivablesSummary.d0_30 + row.d0_30);
@@ -161,36 +162,8 @@ export async function generateArApAgingReport(now: Date = new Date()): Promise<A
   const payables: AgingAccountRow[] = [];
 
   for (const sup of suppliers) {
-    const row: AgingAccountRow = {
-      id: sup.id,
-      name: sup.name,
-      phone: sup.phone,
-      unpaidCount: sup.purchaseOrders.length,
-      oldestDate: sup.purchaseOrders[0]?.createdAt
-        ? sup.purchaseOrders[0].createdAt.toISOString()
-        : null,
-      ...emptyBuckets(),
-    };
-
-    const balanceCap = roundMoney(Math.max(0, toNumber(sup.creditBalance)));
-    let remainingToBucket = balanceCap;
-
-    for (const po of sup.purchaseOrders) {
-      if (remainingToBucket <= 0 && balanceCap > 0) break;
-      const poDue = roundMoney(toNumber(po.dueAmount));
-      const alloc = balanceCap > 0 ? roundMoney(Math.min(poDue, remainingToBucket)) : poDue;
-      if (alloc > 0) {
-        const age = calculateMyanmarAgeDays(po.createdAt, now);
-        addToBuckets(row, getAgingBucketKey(age), alloc);
-        if (balanceCap > 0) remainingToBucket = roundMoney(remainingToBucket - alloc);
-      }
-    }
-
-    if (remainingToBucket > 0.009) {
-      addToBuckets(row, 'd0_30', remainingToBucket);
-    }
-
-    if (row.totalDue > 0) {
+    const row = buildAgingRow(sup, sup.purchaseOrders, now);
+    if (row) {
       payables.push(row);
       payablesSummary.accountCount += 1;
       payablesSummary.d0_30 = roundMoney(payablesSummary.d0_30 + row.d0_30);

@@ -304,16 +304,24 @@ export interface ExpiryInfo {
 }
 
 /**
- * Evaluate product expiry date status and days remaining.
+ * Evaluate product expiry date status and days remaining using Myanmar calendar
+ * boundaries (Asia/Yangon, UTC+6:30) so expired dates never render as -0 or 0d
+ * between 00:00 and 06:29 MMT.
  */
 export function getExpiryInfo(
   expiryDate?: Date | string | null,
-  warningDays = 30
+  warningDays = 30,
+  now: Date = new Date()
 ): ExpiryInfo | null {
   if (!expiryDate) return null;
   const exp = typeof expiryDate === 'string' ? new Date(expiryDate) : expiryDate;
   if (Number.isNaN(exp.getTime())) return null;
-  const diffDays = Math.ceil((exp.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  const expParts = getMyanmarDateParts(exp);
+  const nowParts = getMyanmarDateParts(now);
+  const expDayUtc = Date.UTC(expParts.year, expParts.month, expParts.day);
+  const nowDayUtc = Date.UTC(nowParts.year, nowParts.month, nowParts.day);
+  const rawDiffDays = Math.round((expDayUtc - nowDayUtc) / 86_400_000);
+  const diffDays = rawDiffDays === 0 ? 0 : rawDiffDays;
   if (diffDays < 0) {
     return { status: 'expired', diffDays, date: exp };
   }

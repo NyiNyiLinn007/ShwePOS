@@ -1,6 +1,6 @@
 'use client';
 
-import { useCartStore } from '@/store/cartStore';
+import { getCartLineKey, useCartStore } from '@/store/cartStore';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatQuantity, isFractionalUnit } from '@/lib/utils';
 import {
@@ -82,8 +82,8 @@ export default function Cart({
         lineTotal: Math.max(0, lineGross - lineDisc),
       };
     });
-    return evaluateBestPromotion(promoLines, activePromotions, promoCode);
-  }, [items, activePromotions, promoCode]);
+    return evaluateBestPromotion(promoLines, activePromotions, promoCode, new Date(), cartDiscountAmount);
+  }, [items, activePromotions, promoCode, cartDiscountAmount]);
 
   const afterCartDiscount = getTotal();
   const promoDiscountAmount = Math.min(
@@ -186,12 +186,21 @@ export default function Cart({
           </div>
         ) : (
           items.map((item) => {
+            const lineKey = getCartLineKey(item);
             const fractional = isFractionalUnit(item.unit);
             const step = fractional ? 0.5 : 1;
             const factor = item.unitFactor ?? 1;
+            const otherLinesBase = items.reduce(
+              (sum, other) =>
+                other.productId === item.productId && getCartLineKey(other) !== lineKey
+                  ? sum + other.quantity * (other.unitFactor ?? 1)
+                  : sum,
+              0
+            );
+            const availBase = Math.max(0, item.maxStock - otherLinesBase);
             const maxForUnit = fractional
-              ? item.maxStock / factor
-              : Math.floor(item.maxStock / factor + 1e-9);
+              ? availBase / factor
+              : Math.floor(availBase / factor + 1e-9);
             const lineGross = Math.round(item.unitPrice * item.quantity);
             const lineDiscount = item.discount || 0;
             const lineNet = Math.max(0, lineGross - lineDiscount);
@@ -202,7 +211,7 @@ export default function Cart({
             const hasAltUnits = (item.availableUnits?.length ?? 0) > 0;
 
             return (
-              <div key={item.productId} className="pos-cart-item" style={{ flexWrap: 'wrap' }}>
+              <div key={lineKey} className="pos-cart-item" style={{ flexWrap: 'wrap' }}>
                 <div className="pos-cart-item-info" style={{ minWidth: '120px' }}>
                   <div className="pos-cart-item-name" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                     <span>{item.name}</span>
@@ -210,7 +219,7 @@ export default function Cart({
                       <select
                         className="input"
                         value={item.productUnitId ?? ''}
-                        onChange={(e) => setItemUnit(item.productId, e.target.value || null)}
+                        onChange={(e) => setItemUnit(lineKey, e.target.value || null)}
                         title={t('Select packaging unit', 'ထုပ်ပိုးမှုယူနစ် ရွေးရန်')}
                         style={{
                           padding: '1px 6px',
@@ -223,7 +232,7 @@ export default function Cart({
                       >
                         <option value="">{item.baseUnit ?? item.unit}</option>
                         {item.availableUnits!.map((u) => {
-                          const canFit = item.maxStock >= u.conversionFactor;
+                          const canFit = availBase >= u.conversionFactor;
                           return (
                             <option key={u.id} value={u.id} disabled={!canFit}>
                               {u.unitName} (×{formatQuantity(u.conversionFactor)})
@@ -234,15 +243,15 @@ export default function Cart({
                     )}
                   </div>
                   <div className="pos-cart-item-price" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                    {editingPriceProductId === item.productId ? (
+                    {editingPriceProductId === lineKey ? (
                       <input
                         type="number"
                         className="input"
                         value={priceInput}
                         onChange={(e) => setPriceInput(e.target.value)}
-                        onBlur={() => handlePriceSubmit(item.productId)}
+                        onBlur={() => handlePriceSubmit(lineKey)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') handlePriceSubmit(item.productId);
+                          if (e.key === 'Enter') handlePriceSubmit(lineKey);
                           if (e.key === 'Escape') setEditingPriceProductId(null);
                         }}
                         autoFocus
@@ -255,7 +264,7 @@ export default function Cart({
                         type="button"
                         onClick={() => {
                           setPriceInput(String(item.unitPrice));
-                          setEditingPriceProductId(item.productId);
+                          setEditingPriceProductId(lineKey);
                         }}
                         title={t('Click to override unit price', 'ဈေးနှုန်းပြင်ရောင်းရန် နှိပ်ပါ')}
                         style={{
@@ -282,7 +291,7 @@ export default function Cart({
                         </span>
                         <button
                           type="button"
-                          onClick={() => updateUnitPrice(item.productId, origPrice)}
+                          onClick={() => updateUnitPrice(lineKey, origPrice)}
                           title={t('Reset to catalog price', 'မူလဈေးသို့ ပြန်ထားရန်')}
                           style={{
                             background: 'none',
@@ -301,15 +310,15 @@ export default function Cart({
                     <span>
                       × {formatQuantity(item.quantity)} {item.unit}
                     </span>
-                    {editingItemDiscountId === item.productId ? (
+                    {editingItemDiscountId === lineKey ? (
                       <input
                         type="number"
                         className="input"
                         value={itemDiscountInput}
                         onChange={(e) => setItemDiscountInput(e.target.value)}
-                        onBlur={() => handleItemDiscountSubmit(item.productId)}
+                        onBlur={() => handleItemDiscountSubmit(lineKey)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleItemDiscountSubmit(item.productId);
+                          if (e.key === 'Enter') handleItemDiscountSubmit(lineKey);
                           if (e.key === 'Escape') setEditingItemDiscountId(null);
                         }}
                         autoFocus
@@ -323,7 +332,7 @@ export default function Cart({
                         type="button"
                         onClick={() => {
                           setItemDiscountInput(String(lineDiscount || ''));
-                          setEditingItemDiscountId(item.productId);
+                          setEditingItemDiscountId(lineKey);
                         }}
                         style={{
                           background: 'none',
@@ -358,21 +367,21 @@ export default function Cart({
                 </div>
                 <div className="pos-cart-item-qty">
                   <button
-                    onClick={() => updateQuantity(item.productId, item.quantity - step)}
+                    onClick={() => updateQuantity(lineKey, item.quantity - step)}
                     type="button"
                     aria-label={t('decreaseQuantity')}
                   >
                     −
                   </button>
-                  {editingQtyProductId === item.productId ? (
+                  {editingQtyProductId === lineKey ? (
                     <input
                       type="number"
                       className="input"
                       value={qtyInput}
                       onChange={(e) => setQtyInput(e.target.value)}
-                      onBlur={() => handleQtySubmit(item.productId)}
+                      onBlur={() => handleQtySubmit(lineKey)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleQtySubmit(item.productId);
+                        if (e.key === 'Enter') handleQtySubmit(lineKey);
                         if (e.key === 'Escape') setEditingQtyProductId(null);
                       }}
                       autoFocus
@@ -385,7 +394,7 @@ export default function Cart({
                     <span
                       onClick={() => {
                         setQtyInput(String(item.quantity));
-                        setEditingQtyProductId(item.productId);
+                        setEditingQtyProductId(lineKey);
                       }}
                       title={t('Click to enter quantity', 'အရေအတွက် ရိုက်ထည့်ရန် နှိပ်ပါ')}
                       style={{ cursor: 'pointer', minWidth: 28, textAlign: 'center' }}
@@ -394,7 +403,7 @@ export default function Cart({
                     </span>
                   )}
                   <button
-                    onClick={() => updateQuantity(item.productId, item.quantity + step)}
+                    onClick={() => updateQuantity(lineKey, item.quantity + step)}
                     type="button"
                     aria-label={t('increaseQuantity')}
                     disabled={item.quantity >= maxForUnit}
@@ -412,7 +421,7 @@ export default function Cart({
                 </div>
                 <button
                   className="pos-cart-item-remove"
-                  onClick={() => removeItem(item.productId)}
+                  onClick={() => removeItem(lineKey)}
                   type="button"
                   aria-label={`${t('removeItem')}: ${item.name}`}
                 >
@@ -584,9 +593,26 @@ export default function Cart({
                     </span>
                   </div>
                 )}
-                {promoCode.trim() && !promoEval.codeMatched && (
+                {promoCode.trim() && promoEval.codeFailureReason && (
                   <div style={{ fontSize: 10, color: 'var(--warning)', marginTop: 2 }}>
-                    {t('Promo code not valid or not eligible yet', 'Promo Code မမှန်ကန် သို့မဟုတ် သတ်မှတ်ချက်မပြည့်သေးပါ')}
+                    {promoEval.codeFailureReason === 'MIN_SPEND_NOT_MET' && promoEval.matchedPromo?.minSpend ? (
+                      <>
+                        {t('Minimum spend required:', 'အနည်းဆုံး ဝယ်ယူရမည့်ပမာဏ -')}{' '}
+                        {formatCurrency(promoEval.matchedPromo.minSpend)}
+                      </>
+                    ) : promoEval.codeFailureReason === 'NO_ELIGIBLE_ITEMS' ? (
+                      t(
+                        'Cart does not meet eligible items or quantity for this code',
+                        'ဤ Promo Code နှင့် ကိုက်ညီသော ပစ္စည်း သို့မဟုတ် အရေအတွက် မပြည့်သေးပါ'
+                      )
+                    ) : promoEval.codeFailureReason === 'OUTPERFORMED' ? (
+                      t(
+                        'Another active promotion gives a larger discount and was applied instead',
+                        'အခြား ပရိုမိုးရှင်းက ပိုမိုသက်သာသဖြင့် ၎င်းကို အလိုအလျောက် သုံးထားပါသည်'
+                      )
+                    ) : (
+                      t('Promo code not valid or expired', 'Promo Code မမှန်ကန် သို့မဟုတ် သက်တမ်းကုန်ပါပြီ')
+                    )}
                   </div>
                 )}
               </div>

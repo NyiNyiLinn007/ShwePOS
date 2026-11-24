@@ -1,12 +1,13 @@
 import prisma from '@/lib/prisma';
 import { ApiError, type AuthUser } from '@/lib/apiAuth';
 import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
-import { getMyanmarDateCompact, roundQuantity } from '@/lib/utils';
+import { getMyanmarDateCompact, isFractionalUnit, roundQuantity } from '@/lib/utils';
 import type {
   CompleteStocktakeInput,
   CreateStocktakeInput,
   UpdateStocktakeItemsInput,
 } from '@/lib/validations';
+import type { StocktakeSessionDTO } from '@/types';
 import { logAudit } from '@/services/auditService';
 
 const sessionDetailInclude = {
@@ -24,6 +25,14 @@ const sessionDetailInclude = {
           barcode: true,
           unit: true,
           category: { select: { id: true, name: true, nameMm: true } },
+          productUnits: {
+            select: {
+              id: true,
+              unitName: true,
+              conversionFactor: true,
+              barcode: true,
+            },
+          },
         },
       },
     },
@@ -31,7 +40,7 @@ const sessionDetailInclude = {
   },
 };
 
-export async function listStocktakeSessions() {
+export async function listStocktakeSessions(): Promise<StocktakeSessionDTO[]> {
   const sessions = await prisma.stocktakeSession.findMany({
     include: {
       category: { select: { id: true, name: true, nameMm: true } },
@@ -41,7 +50,10 @@ export async function listStocktakeSessions() {
     orderBy: { createdAt: 'desc' },
     take: 100,
   });
-  return serializePrismaData(sessions);
+  return serializePrismaData(sessions).map((s) => ({
+    ...s,
+    status: s.status as StocktakeSessionDTO['status'],
+  }));
 }
 
 export async function getStocktakeSession(id: string) {
@@ -121,7 +133,11 @@ export async function updateStocktakeItems(id: string, input: UpdateStocktakeIte
     async (tx) => {
       const session = await tx.stocktakeSession.findUnique({
         where: { id },
-        include: { items: true },
+        include: {
+          items: {
+            include: { product: { select: { unit: true, name: true } } },
+          },
+        },
       });
       if (!session) throw new ApiError('Stocktake session not found', 404);
       if (session.status !== 'IN_PROGRESS') {
@@ -137,6 +153,16 @@ export async function updateStocktakeItems(id: string, input: UpdateStocktakeIte
         const sysQty = roundQuantity(toNumber(existing.systemQty));
         const unitCost = roundMoney(toNumber(existing.unitCost));
         const counted = patch.countedQty === null ? null : roundQuantity(patch.countedQty);
+        if (
+          counted !== null &&
+          !isFractionalUnit(existing.product.unit) &&
+          !Number.isInteger(counted)
+        ) {
+          throw new ApiError(
+            `Fractional count (${counted}) is not allowed for unit '${existing.product.unit}' on ${existing.product.name}`,
+            400
+          );
+        }
         const varianceQty = counted === null ? 0 : roundQuantity(counted - sysQty);
         const varianceValue = counted === null ? 0 : roundMoney(varianceQty * unitCost);
 
@@ -199,10 +225,23 @@ export async function completeStocktakeSession(
         throw new ApiError('Stocktake session is already finalized', 409);
       }
 
+      // Atomically claim IN_PROGRESS -> COMPLETED FIRST to prevent double-completion / cancel races
+      const claimed = await tx.stocktakeSession.updateMany({
+        where: { id, status: 'IN_PROGRESS' },
+        data: {
+          status: 'COMPLETED',
+          completedById: user.id,
+          completedAt: new Date(),
+        },
+      });
+      if (claimed.count === 0) {
+        throw new ApiError('Stocktake session was already finalized or cancelled', 409);
+      }
+
       const productIds = session.items.map((i) => i.productId);
       const liveProducts = await tx.product.findMany({
         where: { id: { in: productIds } },
-        select: { id: true, stockQuantity: true, costPrice: true },
+        select: { id: true, stockQuantity: true, costPrice: true, unit: true },
       });
       const liveMap = new Map(liveProducts.map((p) => [p.id, p]));
 
@@ -222,40 +261,44 @@ export async function completeStocktakeSession(
           effectiveCounted = 0;
         }
 
+        const snapshotSystemQty = roundQuantity(toNumber(item.systemQty));
         const liveStock = roundQuantity(toNumber(live.stockQuantity));
-        const unitCost = roundMoney(toNumber(item.unitCost || live.costPrice));
-        const varianceQty = roundQuantity(effectiveCounted - liveStock);
-        const varianceValue = roundMoney(varianceQty * unitCost);
+        // Compute shrinkage/surplus delta relative to snapshot systemQty so interim POS sales / PO receipts
+        // that occurred while counting are NEVER silently wiped out.
+        const countDelta = roundQuantity(effectiveCounted - snapshotSystemQty);
+        const targetLiveStock = roundQuantity(Math.max(0, liveStock + countDelta));
+        const actualAdjustment = roundQuantity(targetLiveStock - liveStock);
+        const unitCost = roundMoney(toNumber(item.unitCost) || toNumber(live.costPrice));
+        const varianceValue = roundMoney(actualAdjustment * unitCost);
 
         await tx.stocktakeItem.update({
           where: { id: item.id },
           data: {
-            systemQty: liveStock,
             countedQty: effectiveCounted,
-            varianceQty,
+            varianceQty: actualAdjustment,
             varianceValue,
           },
         });
 
-        if (Math.abs(varianceQty) > 0.0001) {
+        if (Math.abs(actualAdjustment) > 0.0001) {
           varianceItems += 1;
           totalVarianceValue = roundMoney(totalVarianceValue + varianceValue);
           adjustedCount += 1;
 
           await tx.product.update({
             where: { id: item.productId },
-            data: { stockQuantity: effectiveCounted },
+            data: { stockQuantity: targetLiveStock },
           });
 
           await tx.stockMovement.create({
             data: {
               productId: item.productId,
               userId: user.id,
-              quantity: effectiveCounted,
+              quantity: targetLiveStock,
               type: 'ADJUSTMENT',
               reason: `Stocktake ${session.sessionNumber}${item.notes ? `: ${item.notes}` : ''}`,
               previousStock: liveStock,
-              newStock: effectiveCounted,
+              newStock: targetLiveStock,
             },
           });
         }
@@ -264,9 +307,6 @@ export async function completeStocktakeSession(
       const finalSession = await tx.stocktakeSession.update({
         where: { id },
         data: {
-          status: 'COMPLETED',
-          completedById: user.id,
-          completedAt: new Date(),
           varianceItems,
           totalVarianceValue,
           ...(input.notes !== undefined && { notes: input.notes?.trim() || session.notes }),
@@ -301,14 +341,17 @@ export async function completeStocktakeSession(
 }
 
 export async function cancelStocktakeSession(id: string) {
-  const existing = await prisma.stocktakeSession.findUnique({ where: { id } });
-  if (!existing) throw new ApiError('Stocktake session not found', 404);
-  if (existing.status !== 'IN_PROGRESS') {
+  const claimed = await prisma.stocktakeSession.updateMany({
+    where: { id, status: 'IN_PROGRESS' },
+    data: { status: 'CANCELLED' },
+  });
+  if (claimed.count === 0) {
+    const existing = await prisma.stocktakeSession.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) throw new ApiError('Stocktake session not found', 404);
     throw new ApiError('Only IN_PROGRESS stocktake sessions can be cancelled', 409);
   }
-  const cancelled = await prisma.stocktakeSession.update({
+  const cancelled = await prisma.stocktakeSession.findUniqueOrThrow({
     where: { id },
-    data: { status: 'CANCELLED' },
     include: sessionDetailInclude,
   });
   return serializePrismaData(cancelled);

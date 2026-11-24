@@ -158,6 +158,11 @@ export function PurchaseFormModal({
         ),
         'success'
       );
+      setRows([{ productId: '', quantity: '1', unitCost: '0', batchNumber: '', expiryDate: '' }]);
+      setDiscountStr('0');
+      setPaidAmountStr('');
+      setNotes('');
+      setPaymentMethod('CASH');
       onCreated(data);
       onClose();
     } catch {

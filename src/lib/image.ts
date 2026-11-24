@@ -7,6 +7,7 @@ export interface CompressImageOptions {
   maxSize?: number;
   mimeType?: 'image/jpeg' | 'image/png' | 'image/webp';
   quality?: number;
+  maxChars?: number;
 }
 
 export function resizeImageToDataUrl(
@@ -15,11 +16,12 @@ export function resizeImageToDataUrl(
 ): Promise<string> {
   const resolved: Required<CompressImageOptions> =
     typeof options === 'number'
-      ? { maxSize: options, mimeType: 'image/jpeg', quality: 0.82 }
+      ? { maxSize: options, mimeType: 'image/jpeg', quality: 0.82, maxChars: 450_000 }
       : {
           maxSize: options.maxSize ?? 320,
           mimeType: options.mimeType ?? 'image/jpeg',
           quality: options.quality ?? 0.82,
+          maxChars: options.maxChars ?? 450_000,
         };
 
   return new Promise((resolve, reject) => {
@@ -40,8 +42,35 @@ export function resizeImageToDataUrl(
           reject(new Error('Canvas context unavailable'));
           return;
         }
+        if (resolved.mimeType === 'image/jpeg') {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+        }
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL(resolved.mimeType, resolved.quality));
+
+        let result = canvas.toDataURL(resolved.mimeType, resolved.quality);
+        // Guard against oversized PNG/base64 payloads exceeding the 500K API cap
+        if (result.length > resolved.maxChars) {
+          const fallbackFormats: Array<{ mime: 'image/webp' | 'image/jpeg'; quality: number }> = [
+            { mime: 'image/webp', quality: 0.88 },
+            { mime: 'image/webp', quality: 0.76 },
+            { mime: 'image/jpeg', quality: 0.85 },
+            { mime: 'image/jpeg', quality: 0.72 },
+          ];
+          for (const attempt of fallbackFormats) {
+            if (attempt.mime === 'image/jpeg') {
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, width, height);
+              ctx.drawImage(img, 0, 0, width, height);
+            }
+            const candidate = canvas.toDataURL(attempt.mime, attempt.quality);
+            if (candidate.length < result.length) {
+              result = candidate;
+            }
+            if (result.length <= resolved.maxChars) break;
+          }
+        }
+        resolve(result);
       };
       img.src = String(reader.result);
     };

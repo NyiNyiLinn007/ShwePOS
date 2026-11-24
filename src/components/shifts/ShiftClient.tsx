@@ -69,7 +69,55 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
   const [movementAmount, setMovementAmount] = useState('');
   const [movementReason, setMovementReason] = useState('');
 
+  // Manager override close modal state for any open shift in Shift History
+  const [overrideShiftTarget, setOverrideShiftTarget] = useState<Shift | null>(null);
+  const [overrideActualCash, setOverrideActualCash] = useState('');
+  const [overrideNotes, setOverrideNotes] = useState('');
+
   const isManager = userRole === 'ADMIN' || userRole === 'MANAGER';
+
+  async function submitOverrideClose() {
+    if (!overrideShiftTarget) return;
+    const amount = Number(overrideActualCash);
+    if (!Number.isFinite(amount) || amount < 0) {
+      addToast(
+        t('Actual cash must be zero or more', 'တကယ်ရေတွက်ရရှိငွေသည် သုည သို့မဟုတ် ထိုထက်ပိုရပါမည်'),
+        'error'
+      );
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/shifts/${overrideShiftTarget.id}/close`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actualCash: amount,
+          notes: overrideNotes.trim() || `Manager override close by ${userName}`,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || t('Failed to close shift', 'အဆိုင်းပိတ်မရပါ'));
+      }
+      addToast(t('shiftClosed'), 'success');
+      setOverrideShiftTarget(null);
+      setOverrideActualCash('');
+      setOverrideNotes('');
+      const closedShift: Shift | null = data?.shift ?? (data?.id ? data : null);
+      if (closedShift && closedShift.id) {
+        setReportShift(closedShift);
+      }
+      await loadShifts();
+    } catch (error) {
+      addToast(
+        error instanceof Error ? error.message : t('Failed to close shift', 'အဆိုင်းပိတ်မရပါ'),
+        'error'
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const getDrawerMovementLabel = (type: string): string => {
     const labels: Record<string, { en: string; mm: string }> = {
@@ -210,8 +258,9 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
       addToast(t('shiftClosed'), 'success');
       setShowCloseForm(false);
       setClosingNotes('');
-      if (data && data.id) {
-        setReportShift(data);
+      const closedShift = data?.shift ?? data;
+      if (closedShift && closedShift.id) {
+        setReportShift(closedShift);
       }
       await loadShifts();
     } catch (error) {
@@ -479,14 +528,31 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
                       <td className={shift.variance === null ? '' : shift.variance === 0 ? 'text-success' : shift.variance > 0 ? 'text-warning' : 'text-danger'}>{shift.variance === null ? '—' : formatCurrency(shift.variance)}</td>
                       <td><span className={`badge ${shift.status === 'OPEN' ? 'badge-success' : 'badge-neutral'}`}>{shift.status === 'OPEN' ? t('openStatus') : t('closedStatus')}</span></td>
                       <td style={{ textAlign: 'right' }}>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => setReportShift(shift)}
-                          title={t('Print Shift Report', 'အလုပ်ချိန်စာရင်းချုပ် ပရင့်ထုတ်ရန်')}
-                        >
-                          <Printer size={14} strokeWidth={1.75} />
-                        </button>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          {isManager && shift.status === 'OPEN' && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => {
+                                setOverrideShiftTarget(shift);
+                                setOverrideActualCash(String(shift.expectedCash));
+                                setOverrideNotes('');
+                              }}
+                              title={t('Override Close Shift', 'မန်နေဂျာမှ အဆိုင်းပိတ်ရန်')}
+                              style={{ fontSize: 11, padding: '3px 8px' }}
+                            >
+                              {t('Close', 'ပိတ်ရန်')}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => setReportShift(shift)}
+                            title={t('Print Shift Report', 'အလုပ်ချိန်စာရင်းချုပ် ပရင့်ထုတ်ရန်')}
+                          >
+                            <Printer size={14} strokeWidth={1.75} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -676,6 +742,90 @@ export default function ShiftClient({ userRole, userName }: ShiftClientProps) {
               >
                 <Printer size={15} strokeWidth={1.75} />
                 {t('print')} ({paperSize})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Manager Override Close Shift Modal */}
+      {overrideShiftTarget && (
+        <div className="modal-backdrop" onClick={() => !saving && setOverrideShiftTarget(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
+            <div className="modal-header">
+              <h2 className="modal-title">
+                {t('Manager Override — Close Shift', 'မန်နေဂျာမှ အဆိုင်းပိတ်ရန်')}
+              </h2>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon"
+                disabled={saving}
+                onClick={() => setOverrideShiftTarget(null)}
+              >
+                <X size={16} strokeWidth={1.75} />
+              </button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-md)' }}>
+              <div
+                style={{
+                  padding: 'var(--space-md)',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'var(--bg-secondary)',
+                  fontSize: 'var(--text-sm)',
+                }}
+              >
+                <div style={{ fontWeight: 600 }}>{overrideShiftTarget.user.name}</div>
+                <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                  {t('Opened', 'ဖွင့်ချိန်')}: {formatDateTime(overrideShiftTarget.openedAt)}
+                </div>
+                <div style={{ marginTop: 6 }}>
+                  {t('Expected Drawer Cash', 'မျှော်မှန်းအံဆွဲငွေ')}:{' '}
+                  <strong style={{ fontFamily: 'var(--font-mono)', color: 'var(--primary)' }}>
+                    {formatCurrency(overrideShiftTarget.expectedCash)}
+                  </strong>
+                </div>
+              </div>
+              <div className="input-group">
+                <label className="input-label">
+                  {t('Actual Counted Cash (MMK)', 'တကယ်ရေတွက်ရရှိငွေ (ကျပ်)')} *
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  className="input"
+                  value={overrideActualCash}
+                  onChange={(e) => setOverrideActualCash(e.target.value)}
+                  style={{ fontFamily: 'var(--font-mono)' }}
+                />
+              </div>
+              <div className="input-group">
+                <label className="input-label">{t('Override Note (Optional)', 'မှတ်ချက် (ရွေးချယ်)')}</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={overrideNotes}
+                  onChange={(e) => setOverrideNotes(e.target.value)}
+                  maxLength={500}
+                  placeholder={t('Reason for closing cashier shift...', 'အဆိုင်းပိတ်ရသည့် အကြောင်းရင်း...')}
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                disabled={saving}
+                onClick={() => setOverrideShiftTarget(null)}
+              >
+                {t('Cancel', 'မလုပ်တော့ပါ')}
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={saving}
+                onClick={submitOverrideClose}
+              >
+                {saving ? t('Closing...', 'ပိတ်နေသည်...') : t('Close Shift', 'အဆိုင်းပိတ်မည်')}
               </button>
             </div>
           </div>

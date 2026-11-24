@@ -1,4 +1,5 @@
 import prisma from '@/lib/prisma';
+import { ApiError } from '@/lib/apiAuth';
 import { roundMoney, toNumber } from '@/lib/number';
 import { getTodayRange, parseMyanmarDateBoundary } from '@/lib/utils';
 
@@ -14,8 +15,11 @@ export interface CashierPerformanceRow {
   priceOverrideCount: number;
   voidRefundCount: number;
   voidRefundAmount: number;
+  approvedVoidRefundCount: number;
+  approvedVoidRefundAmount: number;
   closedShiftCount: number;
   netCashVariance: number;
+  totalAbsCashVariance: number;
 }
 
 export interface CashierPerformanceReport {
@@ -28,6 +32,7 @@ export interface CashierPerformanceReport {
     totalOverrides: number;
     totalVoidRefunds: number;
     netCashVariance: number;
+    totalAbsCashVariance: number;
   };
   cashiers: CashierPerformanceRow[];
 }
@@ -38,10 +43,28 @@ export async function generateCashierPerformanceReport(params: {
 } = {}): Promise<CashierPerformanceReport> {
   const todayRange = getTodayRange();
   const defaultStart = new Date(todayRange.start.getTime() - 29 * 86400_000);
-  const start =
-    (params.startDate ? parseMyanmarDateBoundary(params.startDate, false) : null) ?? defaultStart;
-  const end =
-    (params.endDate ? parseMyanmarDateBoundary(params.endDate, true) : null) ?? todayRange.end;
+
+  let start = defaultStart;
+  if (params.startDate) {
+    const parsedStart = parseMyanmarDateBoundary(params.startDate, false);
+    if (!parsedStart) {
+      throw new ApiError('Invalid startDate format (expected YYYY-MM-DD)', 400);
+    }
+    start = parsedStart;
+  }
+
+  let end = todayRange.end;
+  if (params.endDate) {
+    const parsedEnd = parseMyanmarDateBoundary(params.endDate, true);
+    if (!parsedEnd) {
+      throw new ApiError('Invalid endDate format (expected YYYY-MM-DD)', 400);
+    }
+    end = parsedEnd;
+  }
+
+  if (start > end) {
+    throw new ApiError('startDate cannot be after endDate', 400);
+  }
 
   const [users, sales, adjustments, overrides, shifts] = await Promise.all([
     prisma.user.findMany({
@@ -61,6 +84,7 @@ export async function generateCashierPerformanceReport(params: {
       where: { createdAt: { gte: start, lte: end } },
       select: {
         amount: true,
+        approverUserId: true,
         sale: { select: { userId: true } },
       },
     }),
@@ -94,8 +118,11 @@ export async function generateCashierPerformanceReport(params: {
       priceOverrideCount: 0,
       voidRefundCount: 0,
       voidRefundAmount: 0,
+      approvedVoidRefundCount: 0,
+      approvedVoidRefundAmount: 0,
       closedShiftCount: 0,
       netCashVariance: 0,
+      totalAbsCashVariance: 0,
     });
   }
 
@@ -110,10 +137,19 @@ export async function generateCashierPerformanceReport(params: {
   }
 
   for (const adj of adjustments) {
-    const row = map.get(adj.sale.userId);
-    if (!row) continue;
-    row.voidRefundCount += 1;
-    row.voidRefundAmount = roundMoney(row.voidRefundAmount + toNumber(adj.amount));
+    const amt = toNumber(adj.amount);
+    const cashierRow = map.get(adj.sale.userId);
+    if (cashierRow) {
+      cashierRow.voidRefundCount += 1;
+      cashierRow.voidRefundAmount = roundMoney(cashierRow.voidRefundAmount + amt);
+    }
+    const approverRow = map.get(adj.approverUserId);
+    if (approverRow) {
+      approverRow.approvedVoidRefundCount += 1;
+      approverRow.approvedVoidRefundAmount = roundMoney(
+        approverRow.approvedVoidRefundAmount + amt
+      );
+    }
   }
 
   for (const ov of overrides) {
@@ -125,8 +161,10 @@ export async function generateCashierPerformanceReport(params: {
   for (const sh of shifts) {
     const row = map.get(sh.userId);
     if (!row) continue;
+    const variance = toNumber(sh.variance);
     row.closedShiftCount += 1;
-    row.netCashVariance = roundMoney(row.netCashVariance + toNumber(sh.variance));
+    row.netCashVariance = roundMoney(row.netCashVariance + variance);
+    row.totalAbsCashVariance = roundMoney(row.totalAbsCashVariance + Math.abs(variance));
   }
 
   const cashiers = Array.from(map.values())
@@ -138,6 +176,7 @@ export async function generateCashierPerformanceReport(params: {
       (r) =>
         r.invoiceCount > 0 ||
         r.voidRefundCount > 0 ||
+        r.approvedVoidRefundCount > 0 ||
         r.priceOverrideCount > 0 ||
         r.closedShiftCount > 0
     )
@@ -150,6 +189,9 @@ export async function generateCashierPerformanceReport(params: {
     totalOverrides: cashiers.reduce((s, r) => s + r.priceOverrideCount, 0),
     totalVoidRefunds: cashiers.reduce((s, r) => s + r.voidRefundCount, 0),
     netCashVariance: roundMoney(cashiers.reduce((s, r) => s + r.netCashVariance, 0)),
+    totalAbsCashVariance: roundMoney(
+      cashiers.reduce((s, r) => s + r.totalAbsCashVariance, 0)
+    ),
   };
 
   return {

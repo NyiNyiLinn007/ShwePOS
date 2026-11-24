@@ -86,7 +86,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     await validateCsrf(request);
-    await requireRole('MANAGER', 'ADMIN');
+    await requireRole('ADMIN');
 
     const { id } = await params;
 

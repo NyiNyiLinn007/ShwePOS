@@ -32,11 +32,13 @@ export default function Header({
           year: 'numeric',
           month: 'short',
           day: 'numeric',
+          timeZone: 'Asia/Yangon',
         }) +
           ' • ' +
           now.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit',
+            timeZone: 'Asia/Yangon',
           })
       );
     };
@@ -84,8 +86,9 @@ export default function Header({
           className="btn btn-secondary btn-sm"
           onClick={toggleLanguage}
           title={language === 'en' ? t('switchToMyanmar') : t('switchToEnglish')}
+          style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}
         >
-          {language === 'en' ? '🇲🇲 MM' : '🇬🇧 EN'}
+          {language === 'en' ? 'MM' : 'EN'}
         </button>
 
         {children}

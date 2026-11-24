@@ -4,6 +4,16 @@
  */
 export type PrintPaperSize = '80mm' | '58mm' | 'A4';
 
+/** Escape HTML special characters before writing untrusted titles into print iframe HTML. */
+export function escapePrintHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export function printElementById(
   elementId: string,
   options?: {
@@ -56,7 +66,7 @@ export function printElementById(
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>${title}</title>
+  <title>${escapePrintHtml(title)}</title>
   <style>
     :root {
       --space-xs: 4px;

@@ -24,6 +24,10 @@ export type MigrationWorkbook = Array<{
   dateFormat?: string;
 }>;
 
+/** Placeholder written when a base64 image exceeds Excel's 32,767-char per-cell limit. */
+export const MEDIA_OMITTED_MARKER = '[MEDIA_OMITTED_OVER_32K]';
+const EXCEL_SAFE_MAX_CHARS = 32_000;
+
 // ShwePOS Enterprise Slate + Warm Amber Excel Palette
 const PALETTE = {
   bannerBg: '#0F172A', // Slate 900
@@ -207,7 +211,7 @@ function buildStyledDataCell(
     // or converting 13-digit EAN barcodes into scientific notation (8.85E+12).
     return {
       ...baseStyle,
-      value: strVal,
+      value: strVal.slice(0, EXCEL_SAFE_MAX_CHARS),
       type: String,
       format: '@',
       align: 'left',
@@ -215,9 +219,16 @@ function buildStyledDataCell(
     };
   }
 
+  const safeStrVal =
+    strVal.length > EXCEL_SAFE_MAX_CHARS
+      ? kind === 'media'
+        ? MEDIA_OMITTED_MARKER
+        : strVal.slice(0, EXCEL_SAFE_MAX_CHARS)
+      : strVal;
+
   return {
     ...baseStyle,
-    value: strVal,
+    value: safeStrVal,
     type: String,
     align: 'left',
     textColor: kind === 'media' || kind === 'secret' ? PALETTE.textMuted : PALETTE.textPrimary,

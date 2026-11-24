@@ -31,10 +31,10 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     await validateCsrf(request);
-    await requireRole('ADMIN');
+    const user = await requireRole('ADMIN');
     const { id } = await params;
 
-    const updated = await deactivateSupplier(id);
+    const updated = await deactivateSupplier(id, user);
     return NextResponse.json({ message: 'Supplier deactivated', supplier: updated });
   } catch (error) {
     return handleApiError(error, 'Failed to deactivate supplier');

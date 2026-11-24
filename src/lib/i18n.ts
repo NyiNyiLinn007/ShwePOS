@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 
 export type Language = 'en' | 'mm';
@@ -334,7 +335,10 @@ export function translate(language: Language, key: string, fallbackMm?: string):
 export function useI18n() {
   const language = useAppStore((state) => state.language);
 
-  const t = (key: string, fallbackMm?: string) => translate(language, key, fallbackMm);
+  const t = useCallback(
+    (key: string, fallbackMm?: string) => translate(language, key, fallbackMm),
+    [language]
+  );
 
   return { t, language };
 }

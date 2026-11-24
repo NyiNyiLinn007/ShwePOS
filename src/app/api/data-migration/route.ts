@@ -16,6 +16,7 @@ import { getMyanmarDateCompact } from '@/lib/utils';
 import { logAudit } from '@/services/auditService';
 
 export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024;
 
@@ -164,6 +165,21 @@ export async function GET(request: NextRequest) {
       mode === 'export'
         ? `shwepos-data-export-${dateStamp}.xlsx`
         : `shwepos-data-migration-template-v2.xlsx`;
+
+    if (mode === 'export') {
+      const counts = Object.fromEntries(
+        Object.entries(data).map(([sheet, rows]) => [sheet, Array.isArray(rows) ? rows.length : 0])
+      );
+      const totalRows = Object.values(counts).reduce((sum, count) => sum + count, 0);
+      await logAudit({
+        userId: operator.id,
+        action: 'DATA_MIGRATION_EXPORT',
+        entityType: 'DATA_MIGRATION',
+        summary: `Exported ${totalRows.toLocaleString()} record(s) to ${filename}`,
+        metadata: { filename, totalRows, counts },
+      });
+    }
+
     return excelResponse(await workbookBuffer(workbook), filename);
   } catch (error) {
     return handleApiError(error, 'Failed to create Excel workbook');

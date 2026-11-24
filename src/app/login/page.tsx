@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { useEffect, useState } from 'react';
+import { signIn, signOut } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useAppStore } from '@/lib/store';
 import { useI18n } from '@/lib/i18n';
@@ -14,8 +14,21 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showSessionConfirm, setShowSessionConfirm] = useState(false);
-  const [lastLoginInfo, setLastLoginInfo] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('reason') === 'session_expired') {
+      setError(
+        t(
+          'Your session expired or was signed in from another device. Please sign in again.',
+          'သင်၏ Session သက်တမ်းကုန်ဆုံးသွားပါပြီ သို့မဟုတ် အခြားစက်မှ ဝင်ရောက်ထားပါသည်။ ထပ်မံဝင်ရောက်ပါ။'
+        )
+      );
+      void signOut({ redirect: false });
+      window.history.replaceState({}, '', '/login');
+    }
+  }, [t]);
 
   const doLogin = async () => {
     setIsLoading(true);
@@ -60,11 +73,6 @@ export default function LoginPage() {
     }
   };
 
-  const handleConfirmLogin = async () => {
-    setShowSessionConfirm(false);
-    await doLogin();
-  };
-
   return (
     <div className="login-page">
       <div className="login-card animate-slide-up">
@@ -88,62 +96,6 @@ export default function LoginPage() {
         {error && (
           <div className="login-error animate-fade-in" role="alert">
             {error}
-          </div>
-        )}
-
-        {/* Session Confirmation Dialog */}
-        {showSessionConfirm && (
-          <div
-            className="animate-fade-in"
-            style={{
-              padding: 'var(--space-lg)',
-              background: 'rgba(255, 193, 7, 0.08)',
-              border: '1px solid rgba(255, 193, 7, 0.25)',
-              borderRadius: 'var(--radius-lg)',
-              marginBottom: 'var(--space-lg)',
-              textAlign: 'center',
-            }}
-          >
-            <div style={{ fontSize: '2rem', marginBottom: 'var(--space-sm)' }}>⚠️</div>
-            <div style={{ fontWeight: 700, fontSize: 'var(--text-base)', marginBottom: 'var(--space-sm)', color: 'var(--warning)' }}>
-              {t('activeSessionDetected')}
-            </div>
-            <p style={{ fontSize: 'var(--text-sm)', color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 'var(--space-sm)' }}>
-              {t('activeSessionLineOne')}
-              <br />
-              {t('activeSessionLineTwo')}
-            </p>
-            {lastLoginInfo && (
-              <p style={{
-                fontSize: 'var(--text-xs)',
-                color: 'var(--text-muted)',
-                fontFamily: 'var(--font-mono)',
-                background: 'rgba(0,0,0,0.2)',
-                padding: '4px 10px',
-                borderRadius: 'var(--radius-sm)',
-                display: 'inline-block',
-                marginBottom: 'var(--space-md)',
-              }}>
-                🕐 {lastLoginInfo}
-              </p>
-            )}
-            <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-md)' }}>
-              <button
-                className="btn btn-ghost"
-                style={{ flex: 1, padding: '10px' }}
-                onClick={() => setShowSessionConfirm(false)}
-              >
-                {t('cancelLogin')}
-              </button>
-              <button
-                className="btn btn-warning"
-                style={{ flex: 1, padding: '10px' }}
-                onClick={handleConfirmLogin}
-                disabled={isLoading}
-              >
-                {isLoading ? t('signingIn') : t('continueLogin')}
-              </button>
-            </div>
           </div>
         )}
 

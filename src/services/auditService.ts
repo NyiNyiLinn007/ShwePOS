@@ -14,13 +14,18 @@ export type AuditAction =
   | 'SUPPLIER_DEBT_REPAYMENT'
   | 'CUSTOMER_DEBT_REPAYMENT'
   | 'SHIFT_CLOSED'
+  | 'USER_CREATED'
   | 'USER_UPDATED'
   | 'SETTINGS_UPDATED'
   | 'DATA_MIGRATION_IMPORT'
+  | 'DATA_MIGRATION_EXPORT'
   | 'CUSTOMER_CREDIT_RECONCILED'
   | 'STOCKTAKE_COMPLETED'
   | 'PROMOTION_UPDATED'
-  | 'QUOTATION_CREATED';
+  | 'QUOTATION_CREATED'
+  | 'EXPENSE_CREATED'
+  | 'EXPENSE_UPDATED'
+  | 'EXPENSE_DELETED';
 
 export type AuditEntityType =
   | 'SALE'
@@ -35,7 +40,8 @@ export type AuditEntityType =
   | 'DATA_MIGRATION'
   | 'STOCKTAKE'
   | 'PROMOTION'
-  | 'QUOTATION';
+  | 'QUOTATION'
+  | 'EXPENSE';
 
 export interface AuditLogInput {
   userId: string;

@@ -1,8 +1,10 @@
 import prisma from '@/lib/prisma';
 import { ApiError, type AuthUser } from '@/lib/apiAuth';
-import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
+import { serializePrismaData } from '@/lib/number';
+import { calculateLineAmounts, calculateOrderTotals } from '@/lib/saleCalculator';
 import { getMyanmarDateCompact, parseMyanmarDateBoundary, roundQuantity } from '@/lib/utils';
 import type { CreateQuotationInput, UpdateQuotationInput } from '@/lib/validations';
+import type { QuotationDTO, QuotationStatus } from '@/types';
 import { logAudit } from '@/services/auditService';
 
 const quotationInclude = {
@@ -40,13 +42,16 @@ function parseValidUntil(dateStr: string): Date {
   return d;
 }
 
-export async function listQuotations() {
+export async function listQuotations(): Promise<QuotationDTO[]> {
   const quotes = await prisma.quotation.findMany({
     include: quotationInclude,
     orderBy: { createdAt: 'desc' },
     take: 200,
   });
-  return serializePrismaData(quotes);
+  return serializePrismaData(quotes).map((q) => ({
+    ...q,
+    status: q.status as QuotationStatus,
+  }));
 }
 
 export async function createQuotation(input: CreateQuotationInput, user: AuthUser) {
@@ -70,26 +75,34 @@ export async function createQuotation(input: CreateQuotationInput, user: AuthUse
       let subtotal = 0;
       const preparedItems = input.items.map((item) => {
         const qty = roundQuantity(item.quantity);
-        const unitPrice = roundMoney(item.unitPrice);
-        const gross = roundMoney(qty * unitPrice);
-        const discount = roundMoney(Math.min(item.discount || 0, gross));
-        const total = roundMoney(gross - discount);
-        subtotal = roundMoney(subtotal + total);
+        const { gross, discount, total } = calculateLineAmounts(
+          item.unitPrice,
+          qty,
+          item.discount || 0
+        );
+        subtotal += total;
         return {
           productId: item.productId,
           quantity: qty,
           unitName: item.unitName?.trim() || null,
           unitFactor: roundQuantity(item.unitFactor || 1),
-          unitPrice,
+          unitPrice: gross > 0 && qty > 0 ? Math.round(item.unitPrice) : 0,
           discount,
           total,
         };
       });
 
-      const discountAmount = roundMoney(Math.min(input.discountAmount || 0, subtotal));
-      const taxable = roundMoney(Math.max(0, subtotal - discountAmount));
-      const taxAmount = roundMoney(taxable * (taxRate / 100));
-      const totalAmount = roundMoney(taxable + taxAmount);
+      const orderTotals = calculateOrderTotals({
+        subtotal,
+        itemDiscountTotal: 0,
+        cartDiscount: input.discountAmount || 0,
+        promotionDiscount: 0,
+        loyaltyDiscount: 0,
+        taxRate,
+      });
+      const discountAmount = orderTotals.cartDiscountAmount;
+      const taxAmount = orderTotals.taxAmount;
+      const totalAmount = orderTotals.totalAmount;
 
       const dateStr = getMyanmarDateCompact();
       const counterKey = `QT-${dateStr}`;
@@ -139,9 +152,16 @@ export async function createQuotation(input: CreateQuotationInput, user: AuthUse
   return serializePrismaData(created);
 }
 
-export async function updateQuotation(id: string, input: UpdateQuotationInput) {
+export async function updateQuotation(
+  id: string,
+  input: UpdateQuotationInput,
+  user: AuthUser
+) {
   const existing = await prisma.quotation.findUnique({ where: { id } });
   if (!existing) throw new ApiError('Quotation not found', 404);
+  if (user.role === 'CASHIER' && existing.userId !== user.id) {
+    throw new ApiError('You can only modify your own quotations', 403);
+  }
   if (existing.status === 'CONVERTED') {
     throw new ApiError('Converted quotations cannot be modified', 409);
   }
@@ -159,9 +179,12 @@ export async function updateQuotation(id: string, input: UpdateQuotationInput) {
   return serializePrismaData(updated);
 }
 
-export async function deleteQuotation(id: string) {
+export async function deleteQuotation(id: string, user: AuthUser) {
   const existing = await prisma.quotation.findUnique({ where: { id } });
   if (!existing) throw new ApiError('Quotation not found', 404);
+  if (user.role === 'CASHIER' && existing.userId !== user.id) {
+    throw new ApiError('You can only cancel your own quotations', 403);
+  }
   if (existing.status === 'CONVERTED') {
     throw new ApiError('Converted quotations cannot be cancelled', 409);
   }

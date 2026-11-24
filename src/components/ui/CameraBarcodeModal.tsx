@@ -26,13 +26,22 @@ export function CameraBarcodeModal({
   const lastCodeTimeRef = useRef<{ code: string; at: number }>({ code: '', at: 0 });
   const onDetectedRef = useRef(onDetected);
   const onCloseRef = useRef(onClose);
+  const tRef = useRef(t);
   onDetectedRef.current = onDetected;
   onCloseRef.current = onClose;
+  tRef.current = t;
 
   useEffect(() => {
     if (!isOpen) return;
     let active = true;
     let stopControls: { stop: () => void } | null = null;
+    const videoEl = videoRef.current;
+
+    const stopTracks = () => {
+      const stream = (videoEl?.srcObject ?? videoRef.current?.srcObject) as MediaStream | null;
+      stream?.getTracks().forEach((track) => track.stop());
+      if (videoEl) videoEl.srcObject = null;
+    };
 
     async function startScanner() {
       setError(null);
@@ -40,30 +49,31 @@ export function CameraBarcodeModal({
         const { BrowserMultiFormatReader } = await import('@zxing/browser');
         if (!active) return;
 
-        const videoDevices = await BrowserMultiFormatReader.listVideoInputDevices();
+        const rawDevices = await BrowserMultiFormatReader.listVideoInputDevices();
         if (!active) return;
+
+        // Sort so rear/environment camera is always index 0 (Switch Camera cycles cleanly)
+        const videoDevices = [...rawDevices].sort((a, b) => {
+          const aBack = /back|rear|environment/i.test(a.label) ? 0 : 1;
+          const bBack = /back|rear|environment/i.test(b.label) ? 0 : 1;
+          return aBack - bBack;
+        });
         setDevices(videoDevices);
 
         if (videoDevices.length === 0) {
-          setError(t('No camera detected on this device.', 'ဤစက်တွင် ကင်မရာမတွေ့ပါ။'));
+          setError(tRef.current('No camera detected on this device.', 'ဤစက်တွင် ကင်မရာမတွေ့ပါ။'));
           return;
         }
 
-        // Prefer rear/environment camera by default on first open
-        let chosen = videoDevices[deviceIdx % videoDevices.length];
-        if (deviceIdx === 0) {
-          const backCam = videoDevices.find((d) =>
-            /back|rear|environment/i.test(d.label)
-          );
-          if (backCam) chosen = backCam;
-        }
+        const chosen = videoDevices[deviceIdx % videoDevices.length];
 
         const reader = new BrowserMultiFormatReader();
-        if (!videoRef.current) return;
+        const targetVideo = videoEl ?? videoRef.current;
+        if (!targetVideo || !active) return;
 
-        stopControls = await reader.decodeFromVideoDevice(
+        const controls = await reader.decodeFromVideoDevice(
           chosen.deviceId,
-          videoRef.current,
+          targetVideo,
           (result) => {
             if (!active || !result) return;
             const code = result.getText().trim();
@@ -85,19 +95,26 @@ export function CameraBarcodeModal({
             }
           }
         );
+
+        if (!active) {
+          controls.stop();
+          stopTracks();
+          return;
+        }
+        stopControls = controls;
       } catch (err) {
         if (!active) return;
         const msg = err instanceof Error ? err.message : '';
         if (/denied|permission/i.test(msg)) {
           setError(
-            t(
+            tRef.current(
               'Camera permission denied. Please allow camera access in browser settings.',
               'ကင်မရာအသုံးပြုခွင့် ပိတ်ထားပါသည်။ Browser ဆက်တင်တွင် ခွင့်ပြုပေးပါ။'
             )
           );
         } else {
           setError(
-            t(
+            tRef.current(
               'Could not start camera scanner. Ensure HTTPS or localhost is used.',
               'ကင်မရာဖွင့်မရပါ။ HTTPS သို့မဟုတ် localhost ဖြင့် အသုံးပြုပါ။'
             )
@@ -115,10 +132,9 @@ export function CameraBarcodeModal({
       } catch {
         // ignore cleanup error
       }
-      const stream = videoRef.current?.srcObject as MediaStream | null;
-      stream?.getTracks().forEach((track) => track.stop());
+      stopTracks();
     };
-  }, [isOpen, deviceIdx, continuous, t]);
+  }, [isOpen, deviceIdx, continuous]);
 
   if (!isOpen) return null;
 

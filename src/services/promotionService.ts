@@ -3,6 +3,7 @@ import { ApiError, type AuthUser } from '@/lib/apiAuth';
 import { serializePrismaData } from '@/lib/number';
 import { parseMyanmarDateBoundary } from '@/lib/utils';
 import type { CreatePromotionInput, UpdatePromotionInput } from '@/lib/validations';
+import type { PromotionDTO, PromotionType } from '@/types';
 import { logAudit } from '@/services/auditService';
 
 const promotionInclude = {
@@ -22,15 +23,18 @@ function parsePromoBoundary(dateStr: string, endOfDay: boolean): Date {
   return d;
 }
 
-export async function listPromotions() {
+export async function listPromotions(): Promise<PromotionDTO[]> {
   const promos = await prisma.promotion.findMany({
     include: promotionInclude,
     orderBy: [{ isActive: 'desc' }, { startDate: 'desc' }],
   });
-  return serializePrismaData(promos);
+  return serializePrismaData(promos).map((p) => ({
+    ...p,
+    type: p.type as PromotionType,
+  }));
 }
 
-export async function listActivePromotions(now: Date = new Date()) {
+export async function listActivePromotions(now: Date = new Date()): Promise<PromotionDTO[]> {
   const promos = await prisma.promotion.findMany({
     where: {
       isActive: true,
@@ -40,7 +44,10 @@ export async function listActivePromotions(now: Date = new Date()) {
     include: promotionInclude,
     orderBy: { createdAt: 'desc' },
   });
-  return serializePrismaData(promos);
+  return serializePrismaData(promos).map((p) => ({
+    ...p,
+    type: p.type as PromotionType,
+  }));
 }
 
 export async function createPromotion(input: CreatePromotionInput, user: AuthUser) {

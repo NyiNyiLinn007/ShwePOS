@@ -35,6 +35,7 @@ export function SuppliersClient({
 
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>(initialSuppliers);
   const [search, setSearch] = useState('');
+  const [showInactive, setShowInactive] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<SupplierRecord | null>(null);
   const [formData, setFormData] = useState<SupplierFormInput>(emptySupplierForm);
@@ -49,15 +50,21 @@ export function SuppliersClient({
   const [repaying, setRepaying] = useState(false);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return suppliers;
+    const base = showInactive ? suppliers : suppliers.filter((s) => s.isActive !== false);
+    if (!search.trim()) return base;
     const q = search.toLowerCase();
-    return suppliers.filter(
+    return base.filter(
       (s) =>
         s.name.toLowerCase().includes(q) ||
         (s.contactPerson && s.contactPerson.toLowerCase().includes(q)) ||
         (s.phone && s.phone.includes(search))
     );
-  }, [suppliers, search]);
+  }, [suppliers, search, showInactive]);
+
+  const activeSupplierCount = useMemo(
+    () => suppliers.filter((s) => s.isActive !== false).length,
+    [suppliers]
+  );
 
   const totalPayables = useMemo(
     () => suppliers.reduce((sum, s) => sum + (s.creditBalance || 0), 0),
@@ -190,8 +197,31 @@ export function SuppliersClient({
         addToast(data.error || t('Failed to deactivate supplier', 'ရပ်ဆိုင်းမရပါ'), 'error');
         return;
       }
-      setSuppliers((prev) => prev.filter((s) => s.id !== supplier.id));
+      setSuppliers((prev) =>
+        prev.map((s) => (s.id === supplier.id ? { ...s, isActive: false } : s))
+      );
       addToast(t('Supplier deactivated', 'ပေးသွင်းသူ ရပ်ဆိုင်းပြီးပါပြီ'), 'success');
+    } catch {
+      addToast(t('Network error', 'ကွန်ရက်ချို့ယွင်းချက်'), 'error');
+    }
+  }
+
+  async function handleReactivate(supplier: SupplierRecord) {
+    try {
+      const res = await fetch(`/api/suppliers/${supplier.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        addToast(data.error || t('Failed to reactivate supplier', 'ပြန်ဖွင့်မရပါ'), 'error');
+        return;
+      }
+      setSuppliers((prev) =>
+        prev.map((s) => (s.id === supplier.id ? { ...s, isActive: true } : s))
+      );
+      addToast(t('Supplier reactivated', 'ပေးသွင်းသူ ပြန်လည်အသက်သွင်းပြီးပါပြီ'), 'success');
     } catch {
       addToast(t('Network error', 'ကွန်ရက်ချို့ယွင်းချက်'), 'error');
     }
@@ -233,7 +263,7 @@ export function SuppliersClient({
             <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', marginBottom: 4 }}>
               {t('Active Suppliers', 'လက်ရှိပေးသွင်းသူ')}
             </div>
-            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700 }}>{suppliers.length}</div>
+            <div style={{ fontSize: 'var(--text-2xl)', fontWeight: 700 }}>{activeSupplierCount}</div>
           </div>
           <div
             style={{
@@ -260,14 +290,37 @@ export function SuppliersClient({
           </div>
         </div>
 
-        <div style={{ marginBottom: 'var(--space-lg)', maxWidth: 400 }}>
-          <input
-            type="text"
-            className="input input-search"
-            placeholder={t('Search supplier by name, contact, phone...', 'ပေးသွင်းသူအမည်၊ ဖုန်းဖြင့် ရှာပါ...')}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+        <div
+          className="flex gap-md"
+          style={{ marginBottom: 'var(--space-lg)', alignItems: 'center', flexWrap: 'wrap' }}
+        >
+          <div style={{ flex: '1 1 280px', maxWidth: 400 }}>
+            <input
+              type="text"
+              className="input input-search"
+              placeholder={t('Search supplier by name, contact, phone...', 'ပေးသွင်းသူအမည်၊ ဖုန်းဖြင့် ရှာပါ...')}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <label
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 'var(--text-sm)',
+              color: 'var(--text-secondary)',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              style={{ width: 15, height: 15, accentColor: 'var(--primary)' }}
+            />
+            {t('Show inactive suppliers', 'ပိတ်ထားသော ပေးသွင်းသူများ ပြသရန်')}
+          </label>
         </div>
 
         {filtered.length === 0 ? (
@@ -290,14 +343,21 @@ export function SuppliersClient({
                   <th>{t('phone')}</th>
                   <th style={{ textAlign: 'center' }}>{t('Orders', 'အဝယ်အရေအတွက်')}</th>
                   <th style={{ textAlign: 'right' }}>{t('Payable Due', 'ပေးရန်ကျန်ငွေ')}</th>
-                  <th style={{ width: 150 }}>{t('actions')}</th>
+                  <th style={{ width: 170 }}>{t('actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((s) => (
-                  <tr key={s.id}>
+                  <tr key={s.id} style={s.isActive === false ? { opacity: 0.65 } : undefined}>
                     <td>
-                      <div style={{ fontWeight: 600 }}>{s.name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600 }}>
+                        <span>{s.name}</span>
+                        {s.isActive === false && (
+                          <span className="badge badge-neutral" style={{ fontSize: 10 }}>
+                            {t('Inactive', 'ပိတ်ထားသည်')}
+                          </span>
+                        )}
+                      </div>
                       {s.address && (
                         <div style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
                           {s.address}
@@ -345,7 +405,7 @@ export function SuppliersClient({
                         >
                           <Pencil size={15} strokeWidth={1.75} />
                         </button>
-                        {userRole === 'ADMIN' && (
+                        {userRole === 'ADMIN' && s.isActive !== false && (
                           <button
                             type="button"
                             className="btn btn-ghost btn-sm"
@@ -354,6 +414,16 @@ export function SuppliersClient({
                             style={{ color: 'var(--danger)' }}
                           >
                             <Trash2 size={15} strokeWidth={1.75} />
+                          </button>
+                        )}
+                        {userRole === 'ADMIN' && s.isActive === false && (
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleReactivate(s)}
+                            style={{ fontSize: 11, padding: '2px 8px' }}
+                          >
+                            {t('Restore', 'ပြန်ဖွင့်ရန်')}
                           </button>
                         )}
                       </div>

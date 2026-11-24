@@ -118,6 +118,27 @@ export function SaleA4InvoiceModal({ sale, onClose }: SaleA4InvoiceModalProps) {
               </div>
             </div>
 
+            {sale.status && sale.status !== 'COMPLETED' && (
+              <div
+                style={{
+                  textAlign: 'center',
+                  border: '2px solid #b91c1c',
+                  color: '#b91c1c',
+                  padding: '6px 10px',
+                  marginBottom: 14,
+                  fontWeight: 800,
+                  fontSize: 12,
+                  letterSpacing: '0.06em',
+                }}
+              >
+                {sale.status === 'VOIDED'
+                  ? t('VOIDED INVOICE', 'ပယ်ဖျက်ထားသော ဘောင်ချာ')
+                  : sale.status === 'REFUNDED'
+                    ? t('REFUNDED INVOICE', 'ပြန်အမ်းပြီး ဘောင်ချာ')
+                    : t('PARTIALLY REFUNDED INVOICE', 'တစ်စိတ်တစ်ပိုင်း ပြန်အမ်းပြီး ဘောင်ချာ')}
+              </div>
+            )}
+
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 16 }}>
               <thead>
                 <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #0f172a' }}>
@@ -150,7 +171,14 @@ export function SaleA4InvoiceModal({ sale, onClose }: SaleA4InvoiceModalProps) {
                         )}
                       </td>
                       <td style={{ padding: 6, textAlign: 'right', fontFamily: 'monospace' }}>
-                        {formatQuantity(item.quantity, soldUnit)} {soldUnit}
+                        <div>
+                          {formatQuantity(item.quantity, soldUnit)} {soldUnit}
+                        </div>
+                        {(item.refundedQuantity ?? 0) > 0 && (
+                          <div style={{ fontSize: 10, color: '#b91c1c' }}>
+                            −{formatQuantity(item.refundedQuantity!, soldUnit)} {t('refunded', 'ပြန်အမ်း')}
+                          </div>
+                        )}
                       </td>
                       {docType === 'INVOICE' && (
                         <>
@@ -189,8 +217,21 @@ export function SaleA4InvoiceModal({ sale, onClose }: SaleA4InvoiceModalProps) {
                     <span style={{ fontFamily: 'monospace' }}>{formatCurrency(sale.taxAmount)}</span>
                   </div>
                 )}
+                {sale.status === 'PARTIALLY_REFUNDED' &&
+                  sale.subtotal - sale.discountAmount + sale.taxAmount > sale.totalAmount && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', color: '#b91c1c' }}>
+                      <span>{t('Refunded Amount', 'ပြန်အမ်းငွေ')}</span>
+                      <span style={{ fontFamily: 'monospace' }}>
+                        −{formatCurrency(sale.subtotal - sale.discountAmount + sale.taxAmount - sale.totalAmount)}
+                      </span>
+                    </div>
+                  )}
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 4px', marginTop: 4, borderTop: '2px solid #0f172a', fontWeight: 800, fontSize: 15 }}>
-                  <span>{t('TOTAL', 'စုစုပေါင်းကျသင့်ငွေ')}</span>
+                  <span>
+                    {sale.status === 'PARTIALLY_REFUNDED'
+                      ? t('NET TOTAL', 'အသားတင်ကျသင့်ငွေ')
+                      : t('TOTAL', 'စုစုပေါင်းကျသင့်ငွေ')}
+                  </span>
                   <span style={{ fontFamily: 'monospace' }}>{formatCurrency(sale.totalAmount)}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>

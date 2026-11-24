@@ -36,6 +36,7 @@ export function SalesClient({ initialSales }: SalesClientProps) {
   const { language, t } = useI18n();
 
   const [sales, setSales] = useState<SaleRecord[]>(initialSales);
+  const [loadingRemote, setLoadingRemote] = useState(false);
   useEffect(() => {
     setSales(initialSales);
   }, [initialSales]);
@@ -49,6 +50,45 @@ export function SalesClient({ initialSales }: SalesClientProps) {
   const [printTargetSale, setPrintTargetSale] = useState<SaleRecord | null>(null);
   const [voidTarget, setVoidTarget] = useState<SaleRecord | null>(null);
   const [voidAction, setVoidAction] = useState<SaleRefundAction>('VOIDED');
+
+  // Query server when filters are active so sales beyond the initial 500 SSR cap are never hidden
+  useEffect(() => {
+    const hasFilter = Boolean(dateFrom || dateTo || paymentFilter || statusFilter);
+    if (!hasFilter) {
+      setSales(initialSales);
+      setLoadingRemote(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    if (dateFrom) params.set('startDate', dateFrom);
+    if (dateTo) params.set('endDate', dateTo);
+    if (paymentFilter) params.set('paymentMethod', paymentFilter);
+    if (statusFilter) params.set('status', statusFilter);
+    params.set('limit', '500');
+
+    setLoadingRemote(true);
+    fetch(`/api/sales?${params.toString()}`, { signal: controller.signal, cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Failed'))))
+      .then((data) => {
+        if (Array.isArray(data?.sales)) {
+          setSales(data.sales);
+        }
+      })
+      .catch((err) => {
+        if (err?.name !== 'AbortError') {
+          addToast(t('Failed to fetch filtered sales', 'အရောင်းမှတ်တမ်း စစ်ထုတ်မရပါ'), 'error');
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoadingRemote(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [dateFrom, dateTo, paymentFilter, statusFilter, initialSales, addToast, t]);
 
   const filteredSales = useMemo(() => {
     let result = sales;
@@ -282,8 +322,9 @@ export function SalesClient({ initialSales }: SalesClientProps) {
             </button>
           )}
           <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>
-            {filteredSales.length} {t('sale', 'ခု')}
-            {language !== 'mm' && filteredSales.length !== 1 ? 's' : ''}
+            {loadingRemote
+              ? t('Loading...', 'ရှာနေသည်...')
+              : `${filteredSales.length} ${t('sale', 'ခု')}${language !== 'mm' && filteredSales.length !== 1 ? 's' : ''}`}
           </div>
         </div>
 

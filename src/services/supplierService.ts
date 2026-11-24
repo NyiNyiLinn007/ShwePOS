@@ -6,6 +6,7 @@ import {
   RepaySupplierDebtInput,
 } from '@/lib/validations';
 import { roundMoney, serializePrismaData, toNumber } from '@/lib/number';
+import { summarizeShiftCash } from '@/lib/shiftUtils';
 import { logAudit } from '@/services/auditService';
 
 export async function listSuppliers(search?: string | null, includeInactive = false) {
@@ -22,45 +23,57 @@ export async function listSuppliers(search?: string | null, includeInactive = fa
     ];
   }
 
-  const suppliers = await prisma.supplier.findMany({
-    where,
-    include: {
-      purchaseOrders: {
-        where: { status: 'RECEIVED' },
-        select: {
-          id: true,
-          poNumber: true,
-          totalAmount: true,
-          dueAmount: true,
-          createdAt: true,
+  const [suppliers, poAggs] = await Promise.all([
+    prisma.supplier.findMany({
+      where,
+      include: {
+        purchaseOrders: {
+          where: { status: 'RECEIVED' },
+          select: {
+            id: true,
+            poNumber: true,
+            totalAmount: true,
+            dueAmount: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
         },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
-      },
-      payments: {
-        include: {
-          user: { select: { id: true, name: true } },
+        payments: {
+          include: {
+            user: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
         },
-        orderBy: { createdAt: 'desc' },
-        take: 10,
       },
-      _count: {
-        select: { purchaseOrders: true },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.purchaseOrder.groupBy({
+      by: ['supplierId'],
+      where: { status: 'RECEIVED' },
+      _sum: { totalAmount: true },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const poStatsMap = new Map(
+    poAggs.map((row) => [
+      row.supplierId,
+      {
+        totalPurchased: roundMoney(toNumber(row._sum.totalAmount)),
+        purchaseOrderCount: row._count._all,
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+    ])
+  );
 
   const formatted = suppliers.map((s) => {
-    const totalPurchased = s.purchaseOrders.reduce(
-      (sum, po) => roundMoney(sum + toNumber(po.totalAmount)),
-      0
-    );
+    const stats = poStatsMap.get(s.id);
     return {
       ...s,
       creditBalance: toNumber(s.creditBalance),
-      purchaseOrderCount: s._count.purchaseOrders,
-      totalPurchased,
+      purchaseOrderCount: stats?.purchaseOrderCount ?? 0,
+      totalPurchased: stats?.totalPurchased ?? 0,
     };
   });
 
@@ -114,16 +127,34 @@ export async function updateSupplier(id: string, input: UpdateSupplierInput) {
   return serializePrismaData(updated);
 }
 
-export async function deactivateSupplier(id: string) {
+export async function deactivateSupplier(id: string, user?: AuthUser) {
   const existing = await prisma.supplier.findUnique({ where: { id } });
   if (!existing) {
     throw new ApiError('Supplier not found', 404);
+  }
+  const outstanding = roundMoney(toNumber(existing.creditBalance));
+  if (outstanding > 0) {
+    throw new ApiError(
+      `Cannot deactivate supplier with outstanding payable balance (${outstanding} K). Settle debt first.`,
+      409
+    );
   }
 
   const updated = await prisma.supplier.update({
     where: { id },
     data: { isActive: false },
   });
+
+  if (user) {
+    await logAudit({
+      userId: user.id,
+      action: 'SETTINGS_UPDATED',
+      entityType: 'SUPPLIER',
+      entityId: existing.id,
+      summary: `Deactivated supplier ${existing.name}`,
+      metadata: { supplierName: existing.name, deactivated: true },
+    });
+  }
 
   return serializePrismaData(updated);
 }
@@ -161,30 +192,42 @@ export async function repaySupplierDebt(
       );
     }
 
-    // Optional cash drawer PAID_OUT if paying supplier from an active register
+    // Atomically decrement creditBalance with gte guard (prevents concurrent negative balance)
+    const decremented = await tx.supplier.updateMany({
+      where: { id: supplier.id, creditBalance: { gte: amount } },
+      data: { creditBalance: { decrement: amount } },
+    });
+    if (decremented.count === 0) {
+      throw new ApiError(
+        `Payment amount (${amount}) exceeds current outstanding payable balance`,
+        409
+      );
+    }
+
+    // Only deduct cash PAID_OUT from the acting user's OWN open register and only if drawer has enough cash
     if (input.method === 'CASH') {
-      const openShift =
-        (await tx.shift.findFirst({
-          where: { userId: user.id, status: 'OPEN' },
-          select: { id: true },
-          orderBy: { openedAt: 'desc' },
-        })) ??
-        (await tx.shift.findFirst({
-          where: { status: 'OPEN' },
-          select: { id: true },
-          orderBy: { openedAt: 'desc' },
-        }));
+      const openShift = await tx.shift.findFirst({
+        where: { userId: user.id, status: 'OPEN' },
+        include: { cashDrawerMovements: { select: { type: true, amount: true } } },
+        orderBy: { openedAt: 'desc' },
+      });
 
       if (openShift) {
-        await tx.cashDrawerMovement.create({
-          data: {
-            shiftId: openShift.id,
-            userId: user.id,
-            type: 'PAID_OUT',
-            amount: -amount,
-            reason: `Supplier payment to ${supplier.name}${input.notes ? `: ${input.notes}` : ''}`,
-          },
-        });
+        const drawerSummary = summarizeShiftCash(
+          openShift.openingCash,
+          openShift.cashDrawerMovements
+        );
+        if (amount <= drawerSummary.expectedCash) {
+          await tx.cashDrawerMovement.create({
+            data: {
+              shiftId: openShift.id,
+              userId: user.id,
+              type: 'PAID_OUT',
+              amount,
+              reason: `Supplier payment to ${supplier.name}${input.notes ? `: ${input.notes}` : ''}`,
+            },
+          });
+        }
       }
     }
 
@@ -202,11 +245,36 @@ export async function repaySupplierDebt(
       },
     });
 
-    const updatedSupplier = await tx.supplier.update({
-      where: { id: supplier.id },
-      data: {
-        creditBalance: { decrement: amount },
+    // FIFO-settle oldest unpaid RECEIVED Purchase Orders so PO dueAmount & AP Aging stay accurate
+    const unpaidPos = await tx.purchaseOrder.findMany({
+      where: {
+        supplierId: supplier.id,
+        status: 'RECEIVED',
+        dueAmount: { gt: 0 },
       },
+      select: { id: true, paidAmount: true, dueAmount: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    let remainingToSettle = amount;
+    for (const po of unpaidPos) {
+      if (remainingToSettle <= 0) break;
+      const poDue = roundMoney(toNumber(po.dueAmount));
+      const applied = roundMoney(Math.min(poDue, remainingToSettle));
+      const nextDue = roundMoney(Math.max(0, poDue - applied));
+      const nextPaid = roundMoney(toNumber(po.paidAmount) + applied);
+      await tx.purchaseOrder.update({
+        where: { id: po.id },
+        data: {
+          dueAmount: nextDue,
+          paidAmount: nextPaid,
+        },
+      });
+      remainingToSettle = roundMoney(remainingToSettle - applied);
+    }
+
+    const updatedSupplier = await tx.supplier.findUniqueOrThrow({
+      where: { id: supplier.id },
     });
 
     const newCreditBalance = roundMoney(toNumber(updatedSupplier.creditBalance));

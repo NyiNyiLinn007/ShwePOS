@@ -153,8 +153,13 @@ function getDateRange(preset: DatePreset): { start: string; end: string } {
 }
 
 function formatShortDate(dateStr: string): string {
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const d = new Date(dateStr + 'T00:00:00+06:30');
+  if (Number.isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'Asia/Yangon',
+  });
 }
 
 function formatCompact(value: number): string {
@@ -269,18 +274,28 @@ export function ReportsClient() {
         return;
       }
 
-      setActiveRange({ start, end });
       const res = await fetch(`/api/reports?startDate=${start}&endDate=${end}`);
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
+      if (!res.ok) {
+        let message = t('Failed to load reports', 'အစီရင်ခံစာများ ဖတ်မရပါ');
+        try {
+          const errJson = await res.json();
+          if (errJson?.error) message = errJson.error;
+        } catch {
+          // ignore JSON parse failure
+        }
+        addToast(message, 'error');
+        return;
       }
+      const json = await res.json();
+      setData(json);
+      setActiveRange({ start, end });
     } catch (err) {
       console.error('Failed to fetch reports:', err);
+      addToast(t('Failed to load reports', 'အစီရင်ခံစာများ ဖတ်မရပါ'), 'error');
     } finally {
       setLoading(false);
     }
-  }, [preset, customStart, customEnd]);
+  }, [preset, customStart, customEnd, addToast, t]);
 
   useEffect(() => {
     fetchReports();
@@ -320,10 +335,10 @@ export function ReportsClient() {
       count: c.count,
     })) || [];
 
-  // Prepare hourly data - filter to relevant hours
+  // Prepare hourly data - keep business hours (06:00-22:00) plus any overnight hours with sales
   const hourlyData =
     data?.hourlyDistribution.filter(
-      (h) => h.hour >= 6 && h.hour <= 22
+      (h) => (h.hour >= 6 && h.hour <= 22) || h.revenue > 0 || h.count > 0
     ) || [];
 
   return (

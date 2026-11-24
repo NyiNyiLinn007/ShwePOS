@@ -4,7 +4,7 @@ import { requirePageRole } from '@/lib/pageAuth';
 import { toNumber } from '@/lib/number';
 
 export default async function ProductsPage() {
-  await requirePageRole('MANAGER', 'ADMIN');
+  const session = await requirePageRole('MANAGER', 'ADMIN');
 
   const [products, categories] = await Promise.all([
     prisma.product.findMany({
@@ -23,8 +23,7 @@ export default async function ProductsPage() {
       orderBy: { createdAt: 'desc' },
     }),
     prisma.category.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
+      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     }),
   ]);
 
@@ -46,5 +45,11 @@ export default async function ProductsPage() {
     })),
   }));
 
-  return <ProductsClient initialProducts={serializedProducts} categories={categories} />;
+  return (
+    <ProductsClient
+      initialProducts={serializedProducts}
+      categories={categories}
+      userRole={session.user.role}
+    />
+  );
 }

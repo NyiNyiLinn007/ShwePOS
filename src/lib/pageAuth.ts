@@ -31,7 +31,7 @@ export async function requirePageAuth() {
   });
 
   if (!dbUser || !dbUser.isActive || tokenVersion !== dbUser.sessionVersion) {
-    redirect('/login');
+    redirect('/login?reason=session_expired');
   }
 
   // Return database-derived role/name/email so page authorization does not

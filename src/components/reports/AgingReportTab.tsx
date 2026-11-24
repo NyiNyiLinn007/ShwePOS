@@ -1,29 +1,29 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, getMyanmarDateKey } from '@/lib/utils';
+import { escapeCsvCell } from '@/lib/csv';
 import { printElementById } from '@/lib/print';
 import { Download, Printer, RefreshCw, Users, Truck } from '@/components/ui/Icons';
 import type { AgingAccountRow, AgingReport } from '@/services/agingService';
 
 function downloadAgingCsv(report: AgingReport) {
-  const esc = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = [
-    ['Type', 'Account', 'Phone', '0-30 Days', '31-60 Days', '61-90 Days', '90+ Days', 'Total Due'].map(esc).join(','),
+    ['Type', 'Account', 'Phone', '0-30 Days', '31-60 Days', '61-90 Days', '90+ Days', 'Total Due'].map(escapeCsvCell).join(','),
     ...report.receivables.map((r) =>
-      ['AR (Customer)', r.name, r.phone || '', r.d0_30, r.d31_60, r.d61_90, r.d90_plus, r.totalDue].map(esc).join(',')
+      ['AR (Customer)', r.name, r.phone || '', r.d0_30, r.d31_60, r.d61_90, r.d90_plus, r.totalDue].map(escapeCsvCell).join(',')
     ),
     ...report.payables.map((p) =>
-      ['AP (Supplier)', p.name, p.phone || '', p.d0_30, p.d31_60, p.d61_90, p.d90_plus, p.totalDue].map(esc).join(',')
+      ['AP (Supplier)', p.name, p.phone || '', p.d0_30, p.d31_60, p.d61_90, p.d90_plus, p.totalDue].map(escapeCsvCell).join(',')
     ),
   ];
   const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `shwepos-aging-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `shwepos-aging-${getMyanmarDateKey()}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -38,17 +38,20 @@ export function AgingReportTab() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'AR' | 'AP'>('AR');
 
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const fetchAging = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch('/api/reports/aging');
       if (res.ok) setData(await res.json());
     } catch {
-      addToast(t('Failed to load aging report', 'အကြွေးသက်တမ်းစစ်တမ်း ဖတ်မရပါ'), 'error');
+      addToast(tRef.current('Failed to load aging report', 'အကြွေးသက်တမ်းစစ်တမ်း ဖတ်မရပါ'), 'error');
     } finally {
       setLoading(false);
     }
-  }, [addToast, t]);
+  }, [addToast]);
 
   useEffect(() => {
     void fetchAging();

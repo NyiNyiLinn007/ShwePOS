@@ -23,22 +23,27 @@ export function summarizeShiftCash(
   let refunds = 0;
   let paidIn = 0;
   let paidOut = 0;
+  let movementCount = 0;
 
   for (const movement of movements) {
     const amount = Math.abs(toNumber(movement.amount));
     switch (movement.type) {
       case 'CASH_SALE':
         cashSales += amount;
+        movementCount += 1;
         break;
       case 'REFUND':
       case 'VOID':
         refunds += amount;
+        movementCount += 1;
         break;
       case 'PAID_IN':
         paidIn += amount;
+        movementCount += 1;
         break;
       case 'PAID_OUT':
         paidOut += amount;
+        movementCount += 1;
         break;
       default:
         break;
@@ -51,6 +56,6 @@ export function summarizeShiftCash(
     paidIn: roundMoney(paidIn),
     paidOut: roundMoney(paidOut),
     expectedCash: roundMoney(toNumber(openingCash) + cashSales - refunds + paidIn - paidOut),
-    movementCount: movements.length,
+    movementCount,
   };
 }

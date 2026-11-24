@@ -12,7 +12,14 @@ export default async function QuotationsPage() {
   const [quotations, customers, products, settings] = await Promise.all([
     listQuotations(),
     prisma.customer.findMany({
-      select: { id: true, name: true, phone: true },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        loyaltyPoints: true,
+        creditBalance: true,
+        creditLimit: true,
+      },
       orderBy: { name: 'asc' },
     }),
     prisma.product.findMany({
@@ -25,6 +32,15 @@ export default async function QuotationsPage() {
     prisma.settings.findFirst({ where: { id: 'default' } }),
   ]);
 
+  const serializedCustomers = customers.map((c) => ({
+    id: c.id,
+    name: c.name,
+    phone: c.phone,
+    loyaltyPoints: c.loyaltyPoints,
+    creditBalance: toNumber(c.creditBalance),
+    creditLimit: c.creditLimit !== null && toNumber(c.creditLimit) > 0 ? toNumber(c.creditLimit) : null,
+  }));
+
   const serializedProducts = products.map((p) => ({
     id: p.id,
     name: p.name,
@@ -33,6 +49,7 @@ export default async function QuotationsPage() {
     unit: p.unit,
     categoryId: p.categoryId,
     imageUrl: p.imageUrl,
+    costPrice: toNumber(p.costPrice),
     sellingPrice: toNumber(p.sellingPrice),
     stockQuantity: toNumber(p.stockQuantity),
     productUnits: p.productUnits.map((u) => ({
@@ -49,7 +66,7 @@ export default async function QuotationsPage() {
   return (
     <QuotationsClient
       initialQuotations={quotations}
-      customers={customers}
+      customers={serializedCustomers}
       products={serializedProducts}
       defaultTaxRate={settings?.taxRate ?? 0}
     />

@@ -39,6 +39,7 @@ export interface ProductCategoryOption {
   id: string;
   name: string;
   nameMm: string | null;
+  isActive?: boolean;
 }
 
 export const PRODUCT_UNITS = [
@@ -49,6 +50,7 @@ export const PRODUCT_UNITS = [
   { value: 'ml', en: 'Milliliter (ml)', mm: 'မီလီလီတာ (ml)' },
   { value: 'pack', en: 'Pack', mm: 'ထုပ် (pack)' },
   { value: 'box', en: 'Box', mm: 'ဘူး/ဖာ (box)' },
+  { value: 'bottle', en: 'Bottle', mm: 'ပုလင်း (bottle)' },
   { value: 'dozen', en: 'Dozen', mm: 'ဒါဇင် (dozen)' },
   { value: 'set', en: 'Set', mm: 'စုံ (set)' },
 ];
@@ -231,11 +233,14 @@ export function ProductFormModal({
                 onChange={(e) => onChange('categoryId', e.target.value)}
               >
                 <option value="">{t('Select category', 'အမျိုးအစား ရွေးချယ်ပါ')}</option>
-                {categories.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {language === 'mm' && cat.nameMm ? `${cat.nameMm} (${cat.name})` : `${cat.name}${cat.nameMm ? ` (${cat.nameMm})` : ''}`}
-                  </option>
-                ))}
+                {categories
+                  .filter((cat) => cat.isActive !== false || cat.id === formData.categoryId)
+                  .map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {language === 'mm' && cat.nameMm ? `${cat.nameMm} (${cat.name})` : `${cat.name}${cat.nameMm ? ` (${cat.nameMm})` : ''}`}
+                      {cat.isActive === false ? ` [${t('Inactive', 'ပိတ်ထားသည်')}]` : ''}
+                    </option>
+                  ))}
               </select>
               {formErrors.categoryId && (
                 <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
@@ -310,8 +315,17 @@ export function ProductFormModal({
                 className={`input ${formErrors.stockQuantity ? 'input-error' : ''}`}
                 placeholder="0"
                 value={formData.stockQuantity}
+                disabled={isEditing}
                 onChange={(e) => onChange('stockQuantity', e.target.value)}
               />
+              {isEditing && (
+                <span style={{ fontSize: 'var(--text-xs)', color: 'var(--text-muted)' }}>
+                  {t(
+                    'Adjust stock via Inventory or Stocktake for audit trail',
+                    'Stock ပြင်ဆင်ရန် Inventory သို့မဟုတ် Stocktake စာမျက်နှာမှ ဆောင်ရွက်ပါ'
+                  )}
+                </span>
+              )}
               {formErrors.stockQuantity && (
                 <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
                   {formErrors.stockQuantity}

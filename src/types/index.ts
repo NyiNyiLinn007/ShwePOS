@@ -287,6 +287,12 @@ export interface StocktakeItemDTO {
     barcode: string | null;
     unit: string;
     category?: { id: string; name: string; nameMm: string | null };
+    productUnits?: Array<{
+      id: string;
+      unitName: string;
+      conversionFactor: number;
+      barcode: string | null;
+    }>;
   };
 }
 
@@ -394,6 +400,7 @@ export interface QuotationDTO {
 
 /** A single item in the POS cart, including product info, unit packaging, and price override. */
 export interface CartItem {
+  lineKey?: string;
   productId: string;
   categoryId?: string;
   name: string;

@@ -6,7 +6,7 @@ import { toNumber } from '@/lib/number';
 export const dynamic = 'force-dynamic';
 
 export default async function CustomersPage() {
-  await requirePageRole('MANAGER', 'ADMIN');
+  const session = await requirePageRole('MANAGER', 'ADMIN');
 
   const customers = await prisma.customer.findMany({
     include: {
@@ -46,6 +46,19 @@ export default async function CustomersPage() {
     );
     const lastSale = customer.sales[0] || null;
 
+    // Include ALL unpaid credit sales alongside the latest 20 sales so Credit Statements never truncate debt
+    const unpaidSales = customer.sales.filter(
+      (s) =>
+        (s.status === 'COMPLETED' || s.status === 'PARTIALLY_REFUNDED') &&
+        toNumber(s.dueAmount) > 0
+    );
+    const mergedMap = new Map<string, (typeof customer.sales)[number]>();
+    for (const s of customer.sales.slice(0, 20)) mergedMap.set(s.id, s);
+    for (const s of unpaidSales) mergedMap.set(s.id, s);
+    const mergedSales = Array.from(mergedMap.values()).sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
+    );
+
     return {
       id: customer.id,
       name: customer.name,
@@ -63,7 +76,7 @@ export default async function CustomersPage() {
       updatedAt: customer.updatedAt.toISOString(),
       purchaseCount: completedSales.length,
       lastPurchaseDate: lastSale?.createdAt ? lastSale.createdAt.toISOString() : null,
-      recentSales: customer.sales.slice(0, 20).map((s) => ({
+      recentSales: mergedSales.map((s) => ({
         id: s.id,
         invoiceNumber: s.invoiceNumber,
         totalAmount: toNumber(s.totalAmount),
@@ -84,5 +97,5 @@ export default async function CustomersPage() {
     };
   });
 
-  return <CustomersClient initialCustomers={customersWithStats} />;
+  return <CustomersClient initialCustomers={customersWithStats} userRole={session.user.role} />;
 }

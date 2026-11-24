@@ -1,15 +1,15 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, getMyanmarDateKey } from '@/lib/utils';
+import { escapeCsvCell } from '@/lib/csv';
 import { printElementById } from '@/lib/print';
 import { Download, Printer, UserCog } from '@/components/ui/Icons';
 import type { CashierPerformanceReport } from '@/services/cashierAnalyticsService';
 
 function downloadCashierCsv(report: CashierPerformanceReport) {
-  const esc = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const lines = [
     [
       'Staff Name',
@@ -19,12 +19,15 @@ function downloadCashierCsv(report: CashierPerformanceReport) {
       'Avg Basket',
       'Discounts',
       'Price Overrides',
-      'Voids/Refunds',
-      'Void/Refund Amt',
+      'Voids/Refunds (Sales)',
+      'Void/Refund Amt (Sales)',
+      'Approved Voids/Refunds',
+      'Approved Amt',
       'Closed Shifts',
       'Net Cash Variance',
+      'Total Abs Variance',
     ]
-      .map(esc)
+      .map(escapeCsvCell)
       .join(','),
     ...report.cashiers.map((c) =>
       [
@@ -37,10 +40,13 @@ function downloadCashierCsv(report: CashierPerformanceReport) {
         c.priceOverrideCount,
         c.voidRefundCount,
         c.voidRefundAmount,
+        c.approvedVoidRefundCount,
+        c.approvedVoidRefundAmount,
         c.closedShiftCount,
         c.netCashVariance,
+        c.totalAbsCashVariance,
       ]
-        .map(esc)
+        .map(escapeCsvCell)
         .join(',')
     ),
   ];
@@ -48,7 +54,7 @@ function downloadCashierCsv(report: CashierPerformanceReport) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `shwepos-cashier-performance-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `shwepos-cashier-performance-${getMyanmarDateKey()}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -67,6 +73,9 @@ export function CashierPerformanceTab({
   const [data, setData] = useState<CashierPerformanceReport | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const fetchPerf = useCallback(async () => {
     setLoading(true);
     try {
@@ -75,11 +84,11 @@ export function CashierPerformanceTab({
       );
       if (res.ok) setData(await res.json());
     } catch {
-      addToast(t('Failed to load cashier analytics', 'ဝန်ထမ်းစွမ်းဆောင်ရည် ဖတ်မရပါ'), 'error');
+      addToast(tRef.current('Failed to load cashier analytics', 'ဝန်ထမ်းစွမ်းဆောင်ရည် ဖတ်မရပါ'), 'error');
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, addToast, t]);
+  }, [startDate, endDate, addToast]);
 
   useEffect(() => {
     void fetchPerf();
@@ -163,6 +172,11 @@ export function CashierPerformanceTab({
               {data.totals.netCashVariance > 0 ? '+' : ''}
               {formatCurrency(data.totals.netCashVariance)}
             </div>
+            {data.totals.totalAbsCashVariance > Math.abs(data.totals.netCashVariance) && (
+              <div style={{ fontSize: 'var(--text-xs)', color: 'var(--warning)', marginTop: 2 }}>
+                {t('Gross Abs', 'စုစုပေါင်းကွာဟ')}: {formatCurrency(data.totals.totalAbsCashVariance)}
+              </div>
+            )}
           </div>
         </div>
 
@@ -187,6 +201,7 @@ export function CashierPerformanceTab({
                     <th style={{ textAlign: 'right' }}>{t('Discounts', 'လျှော့ဈေး')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Overrides', 'ဈေးပြင်')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Void/Refund', 'ပယ်/ပြန်အမ်း')}</th>
+                    <th style={{ textAlign: 'right' }}>{t('Approved Voids', 'အတည်ပြုပယ်ဖျက်')}</th>
                     <th style={{ textAlign: 'right' }}>{t('Shift Variance', 'ငွေကွာဟမှု')}</th>
                   </tr>
                 </thead>
@@ -215,6 +230,9 @@ export function CashierPerformanceTab({
                       <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: c.voidRefundCount > 0 ? 'var(--danger)' : 'var(--text-muted)' }}>
                         {c.voidRefundCount > 0 ? `${c.voidRefundCount} (${formatCurrency(c.voidRefundAmount)})` : '0'}
                       </td>
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: c.approvedVoidRefundCount > 0 ? 'var(--warning)' : 'var(--text-muted)', fontWeight: c.approvedVoidRefundCount > 0 ? 600 : 400 }}>
+                        {c.approvedVoidRefundCount > 0 ? `${c.approvedVoidRefundCount} (${formatCurrency(c.approvedVoidRefundAmount)})` : '0'}
+                      </td>
                       <td
                         style={{
                           textAlign: 'right',
@@ -225,11 +243,20 @@ export function CashierPerformanceTab({
                               ? 'var(--danger)'
                               : c.netCashVariance > 0
                                 ? 'var(--success)'
-                                : 'var(--text-muted)',
+                                : c.totalAbsCashVariance > 0
+                                  ? 'var(--warning)'
+                                  : 'var(--text-muted)',
                         }}
                       >
-                        {c.netCashVariance > 0 ? '+' : ''}
-                        {formatCurrency(c.netCashVariance)}
+                        <div>
+                          {c.netCashVariance > 0 ? '+' : ''}
+                          {formatCurrency(c.netCashVariance)}
+                        </div>
+                        {c.totalAbsCashVariance > Math.abs(c.netCashVariance) && (
+                          <div style={{ fontSize: 10, fontWeight: 500, color: 'var(--warning)' }}>
+                            ±{formatCurrency(c.totalAbsCashVariance)}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -59,7 +59,9 @@ export const authConfig: NextAuthConfig = {
       const isOnLogin = request.nextUrl.pathname === '/login';
 
       if (isOnLogin) {
-        if (isLoggedIn) {
+        const isExpiredBounce =
+          request.nextUrl.searchParams.get('reason') === 'session_expired';
+        if (isLoggedIn && !isExpiredBounce) {
           return Response.redirect(new URL('/', request.nextUrl));
         }
         return true;

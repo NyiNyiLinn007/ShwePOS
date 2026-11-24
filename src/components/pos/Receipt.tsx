@@ -14,11 +14,13 @@ export interface ReceiptData {
   items: Array<{
     name: string;
     quantity: number;
+    refundedQuantity?: number;
     unitPrice: number;
     discount?: number;
     total: number;
     unit?: string;
   }>;
+  status?: string;
   subtotal: number;
   discountAmount: number;
   taxAmount: number;
@@ -209,6 +211,27 @@ export default function Receipt({ data, onNewSale, closeLabel }: ReceiptProps) {
             }}
           />
 
+          {/* Status Watermark Banner for Voided / Refunded Reprints */}
+          {data.status && data.status !== 'COMPLETED' && (
+            <div
+              style={{
+                textAlign: 'center',
+                border: '1px solid #000',
+                padding: '4px 8px',
+                marginBottom: 'var(--space-sm)',
+                fontWeight: 800,
+                fontSize: 'var(--text-xs)',
+                letterSpacing: '0.06em',
+              }}
+            >
+              {data.status === 'VOIDED'
+                ? t('VOIDED RECEIPT', 'ပယ်ဖျက်ထားသော ဘောင်ချာ')
+                : data.status === 'REFUNDED'
+                  ? t('REFUNDED RECEIPT', 'ပြန်အမ်းပြီး ဘောင်ချာ')
+                  : t('PARTIALLY REFUNDED', 'တစ်စိတ်တစ်ပိုင်း ပြန်အမ်းပြီး')}
+            </div>
+          )}
+
           {/* Line Items */}
           <div style={{ marginBottom: 'var(--space-md)' }}>
             {data.items.map((item, index) => (
@@ -221,6 +244,11 @@ export default function Receipt({ data, onNewSale, closeLabel }: ReceiptProps) {
                   </span>
                   <span>{formatCurrency(item.total)}</span>
                 </div>
+                {(item.refundedQuantity ?? 0) > 0 && (
+                  <div style={{ fontSize: '10px', color: 'var(--danger)' }}>
+                    {t('Refunded', 'ပြန်အမ်းပြီး')}: {formatQuantity(item.refundedQuantity!)} {item.unit || ''}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -254,6 +282,18 @@ export default function Receipt({ data, onNewSale, closeLabel }: ReceiptProps) {
                 <span>{formatCurrency(data.taxAmount)}</span>
               </div>
             )}
+            {data.status === 'PARTIALLY_REFUNDED' &&
+              data.subtotal - data.discountAmount + data.taxAmount > data.totalAmount && (
+                <div
+                  className="flex justify-between"
+                  style={{ marginBottom: '4px', color: 'var(--danger)' }}
+                >
+                  <span>{t('Refunded Amount', 'ပြန်အမ်းငွေ')}</span>
+                  <span>
+                    −{formatCurrency(data.subtotal - data.discountAmount + data.taxAmount - data.totalAmount)}
+                  </span>
+                </div>
+              )}
             <div
               className="flex justify-between"
               style={{
@@ -265,7 +305,11 @@ export default function Receipt({ data, onNewSale, closeLabel }: ReceiptProps) {
                 marginTop: 'var(--space-sm)',
               }}
             >
-              <span>{t('total').toUpperCase()}</span>
+              <span>
+                {data.status === 'PARTIALLY_REFUNDED'
+                  ? t('NET TOTAL', 'အသားတင်စုစုပေါင်း')
+                  : t('total').toUpperCase()}
+              </span>
               <span>{formatCurrency(data.totalAmount)}</span>
             </div>
           </div>

@@ -14,8 +14,8 @@ export async function GET(request: NextRequest) {
         endDate: searchParams.get('endDate'),
         status: searchParams.get('status'),
         paymentMethod: searchParams.get('paymentMethod'),
-        page: parseInt(searchParams.get('page') || '1', 10),
-        limit: parseInt(searchParams.get('limit') || '50', 10),
+        page: parseInt(searchParams.get('page') || '1', 10) || 1,
+        limit: parseInt(searchParams.get('limit') || '50', 10) || 50,
       },
       user
     );

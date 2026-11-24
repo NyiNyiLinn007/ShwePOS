@@ -12,6 +12,26 @@ const dateStringSchema = z.string().max(40).refine(
   'Date must be a valid ISO/date string'
 );
 
+const SAFE_RASTER_DATA_URL_REGEX = /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=]+$/i;
+
+export function isSafeImageUrl(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  if (SAFE_RASTER_DATA_URL_REGEX.test(trimmed)) return true;
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return true;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+const safeImageUrlSchema = z
+  .string()
+  .max(500000)
+  .refine(isSafeImageUrl, 'Image must be an http(s) URL, relative path, or PNG/JPEG/WebP/GIF image');
+
 // ---- Shared Enums ----
 
 export const PaymentMethodEnum = z.enum(['CASH', 'CARD', 'MOBILE_BANKING', 'CREDIT', 'SPLIT']);
@@ -24,10 +44,10 @@ export const ProductUnitEnum = z.enum(['pcs', 'kg', 'g', 'liter', 'ml', 'pack', 
 // ---- Category Schemas ----
 
 export const createCategorySchema = z.object({
-  name: z.string().min(1, 'Category name is required').max(100),
-  nameMm: z.string().max(100).optional().nullable(),
-  description: z.string().max(500).optional().nullable(),
-  slug: z.string().min(1, 'Slug is required').max(100),
+  name: z.string().trim().min(1, 'Category name is required').max(100),
+  nameMm: z.string().trim().max(100).optional().nullable(),
+  description: z.string().trim().max(500).optional().nullable(),
+  slug: z.string().trim().min(1, 'Slug is required').max(100),
   isActive: z.boolean().optional().default(true),
 });
 
@@ -40,26 +60,26 @@ export type UpdateCategoryInput = z.infer<typeof updateCategorySchema>;
 
 export const productUnitInputSchema = z.object({
   id: z.string().optional(),
-  unitName: z.string().min(1, 'Unit name is required').max(30),
-  nameMm: z.string().max(50).optional().nullable(),
+  unitName: z.string().trim().min(1, 'Unit name is required').max(30),
+  nameMm: z.string().trim().max(50).optional().nullable(),
   conversionFactor: positiveQuantitySchema,
-  sellingPrice: moneySchema,
-  barcode: z.string().max(50).optional().nullable(),
+  sellingPrice: moneySchema.positive('Unit selling price must be greater than zero'),
+  barcode: z.string().trim().max(50).optional().nullable(),
 });
 
 export const createProductSchema = z.object({
-  name: z.string().min(1, 'Product name is required').max(200),
-  nameMm: z.string().max(200).optional().nullable(),
-  sku: z.string().min(1, 'SKU is required').max(50),
-  barcode: z.string().max(50).optional().nullable(),
-  categoryId: z.string().min(1, 'Category is required'),
+  name: z.string().trim().min(1, 'Product name is required').max(200),
+  nameMm: z.string().trim().max(200).optional().nullable(),
+  sku: z.string().trim().min(1, 'SKU is required').max(50),
+  barcode: z.string().trim().max(50).optional().nullable(),
+  categoryId: z.string().trim().min(1, 'Category is required'),
   costPrice: moneySchema.default(0),
   sellingPrice: moneySchema.default(0),
   stockQuantity: quantitySchema.default(0),
   lowStockThreshold: quantitySchema.default(10),
   unit: ProductUnitEnum.default('pcs'),
-  imageUrl: z.string().max(500000).optional().nullable(),
-  batchNumber: z.string().max(100).optional().nullable(),
+  imageUrl: safeImageUrlSchema.optional().nullable(),
+  batchNumber: z.string().trim().max(100).optional().nullable(),
   expiryDate: dateStringSchema.optional().nullable(),
   isActive: z.boolean().optional().default(true),
   productUnits: z.array(productUnitInputSchema).max(10).optional(),
@@ -111,7 +131,7 @@ export const refundItemInputSchema = z.object({
 
 export const updateSaleStatusSchema = z.object({
   status: z.enum(['REFUNDED', 'VOIDED', 'PARTIALLY_REFUNDED']),
-  reason: z.string().min(1, 'Reason is required for refund/void').max(500),
+  reason: z.string().trim().min(1, 'Reason is required for refund/void').max(500),
   refundMethod: z.enum(['ORIGINAL', 'CASH']).optional().default('ORIGINAL'),
   items: z.array(refundItemInputSchema).optional(),
 });
@@ -121,10 +141,10 @@ export type UpdateSaleStatusInput = z.infer<typeof updateSaleStatusSchema>;
 // ---- Inventory / Stock Movement Schemas ----
 
 export const inventoryMovementSchema = z.object({
-  productId: z.string().min(1, 'Product ID is required'),
+  productId: z.string().trim().min(1, 'Product ID is required'),
   quantity: quantitySchema,
   type: MovementTypeEnum,
-  reason: z.string().min(1, 'Reason is required').max(500),
+  reason: z.string().trim().min(1, 'Reason is required').max(500),
 });
 
 export type InventoryMovementInput = z.infer<typeof inventoryMovementSchema>;
@@ -132,10 +152,10 @@ export type InventoryMovementInput = z.infer<typeof inventoryMovementSchema>;
 // ---- Customer Schemas ----
 
 export const createCustomerSchema = z.object({
-  name: z.string().min(1, 'Customer name is required').max(200),
-  phone: z.string().max(20).optional().nullable(),
-  email: z.string().email('Invalid email').max(200).optional().nullable(),
-  address: z.string().max(500).optional().nullable(),
+  name: z.string().trim().min(1, 'Customer name is required').max(200),
+  phone: z.string().trim().max(20).optional().nullable(),
+  email: z.string().trim().email('Invalid email').max(200).optional().nullable(),
+  address: z.string().trim().max(500).optional().nullable(),
   creditLimit: moneySchema.optional().nullable(),
 });
 
@@ -144,8 +164,8 @@ export const updateCustomerSchema = createCustomerSchema.partial();
 export const repayCustomerDebtSchema = z.object({
   amount: moneySchema.positive('Repayment amount must be positive'),
   method: z.enum(['CASH', 'CARD', 'MOBILE_BANKING']),
-  reference: z.string().max(100).optional().nullable(),
-  notes: z.string().max(500).optional().nullable(),
+  reference: z.string().trim().max(100).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
 });
 
 export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
@@ -157,11 +177,12 @@ export type RepayCustomerDebtInput = z.infer<typeof repayCustomerDebtSchema>;
 export const createExpenseSchema = z.object({
   category: z.enum(EXPENSE_CATEGORY_VALUES),
   amount: moneySchema.positive('Amount must be positive'),
-  description: z.string().max(500).optional().nullable(),
+  description: z.string().trim().max(500).optional().nullable(),
   date: dateStringSchema.optional(),
+  useCashDrawer: z.boolean().optional().default(false),
 });
 
-export const updateExpenseSchema = createExpenseSchema.partial();
+export const updateExpenseSchema = createExpenseSchema.omit({ useCashDrawer: true }).partial();
 
 export type CreateExpenseInput = z.infer<typeof createExpenseSchema>;
 export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
@@ -170,18 +191,18 @@ export type UpdateExpenseInput = z.infer<typeof updateExpenseSchema>;
 
 export const openShiftSchema = z.object({
   openingCash: moneySchema,
-  notes: z.string().max(500).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
 });
 
 export const closeShiftSchema = z.object({
   actualCash: moneySchema,
-  notes: z.string().max(500).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
 });
 
 export const shiftCashMovementSchema = z.object({
   type: z.enum(['PAID_IN', 'PAID_OUT']),
   amount: moneySchema.positive('Amount must be greater than zero'),
-  reason: z.string().min(1, 'Reason is required').max(500),
+  reason: z.string().trim().min(1, 'Reason is required').max(500),
 });
 
 export type OpenShiftInput = z.infer<typeof openShiftSchema>;
@@ -191,21 +212,21 @@ export type ShiftCashMovementInput = z.infer<typeof shiftCashMovementSchema>;
 // ---- User Schemas ----
 
 export const createUserSchema = z.object({
-  name: z.string().min(1, 'Name is required').max(100),
-  email: z.string().email('Invalid email').max(200),
+  name: z.string().trim().min(1, 'Name is required').max(100),
+  email: z.string().trim().email('Invalid email').max(200),
   password: z
     .string()
     .min(8, 'Password must be at least 8 characters')
     .regex(/[A-Za-z]/, 'Password must contain at least one letter')
     .regex(/[0-9]/, 'Password must contain at least one number'),
   role: UserRoleEnum.default('CASHIER'),
-  phone: z.string().max(20).optional().nullable(),
+  phone: z.string().trim().max(20).optional().nullable(),
   isActive: z.boolean().optional().default(true),
 });
 
 export const updateUserSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  email: z.string().email().max(200).optional(),
+  name: z.string().trim().min(1).max(100).optional(),
+  email: z.string().trim().email().max(200).optional(),
   password: z
     .string()
     .min(8, 'Password must be at least 8 characters')
@@ -213,7 +234,7 @@ export const updateUserSchema = z.object({
     .regex(/[0-9]/, 'Password must contain at least one number')
     .optional(),
   role: UserRoleEnum.optional(),
-  phone: z.string().max(20).optional().nullable(),
+  phone: z.string().trim().max(20).optional().nullable(),
   isActive: z.boolean().optional(),
 });
 
@@ -221,27 +242,27 @@ export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 
 export const loginCredentialsSchema = z.object({
-  email: z.string().email().max(200),
+  email: z.string().trim().email().max(200),
   password: z.string().min(1).max(256),
 }).strict();
 
 // ---- Settings Schema ----
 
 export const updateSettingsSchema = z.object({
-  businessName: z.string().min(1).max(200).optional(),
-  businessNameMm: z.string().max(200).optional().nullable(),
-  address: z.string().max(500).optional().nullable(),
-  phone: z.string().max(20).optional().nullable(),
-  email: z.string().email().max(200).optional().nullable(),
+  businessName: z.string().trim().min(1).max(200).optional(),
+  businessNameMm: z.string().trim().max(200).optional().nullable(),
+  address: z.string().trim().max(500).optional().nullable(),
+  phone: z.string().trim().max(20).optional().nullable(),
+  email: z.string().trim().email().max(200).optional().nullable(),
   taxRate: z.number().min(0).max(100).optional(),
-  currencySymbol: z.string().max(10).optional(),
-  logo: z.string().max(500000).optional().nullable(),
-  receiptFooter: z.string().max(500).optional().nullable(),
+  currencySymbol: z.string().trim().max(10).optional(),
+  logo: safeImageUrlSchema.optional().nullable(),
+  receiptFooter: z.string().trim().max(500).optional().nullable(),
   loyaltyEnabled: z.boolean().optional(),
   loyaltyEarnRate: moneySchema.positive().optional(),
   loyaltyRedeemRate: moneySchema.positive().optional(),
-  mobileBankingQrUrl: z.string().max(500000).optional().nullable(),
-  mobileBankingName: z.string().max(120).optional().nullable(),
+  mobileBankingQrUrl: safeImageUrlSchema.optional().nullable(),
+  mobileBankingName: z.string().trim().max(120).optional().nullable(),
 });
 
 export type UpdateSettingsInput = z.infer<typeof updateSettingsSchema>;
@@ -252,12 +273,12 @@ export const SupplierPaymentMethodEnum = z.enum(['CASH', 'BANK_TRANSFER', 'MOBIL
 export const SupplierRepaymentMethodEnum = z.enum(['CASH', 'BANK_TRANSFER', 'MOBILE_BANKING']);
 
 export const createSupplierSchema = z.object({
-  name: z.string().min(1, 'Supplier name is required').max(200),
-  contactPerson: z.string().max(120).optional().nullable(),
-  phone: z.string().max(30).optional().nullable(),
-  email: z.string().email('Invalid email').max(200).optional().nullable(),
-  address: z.string().max(500).optional().nullable(),
-  notes: z.string().max(500).optional().nullable(),
+  name: z.string().trim().min(1, 'Supplier name is required').max(200),
+  contactPerson: z.string().trim().max(120).optional().nullable(),
+  phone: z.string().trim().max(30).optional().nullable(),
+  email: z.string().trim().email('Invalid email').max(200).optional().nullable(),
+  address: z.string().trim().max(500).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
   isActive: z.boolean().optional().default(true),
 });
 
@@ -333,9 +354,9 @@ export const PromotionTypeEnum = z.enum([
 ]);
 
 export const createPromotionSchema = z.object({
-  name: z.string().min(1, 'Promotion name is required').max(150),
-  nameMm: z.string().max(150).optional().nullable(),
-  code: z.string().max(50).optional().nullable(),
+  name: z.string().trim().min(1, 'Promotion name is required').max(150),
+  nameMm: z.string().trim().max(150).optional().nullable(),
+  code: z.string().trim().max(50).optional().nullable(),
   type: PromotionTypeEnum,
   discountValue: moneySchema.default(0),
   minSpend: moneySchema.optional().nullable(),
@@ -387,14 +408,8 @@ export const createQuotationSchema = z.object({
 });
 
 export const updateQuotationSchema = z.object({
-  customerId: z.string().optional().nullable(),
-  customerName: z.string().max(200).optional().nullable(),
-  customerPhone: z.string().max(30).optional().nullable(),
-  items: z.array(quotationItemInputSchema).min(1).optional(),
-  discountAmount: moneySchema.optional(),
-  taxRate: z.number().min(0).max(100).optional(),
   validUntil: dateStringSchema.optional(),
-  status: QuotationStatusEnum.optional(),
+  status: z.enum(['DRAFT', 'SENT', 'ACCEPTED', 'EXPIRED', 'CANCELLED']).optional(),
   notes: z.string().max(500).optional().nullable(),
 });
 

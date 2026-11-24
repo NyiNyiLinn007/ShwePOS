@@ -12,7 +12,7 @@ import {
 } from 'recharts';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, getMyanmarDateKey, getMyanmarDateParts } from '@/lib/utils';
 import { EXPENSE_CATEGORIES as SHARED_EXPENSE_CATEGORIES } from '@/lib/constants';
 import {
   Plus,
@@ -57,7 +57,7 @@ interface ExpenseFormData {
   amount: string;
   description: string;
   date: string;
-  userId: string;
+  useCashDrawer: boolean;
 }
 
 /* ---------- Constants ---------- */
@@ -96,25 +96,24 @@ const CATEGORY_COLORS: Record<string, string> = {
   Other: '#64748B',
 };
 
-const emptyForm: ExpenseFormData = {
+const createEmptyForm = (): ExpenseFormData => ({
   category: 'Supplies',
   amount: '',
   description: '',
-  date: new Date().toISOString().split('T')[0],
-  userId: '',
-};
+  date: getMyanmarDateKey(),
+  useCashDrawer: false,
+});
 
 /* ---------- Component ---------- */
 
 interface ExpensesClientProps {
   initialExpenses: Expense[];
-  users: UserRef[];
+  users?: UserRef[];
   initialSummary: ExpenseSummary;
 }
 
 export function ExpensesClient({
   initialExpenses,
-  users,
   initialSummary,
 }: ExpensesClientProps) {
   const { language, t } = useI18n();
@@ -128,7 +127,7 @@ export function ExpensesClient({
   const [currentPage, setCurrentPage] = useState(1);
   const [showModal, setShowModal] = useState(false);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
-  const [formData, setFormData] = useState<ExpenseFormData>(emptyForm);
+  const [formData, setFormData] = useState<ExpenseFormData>(createEmptyForm);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
@@ -142,7 +141,7 @@ export function ExpensesClient({
     }
     if (dateFilter) {
       result = result.filter((e) => {
-        const expDate = new Date(e.date).toISOString().split('T')[0];
+        const expDate = getMyanmarDateKey(e.date);
         return expDate === dateFilter;
       });
     }
@@ -161,40 +160,46 @@ export function ExpensesClient({
     setCurrentPage(1);
   }, []);
 
-  // Recalculate summary from current expenses state
+  // Recalculate summary from current expenses state (preserving up to 2 decimal precision)
   const recalcSummary = useCallback((expenseList: Expense[]) => {
     const categoryTotals: Record<string, number> = {};
     let totalAmount = 0;
     for (const exp of expenseList) {
-      categoryTotals[exp.category] = (categoryTotals[exp.category] || 0) + exp.amount;
-      totalAmount += exp.amount;
+      const amt = Number(exp.amount) || 0;
+      categoryTotals[exp.category] = (categoryTotals[exp.category] || 0) + amt;
+      totalAmount += amt;
     }
+    const round2 = (v: number) => Math.round(v * 100) / 100;
     setSummary({
-      totalAmount: Math.round(totalAmount),
+      totalAmount: round2(totalAmount),
       categoryTotals: Object.entries(categoryTotals).map(([category, amount]) => ({
         category,
-        amount: Math.round(amount),
+        amount: round2(amount),
       })),
       count: expenseList.length,
     });
   }, []);
 
-  // Monthly comparison data for chart
+  // Monthly comparison data for chart (Myanmar timezone)
   const monthlyData = useMemo(() => {
     const monthMap = new Map<string, number>();
     for (const exp of expenses) {
-      const d = new Date(exp.date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      monthMap.set(key, (monthMap.get(key) || 0) + exp.amount);
+      const { year, month } = getMyanmarDateParts(exp.date);
+      const key = `${year}-${String(month + 1).padStart(2, '0')}`;
+      monthMap.set(key, (monthMap.get(key) || 0) + (Number(exp.amount) || 0));
     }
     return Array.from(monthMap.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-6)
       .map(([month, amount]) => {
         const [year, m] = month.split('-');
-        const date = new Date(Number(year), Number(m) - 1, 1);
+        const date = new Date(Date.UTC(Number(year), Number(m) - 1, 15));
         return {
-          month: date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+          month: date.toLocaleDateString('en-US', {
+            month: 'short',
+            year: '2-digit',
+            timeZone: 'Asia/Yangon',
+          }),
           amount: Math.round(amount),
         };
       });
@@ -204,10 +209,7 @@ export function ExpensesClient({
 
   function openAddModal() {
     setEditingExpense(null);
-    setFormData({
-      ...emptyForm,
-      userId: users[0]?.id || '',
-    });
+    setFormData(createEmptyForm());
     setFormErrors({});
     setShowModal(true);
   }
@@ -216,10 +218,10 @@ export function ExpensesClient({
     setEditingExpense(expense);
     setFormData({
       category: expense.category,
-      amount: String(expense.amount),
+      amount: String(Number(expense.amount) || 0),
       description: expense.description || '',
-      date: new Date(expense.date).toISOString().split('T')[0],
-      userId: expense.userId,
+      date: getMyanmarDateKey(expense.date),
+      useCashDrawer: false,
     });
     setFormErrors({});
     setShowModal(true);
@@ -228,11 +230,11 @@ export function ExpensesClient({
   function closeModal() {
     setShowModal(false);
     setEditingExpense(null);
-    setFormData(emptyForm);
+    setFormData(createEmptyForm());
     setFormErrors({});
   }
 
-  function handleFormChange(field: keyof ExpenseFormData, value: string) {
+  function handleFormChange<K extends keyof ExpenseFormData>(field: K, value: ExpenseFormData[K]) {
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (formErrors[field]) {
       setFormErrors((prev) => {
@@ -255,9 +257,6 @@ export function ExpensesClient({
     if (!formData.date) {
       errors.date = t('Date is required', 'ရက်စွဲ ထည့်ရန်လိုအပ်ပါသည်');
     }
-    if (!formData.userId) {
-      errors.userId = t('User is required', 'မှတ်တမ်းတင်သူ ရွေးချယ်ရန်လိုအပ်ပါသည်');
-    }
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -272,7 +271,7 @@ export function ExpensesClient({
         amount: Number(formData.amount),
         description: formData.description.trim() || null,
         date: formData.date,
-        userId: formData.userId,
+        ...(!editingExpense ? { useCashDrawer: formData.useCashDrawer } : {}),
       };
 
       const url = editingExpense
@@ -436,7 +435,7 @@ export function ExpensesClient({
               </div>
             </div>
           </div>
-          {summary.categoryTotals
+          {[...summary.categoryTotals]
             .sort((a, b) => b.amount - a.amount)
             .slice(0, 3)
             .map((ct) => (
@@ -833,29 +832,32 @@ export function ExpensesClient({
                 )}
               </div>
 
-              {/* User */}
-              <div className="input-group">
-                <label className="input-label">
-                  {t('Recorded By', 'မှတ်တမ်းတင်သူ')} *
-                </label>
-                <select
-                  className={`input ${formErrors.userId ? 'input-error' : ''}`}
-                  value={formData.userId}
-                  onChange={(e) => handleFormChange('userId', e.target.value)}
-                >
-                  <option value="">{t('Select user', 'အသုံးပြုသူရွေးပါ')}</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.name}
-                    </option>
-                  ))}
-                </select>
-                {formErrors.userId && (
-                  <span style={{ fontSize: 'var(--text-xs)', color: 'var(--danger)' }}>
-                    {formErrors.userId}
-                  </span>
-                )}
-              </div>
+              {/* Optional Cash Drawer Paid-Out Integration (on new expenses) */}
+              {!editingExpense && (
+                <div className="input-group" style={{ marginTop: 4 }}>
+                  <label
+                    className="input-label"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      cursor: 'pointer',
+                      fontWeight: 500,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={formData.useCashDrawer}
+                      onChange={(e) => handleFormChange('useCashDrawer', e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: 'var(--primary)' }}
+                    />
+                    {t(
+                      'Deduct from my open Cash Drawer (Paid Out)',
+                      'လက်ရှိဖွင့်ထားသော ငွေသေတ္တာ (Cash Drawer) မှ နှုတ်ယူမည်'
+                    )}
+                  </label>
+                </div>
+              )}
             </div>
             <div className="modal-footer">
               <button className="btn btn-secondary" onClick={closeModal}>

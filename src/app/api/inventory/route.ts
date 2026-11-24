@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
+import { ApiError, requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { inventoryMovementSchema } from '@/lib/validations';
 import { serializePrismaData, toNumber } from '@/lib/number';
-import { parseMyanmarDateBoundary, roundQuantity } from '@/lib/utils';
+import { isFractionalUnit, parseMyanmarDateBoundary, roundQuantity } from '@/lib/utils';
 import { logAudit } from '@/services/auditService';
 
 export async function GET(request: NextRequest) {
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get('endDate');
     const productId = searchParams.get('productId');
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '50', 10) || 50));
+    const limit = Math.min(500, Math.max(1, parseInt(searchParams.get('limit') || '50', 10) || 50));
 
     const where: Record<string, unknown> = {};
 
@@ -92,20 +92,29 @@ export async function POST(request: NextRequest) {
       });
 
       if (!product) {
-        throw new Error('Product not found');
+        throw new ApiError('Product not found', 404);
       }
 
-      const previousStock = roundQuantity(toNumber(product.stockQuantity));
+      if (!isFractionalUnit(product.unit) && !Number.isInteger(quantity)) {
+        throw new ApiError(
+          `Fractional quantity (${quantity}) is not allowed for unit '${product.unit}' on ${product.name}`,
+          400
+        );
+      }
+
+      let previousStock = roundQuantity(toNumber(product.stockQuantity));
       let newStock: number;
 
       switch (type) {
         case 'IN':
         case 'RETURN': {
-          newStock = roundQuantity(previousStock + quantity);
-          await tx.product.update({
+          const updated = await tx.product.update({
             where: { id: productId },
             data: { stockQuantity: { increment: quantity } },
+            select: { stockQuantity: true },
           });
+          newStock = roundQuantity(toNumber(updated.stockQuantity));
+          previousStock = roundQuantity(newStock - quantity);
           break;
         }
         case 'OUT': {
@@ -114,11 +123,17 @@ export async function POST(request: NextRequest) {
             data: { stockQuantity: { decrement: quantity } },
           });
           if (outResult.count === 0) {
-            throw new Error(
-              `Insufficient stock. Current: ${previousStock}, Requested: ${quantity}`
+            throw new ApiError(
+              `Insufficient stock. Current: ${previousStock}, Requested: ${quantity}`,
+              409
             );
           }
-          newStock = roundQuantity(previousStock - quantity);
+          const updated = await tx.product.findUniqueOrThrow({
+            where: { id: productId },
+            select: { stockQuantity: true },
+          });
+          newStock = roundQuantity(toNumber(updated.stockQuantity));
+          previousStock = roundQuantity(newStock + quantity);
           break;
         }
         case 'ADJUSTMENT': {
@@ -130,7 +145,7 @@ export async function POST(request: NextRequest) {
           break;
         }
         default:
-          throw new Error('Invalid movement type');
+          throw new ApiError('Invalid movement type', 400);
       }
 
       const created = await tx.stockMovement.create({

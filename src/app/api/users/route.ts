@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
 import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { createUserSchema } from '@/lib/validations';
+import { logAudit } from '@/services/auditService';
 
 export async function GET() {
   try {
@@ -31,7 +32,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     await validateCsrf(request);
-    await requireRole('ADMIN');
+    const operator = await requireRole('ADMIN');
 
     const body = await request.json();
     const parsed = createUserSchema.parse(body);
@@ -70,6 +71,19 @@ export async function POST(request: NextRequest) {
         isActive: true,
         createdAt: true,
         updatedAt: true,
+      },
+    });
+
+    await logAudit({
+      userId: operator.id,
+      action: 'USER_CREATED',
+      entityType: 'USER',
+      entityId: user.id,
+      summary: `Created user ${user.name} (${user.email}) with role ${user.role}`,
+      metadata: {
+        email: user.email,
+        role: user.role,
+        isActive: user.isActive,
       },
     });
 

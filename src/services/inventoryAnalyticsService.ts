@@ -64,7 +64,8 @@ export interface InventoryAnalyticsReport {
 
 function getMyanmarDaysAgoDate(daysAgo: number): Date {
   const { year, month, day } = getMyanmarDateParts();
-  const base = new Date(Date.UTC(year, month - 1, day - daysAgo));
+  // Note: getMyanmarDateParts().month is already 0-indexed (0..11)
+  const base = new Date(Date.UTC(year, month, day - (daysAgo - 1)));
   const y = base.getUTCFullYear();
   const m = String(base.getUTCMonth() + 1).padStart(2, '0');
   const d = String(base.getUTCDate()).padStart(2, '0');
@@ -165,7 +166,8 @@ export async function generateInventoryAnalytics(params: {
     catMap.set(product.categoryId, existingCat);
 
     const deadSold = soldInDeadWindow.get(product.id) ?? 0;
-    if (stock > 0 && deadSold <= 0) {
+    // Exclude brand-new products created within the dead-stock lookback window
+    if (stock > 0 && deadSold <= 0 && product.createdAt <= deadStart) {
       deadStock.push({
         productId: product.id,
         name: product.name,

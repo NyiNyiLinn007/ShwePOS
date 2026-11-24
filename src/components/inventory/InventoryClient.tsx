@@ -123,11 +123,50 @@ export function InventoryClient({
   const [movementTypeFilter, setMovementTypeFilter] = useState('');
   const [movementDateFrom, setMovementDateFrom] = useState('');
   const [movementDateTo, setMovementDateTo] = useState('');
+  const [loadingMovements, setLoadingMovements] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [adjustTarget, setAdjustTarget] = useState<InventoryProduct | null>(null);
   const [adjustForm, setAdjustForm] = useState<AdjustmentForm>(emptyAdjustment);
   const [adjustErrors, setAdjustErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+
+  // Fetch filtered movements from server so records beyond the initial 200 SSR cap appear accurately
+  useEffect(() => {
+    const hasFilter = Boolean(movementTypeFilter || movementDateFrom || movementDateTo);
+    if (!hasFilter) {
+      setMovements(initialMovements);
+      setLoadingMovements(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    if (movementTypeFilter) params.set('type', movementTypeFilter);
+    if (movementDateFrom) params.set('startDate', movementDateFrom);
+    if (movementDateTo) params.set('endDate', movementDateTo);
+    params.set('limit', '500');
+
+    setLoadingMovements(true);
+    fetch(`/api/inventory?${params.toString()}`, { signal: controller.signal, cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Failed'))))
+      .then((data) => {
+        if (Array.isArray(data?.movements)) {
+          setMovements(data.movements);
+        }
+      })
+      .catch((err) => {
+        if (err?.name !== 'AbortError') {
+          addToast(t('Failed to fetch stock movements', 'ကုန်ပစ္စည်းအဝင်အထွက် ဖတ်မရပါ'), 'error');
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setLoadingMovements(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, [movementTypeFilter, movementDateFrom, movementDateTo, initialMovements, addToast, t]);
 
   // Reset page when tab changes
   const handleTabChange = useCallback((tab: 'levels' | 'movements') => {
@@ -751,7 +790,9 @@ export function InventoryClient({
                 </button>
               )}
               <div style={{ fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
-                {filteredMovements.length} {t('movement', 'အဝင်အထွက်')}{language !== 'mm' && filteredMovements.length !== 1 ? 's' : ''}
+                {loadingMovements
+                  ? t('Loading...', 'ရှာနေသည်...')
+                  : `${filteredMovements.length} ${t('movement', 'အဝင်အထွက်')}${language !== 'mm' && filteredMovements.length !== 1 ? 's' : ''}`}
               </div>
             </div>
 
@@ -785,6 +826,10 @@ export function InventoryClient({
                       {(paginatedData as StockMovementData[]).map((movement) => {
                         const typeBadge = getMovementTypeBadge(movement.type);
                         const isIncrease = movement.type === 'IN' || movement.type === 'RETURN';
+                        const adjustmentDelta = roundQuantity(
+                          Number(movement.newStock) - Number(movement.previousStock)
+                        );
+                        const unit = movement.product?.unit;
 
                         return (
                           <tr key={movement.id}>
@@ -818,17 +863,21 @@ export function InventoryClient({
                                 fontWeight: 700,
                                 fontFamily: 'var(--font-mono)',
                                 color: movement.type === 'ADJUSTMENT'
-                                  ? 'var(--warning)'
+                                  ? adjustmentDelta < 0
+                                    ? 'var(--danger)'
+                                    : adjustmentDelta > 0
+                                      ? 'var(--success)'
+                                      : 'var(--warning)'
                                   : isIncrease
                                   ? 'var(--success)'
                                   : 'var(--danger)',
                               }}
                             >
                               {movement.type === 'ADJUSTMENT'
-                                ? `→ ${movement.quantity}`
+                                ? `${adjustmentDelta > 0 ? '+' : ''}${formatQuantity(adjustmentDelta, unit)} (→ ${formatQuantity(movement.newStock, unit)})`
                                 : isIncrease
-                                ? `+${movement.quantity}`
-                                : `-${movement.quantity}`}
+                                ? `+${formatQuantity(movement.quantity, unit)}`
+                                : `-${formatQuantity(movement.quantity, unit)}`}
                             </td>
                             <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', color: 'var(--text-muted)' }}>
                               {movement.previousStock}

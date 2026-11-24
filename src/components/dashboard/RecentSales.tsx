@@ -17,6 +17,7 @@ interface RecentSaleItem {
 
 interface RecentSalesProps {
   sales: RecentSaleItem[];
+  role?: string;
 }
 
 const paymentMethodBadge: Record<string, string> = {
@@ -35,7 +36,7 @@ const paymentMethodTranslationKeys: Record<string, string> = {
   SPLIT: 'splitPayment',
 };
 
-export default function RecentSales({ sales }: RecentSalesProps) {
+export default function RecentSales({ sales, role }: RecentSalesProps) {
   const { t } = useI18n();
 
   return (
@@ -52,9 +53,11 @@ export default function RecentSales({ sales }: RecentSalesProps) {
         <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 600 }}>
           {t('Recent Sales', 'မကြာမီက ရောင်းချမှုများ')}
         </h3>
-        <Link href="/sales" style={{ fontSize: 'var(--text-xs)', fontWeight: 500 }}>
-          {t('View all', 'အားလုံးကြည့်ရန်')} →
-        </Link>
+        {role !== 'CASHIER' && (
+          <Link href="/sales" style={{ fontSize: 'var(--text-xs)', fontWeight: 500 }}>
+            {t('View all', 'အားလုံးကြည့်ရန်')} →
+          </Link>
+        )}
       </div>
 
       {sales.length === 0 ? (

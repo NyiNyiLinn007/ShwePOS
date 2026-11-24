@@ -9,7 +9,7 @@ export async function PUT(
 ) {
   try {
     await validateCsrf(request);
-    await requireAuth();
+    const user = await requireAuth();
     const { id } = await params;
     const parsed = updateQuotationSchema.safeParse(await request.json());
     if (!parsed.success) {
@@ -18,7 +18,7 @@ export async function PUT(
         { status: 400 }
       );
     }
-    const updated = await updateQuotation(id, parsed.data);
+    const updated = await updateQuotation(id, parsed.data, user);
     return NextResponse.json(updated);
   } catch (error) {
     return handleApiError(error, 'Failed to update quotation');
@@ -31,9 +31,9 @@ export async function DELETE(
 ) {
   try {
     await validateCsrf(request);
-    await requireAuth();
+    const user = await requireAuth();
     const { id } = await params;
-    const cancelled = await deleteQuotation(id);
+    const cancelled = await deleteQuotation(id, user);
     return NextResponse.json(cancelled);
   } catch (error) {
     return handleApiError(error, 'Failed to cancel quotation');

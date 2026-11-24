@@ -593,12 +593,15 @@ export function CustomerRepayModal({
 
           <div className="input-group">
             <label className="input-label">
-              {t('Reference (Optional)', 'ရည်ညွှန်းနံပါတ် (ရှိလျှင်)')}
+              {repayMethod === 'CASH'
+                ? t('Reference (Optional)', 'ရည်ညွှန်းနံပါတ် (ရှိလျှင်)')
+                : `${t('Reference', 'ရည်ညွှန်းနံပါတ်')} *`}
             </label>
             <input
               type="text"
               className="input"
-              placeholder="KBZPay / Wave Tx ID"
+              required={repayMethod !== 'CASH'}
+              placeholder="KBZPay / Wave / Card Tx ID"
               value={repayReference}
               onChange={(e) => onChangeReference(e.target.value)}
             />
@@ -618,7 +621,11 @@ export function CustomerRepayModal({
           <button className="btn btn-secondary" onClick={onClose} disabled={repaying}>
             {t('Cancel', 'မလုပ်တော့ပါ')}
           </button>
-          <button className="btn btn-primary" onClick={onSubmit} disabled={repaying}>
+          <button
+            className="btn btn-primary"
+            onClick={onSubmit}
+            disabled={repaying || (repayMethod !== 'CASH' && !repayReference.trim())}
+          >
             {repaying
               ? t('Saving...', 'သိမ်းနေသည်...')
               : t('Confirm Repayment', 'အကြွေးဆပ်မှု အတည်ပြုရန်')}

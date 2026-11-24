@@ -5,9 +5,10 @@ import { roundMoney, toNumber } from '@/lib/number';
 import { logAudit } from '@/services/auditService';
 
 /**
- * Reconciles Customer.creditBalance & Sale.dueAmount from immutable checkout
- * records (Sale totals minus upfront net payment) and DEBT_REPAYMENT receipts.
- * Idempotent & safe to run repeatedly to repair legacy/drifted balances.
+ * Reconciles Customer.creditBalance & Sale.dueAmount by replaying each customer's
+ * chronological AR event stream (Credit Sales -> Debt Repayments -> Refund/Void Adjustments).
+ * Correctly handles repaid credit sales that were later fully/partially refunded or voided
+ * without erasing unrelated legitimate credit sales.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -23,22 +24,34 @@ export async function POST(request: NextRequest) {
             creditBalance: true,
             creditLimit: true,
             sales: {
-              where: { status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] } },
               select: {
                 id: true,
+                subtotal: true,
+                discountAmount: true,
+                taxAmount: true,
                 totalAmount: true,
                 paidAmount: true,
                 changeAmount: true,
                 dueAmount: true,
                 paymentMethod: true,
                 paymentStatus: true,
+                status: true,
                 createdAt: true,
+                payments: {
+                  where: { type: 'CHECKOUT', method: 'CREDIT' },
+                  select: { amount: true },
+                },
+                adjustments: {
+                  select: { id: true, amount: true, createdAt: true },
+                  orderBy: { createdAt: 'asc' },
+                },
               },
               orderBy: { createdAt: 'asc' },
             },
             salePayments: {
               where: { type: 'DEBT_REPAYMENT' },
-              select: { amount: true },
+              select: { id: true, amount: true, createdAt: true },
+              orderBy: { createdAt: 'asc' },
             },
           },
         });
@@ -48,57 +61,138 @@ export async function POST(request: NextRequest) {
         let totalOutstandingCredit = 0;
 
         for (const customer of customers) {
-          const totalRepaid = roundMoney(
-            customer.salePayments.reduce((sum, p) => sum + toNumber(p.amount), 0)
-          );
+          type ArEvent =
+            | { at: number; order: 0; kind: 'SALE'; saleId: string; origCredit: number }
+            | { at: number; order: 1; kind: 'REPAY'; amount: number }
+            | { at: number; order: 2; kind: 'ADJUST'; saleId: string; amount: number };
 
-          // Compute original credit incurred per active sale
-          const saleCredits = customer.sales.map((sale) => {
-            const total = roundMoney(toNumber(sale.totalAmount));
-            const paid = roundMoney(toNumber(sale.paidAmount));
-            const change = roundMoney(toNumber(sale.changeAmount));
-            const netPaidAtCheckout = roundMoney(Math.max(0, paid - change));
-            const origCredit = roundMoney(Math.max(0, total - netPaidAtCheckout));
-            return { sale, origCredit };
-          });
+          const events: ArEvent[] = [];
+          const origCreditBySale = new Map<string, number>();
 
-          const totalOrigCredit = roundMoney(
-            saleCredits.reduce((sum, s) => sum + s.origCredit, 0)
-          );
-          const trueCreditBalance = roundMoney(Math.max(0, totalOrigCredit - totalRepaid));
-          totalOutstandingCredit = roundMoney(totalOutstandingCredit + trueCreditBalance);
-
-          // FIFO apply repayments across oldest credit sales so Sale.dueAmount is accurate for AR Aging
-          let remainingRepaid = totalRepaid;
-          for (const { sale, origCredit } of saleCredits) {
-            let expectedDue = 0;
-            if (origCredit > 0) {
-              const settled = roundMoney(Math.min(origCredit, remainingRepaid));
-              remainingRepaid = roundMoney(remainingRepaid - settled);
-              expectedDue = roundMoney(Math.max(0, origCredit - settled));
+          for (const sale of customer.sales) {
+            // Derive immutable original credit incurred at checkout
+            const creditLegsSum = roundMoney(
+              sale.payments.reduce((sum, p) => sum + toNumber(p.amount), 0)
+            );
+            let origCredit = creditLegsSum;
+            if (origCredit <= 0) {
+              // Legacy fallback for rows without SalePayment legs
+              const origTotal = roundMoney(
+                Math.max(
+                  0,
+                  toNumber(sale.subtotal) - toNumber(sale.discountAmount) + toNumber(sale.taxAmount)
+                )
+              );
+              const netPaidAtCheckout = roundMoney(
+                Math.max(0, toNumber(sale.paidAmount) - toNumber(sale.changeAmount))
+              );
+              origCredit = roundMoney(Math.max(0, origTotal - netPaidAtCheckout));
             }
-            const currentDue = roundMoney(toNumber(sale.dueAmount));
-            const expectedPaymentStatus =
-              expectedDue <= 0
-                ? 'PAID'
-                : roundMoney(toNumber(sale.paidAmount)) > 0
-                  ? 'PARTIAL'
-                  : 'PENDING';
+            origCreditBySale.set(sale.id, origCredit);
 
-            if (
-              Math.abs(currentDue - expectedDue) > 0.009 ||
-              (origCredit > 0 && sale.paymentStatus !== expectedPaymentStatus)
-            ) {
-              await tx.sale.update({
-                where: { id: sale.id },
-                data: {
-                  dueAmount: expectedDue,
-                  paymentStatus: expectedPaymentStatus,
-                },
+            if (origCredit > 0) {
+              events.push({
+                at: sale.createdAt.getTime(),
+                order: 0,
+                kind: 'SALE',
+                saleId: sale.id,
+                origCredit,
               });
-              updatedSales += 1;
+              for (const adj of sale.adjustments) {
+                const adjAmt = roundMoney(toNumber(adj.amount));
+                if (adjAmt > 0) {
+                  events.push({
+                    at: adj.createdAt.getTime(),
+                    order: 2,
+                    kind: 'ADJUST',
+                    saleId: sale.id,
+                    amount: adjAmt,
+                  });
+                }
+              }
             }
           }
+
+          for (const rep of customer.salePayments) {
+            const amt = roundMoney(toNumber(rep.amount));
+            if (amt > 0) {
+              events.push({
+                at: rep.createdAt.getTime(),
+                order: 1,
+                kind: 'REPAY',
+                amount: amt,
+              });
+            }
+          }
+
+          events.sort((a, b) => a.at - b.at || a.order - b.order);
+
+          const openSaleIds: string[] = [];
+          const saleDueMap = new Map<string, number>();
+          const saleRepaidMap = new Map<string, number>();
+
+          for (const ev of events) {
+            if (ev.kind === 'SALE') {
+              openSaleIds.push(ev.saleId);
+              saleDueMap.set(ev.saleId, ev.origCredit);
+            } else if (ev.kind === 'REPAY') {
+              let rem = ev.amount;
+              for (const sid of openSaleIds) {
+                if (rem <= 0) break;
+                const due = saleDueMap.get(sid) ?? 0;
+                if (due <= 0) continue;
+                const applied = roundMoney(Math.min(due, rem));
+                saleDueMap.set(sid, roundMoney(Math.max(0, due - applied)));
+                saleRepaidMap.set(sid, roundMoney((saleRepaidMap.get(sid) ?? 0) + applied));
+                rem = roundMoney(rem - applied);
+              }
+            } else if (ev.kind === 'ADJUST') {
+              // Adjustment reduces unpaid credit on THAT sale only; any excess was refunded in cash/bank
+              const due = saleDueMap.get(ev.saleId) ?? 0;
+              if (due > 0) {
+                const debtReduction = roundMoney(Math.min(due, ev.amount));
+                saleDueMap.set(ev.saleId, roundMoney(Math.max(0, due - debtReduction)));
+              }
+            }
+          }
+
+          let trueCreditBalance = 0;
+          for (const sale of customer.sales) {
+            const isActive = sale.status === 'COMPLETED' || sale.status === 'PARTIALLY_REFUNDED';
+            const expectedDue = isActive ? roundMoney(saleDueMap.get(sale.id) ?? 0) : 0;
+            trueCreditBalance = roundMoney(trueCreditBalance + expectedDue);
+
+            if (isActive) {
+              const origCredit = origCreditBySale.get(sale.id) ?? 0;
+              const repaidOnSale = saleRepaidMap.get(sale.id) ?? 0;
+              const netUpfront = roundMoney(
+                Math.max(0, toNumber(sale.paidAmount) - toNumber(sale.changeAmount))
+              );
+              const expectedPaymentStatus =
+                expectedDue <= 0
+                  ? 'PAID'
+                  : netUpfront > 0 || repaidOnSale > 0
+                    ? 'PARTIAL'
+                    : 'PENDING';
+
+              const currentDue = roundMoney(toNumber(sale.dueAmount));
+              if (
+                Math.abs(currentDue - expectedDue) > 0.009 ||
+                (origCredit > 0 && sale.paymentStatus !== expectedPaymentStatus)
+              ) {
+                await tx.sale.update({
+                  where: { id: sale.id },
+                  data: {
+                    dueAmount: expectedDue,
+                    paymentStatus: expectedPaymentStatus,
+                  },
+                });
+                updatedSales += 1;
+              }
+            }
+          }
+
+          totalOutstandingCredit = roundMoney(totalOutstandingCredit + trueCreditBalance);
 
           const currentBalance = roundMoney(toNumber(customer.creditBalance));
           const hasZeroLimitBug =

@@ -1,15 +1,18 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatDateTime } from '@/lib/utils';
+import { formatDateTime, getMyanmarDateKey } from '@/lib/utils';
+import { escapeCsvCell } from '@/lib/csv';
 import {
   ShieldCheck,
   Download,
   RefreshCw,
   Eye,
   X,
+  ChevronLeft,
+  ChevronRight,
 } from '@/components/ui/Icons';
 import type { AuditLogRecord } from '@/types';
 
@@ -25,13 +28,18 @@ const ACTION_LABELS: Record<string, { en: string; mm: string }> = {
   SUPPLIER_DEBT_REPAYMENT: { en: 'Supplier Debt Paid', mm: 'ပေးသွင်းသူအကြွေး ပေးချေခြင်း' },
   CUSTOMER_DEBT_REPAYMENT: { en: 'Customer Debt Received', mm: 'ဖောက်သည်အကြွေး လက်ခံခြင်း' },
   SHIFT_CLOSED: { en: 'Shift Closed', mm: 'အဆိုင်းပိတ်ခြင်း' },
+  USER_CREATED: { en: 'User Account Created', mm: 'ဝန်ထမ်းအကောင့် ဖန်တီးခြင်း' },
   USER_UPDATED: { en: 'User Account Updated', mm: 'ဝန်ထမ်းအကောင့် ပြင်ဆင်ခြင်း' },
   SETTINGS_UPDATED: { en: 'Settings Updated', mm: 'ဆိုင်ဆက်တင် ပြင်ဆင်ခြင်း' },
   DATA_MIGRATION_IMPORT: { en: 'Excel Data Imported', mm: 'Excel ဒေတာ သွင်းယူခြင်း' },
+  DATA_MIGRATION_EXPORT: { en: 'Excel Data Exported', mm: 'Excel ဒေတာ ထုတ်ယူခြင်း' },
   CUSTOMER_CREDIT_RECONCILED: { en: 'Customer Credit Reconciled', mm: 'ဖောက်သည်အကြွေးစာရင်း တိုက်ဆိုင်ပြင်ဆင်ခြင်း' },
   STOCKTAKE_COMPLETED: { en: 'Stocktake Completed', mm: 'ကုန်လက်ကျန်စစ်ဆေးမှု အတည်ပြုခြင်း' },
   PROMOTION_UPDATED: { en: 'Promotion Saved', mm: 'ပရိုမိုးရှင်း သိမ်းဆည်းခြင်း' },
   QUOTATION_CREATED: { en: 'Quotation Created', mm: 'ဈေးနှုန်းကမ်းလှမ်းလွှာ ဖန်တီးခြင်း' },
+  EXPENSE_CREATED: { en: 'Expense Recorded', mm: 'အသုံးစရိတ် မှတ်တမ်းတင်ခြင်း' },
+  EXPENSE_UPDATED: { en: 'Expense Updated', mm: 'အသုံးစရိတ် ပြင်ဆင်ခြင်း' },
+  EXPENSE_DELETED: { en: 'Expense Deleted', mm: 'အသုံးစရိတ် ဖျက်ခြင်း' },
 };
 
 const ENTITY_LABELS: Record<string, { en: string; mm: string }> = {
@@ -48,31 +56,38 @@ const ENTITY_LABELS: Record<string, { en: string; mm: string }> = {
   STOCKTAKE: { en: 'Stocktake', mm: 'ကုန်လက်ကျန်စစ်ဆေးမှု' },
   PROMOTION: { en: 'Promotion', mm: 'ပရိုမိုးရှင်း' },
   QUOTATION: { en: 'Quotation', mm: 'ဈေးနှုန်းကမ်းလှမ်းလွှာ' },
+  EXPENSE: { en: 'Expense', mm: 'အသုံးစရိတ်' },
 };
 
 const ACTION_OPTIONS = Object.keys(ACTION_LABELS);
 
 function getActionBadgeClass(action: string): string {
-  if (action.includes('VOID') || action.includes('CANCELLED')) return 'badge-danger';
+  if (action.includes('VOID') || action.includes('CANCELLED') || action.includes('DELETED')) return 'badge-danger';
   if (action.includes('REFUND') || action.includes('OVERRIDE') || action.includes('PRICE')) {
     return 'badge-warning';
   }
-  if (action.includes('PURCHASE') || action.includes('REPAYMENT')) return 'badge-success';
+  if (action.includes('PURCHASE') || action.includes('REPAYMENT') || action.includes('CREATED')) return 'badge-success';
   return 'badge-primary';
 }
 
-function escapeCsv(val: string | number | null | undefined): string {
-  return `"${String(val ?? '').replace(/"/g, '""')}"`;
+interface AuditLogsPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 }
 
 interface AuditLogsClientProps {
   initialLogs: AuditLogRecord[];
+  initialPagination: AuditLogsPagination;
   users: Array<{ id: string; name: string; role: string }>;
 }
 
-export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
+export function AuditLogsClient({ initialLogs, initialPagination, users }: AuditLogsClientProps) {
   const { language, t } = useI18n();
   const { addToast } = useToast();
+  const tRef = useRef(t);
+  tRef.current = t;
 
   const getActionLabel = (action: string) =>
     ACTION_LABELS[action]?.[language] ?? action;
@@ -81,6 +96,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
     ENTITY_LABELS[entityType]?.[language] ?? entityType;
 
   const [logs, setLogs] = useState<AuditLogRecord[]>(initialLogs);
+  const [pagination, setPagination] = useState<AuditLogsPagination>(initialPagination);
   const [loading, setLoading] = useState(false);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -89,7 +105,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
   const [search, setSearch] = useState('');
   const [selectedLog, setSelectedLog] = useState<AuditLogRecord | null>(null);
 
-  const fetchLogs = useCallback(async () => {
+  const fetchLogs = useCallback(async (targetPage = 1) => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -98,19 +114,25 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
       if (actionFilter) params.set('action', actionFilter);
       if (userFilter) params.set('userId', userFilter);
       if (search.trim()) params.set('search', search.trim());
-      params.set('limit', '150');
+      params.set('page', String(Math.max(1, targetPage)));
+      params.set('limit', '50');
 
       const res = await fetch(`/api/audit-logs?${params.toString()}`, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
         setLogs(data.logs || []);
+        if (data.pagination) {
+          setPagination(data.pagination);
+        }
+      } else {
+        addToast(tRef.current('Failed to load audit logs', 'မှတ်တမ်းများ ဖတ်မရပါ'), 'error');
       }
     } catch {
-      addToast(t('Failed to load audit logs', 'မှတ်တမ်းများ ဖတ်မရပါ'), 'error');
+      addToast(tRef.current('Failed to load audit logs', 'မှတ်တမ်းများ ဖတ်မရပါ'), 'error');
     } finally {
       setLoading(false);
     }
-  }, [startDate, endDate, actionFilter, userFilter, search, addToast, t]);
+  }, [startDate, endDate, actionFilter, userFilter, search, addToast]);
 
   function handleExportCsv() {
     if (logs.length === 0) {
@@ -118,7 +140,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
       return;
     }
     const header = ['Timestamp', 'User', 'Role', 'Action', 'Entity', 'Entity ID', 'Summary', 'Metadata']
-      .map(escapeCsv)
+      .map(escapeCsvCell)
       .join(',');
     const rows = logs.map((l) =>
       [
@@ -131,7 +153,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
         l.summary,
         l.metadata ? JSON.stringify(l.metadata) : '',
       ]
-        .map(escapeCsv)
+        .map(escapeCsvCell)
         .join(',')
     );
     const blob = new Blob(['\uFEFF' + [header, ...rows].join('\r\n')], {
@@ -140,7 +162,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `shwepos-audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `shwepos-audit-logs-${getMyanmarDateKey()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -173,7 +195,7 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
           <button
             type="button"
             className="btn btn-primary"
-            onClick={fetchLogs}
+            onClick={() => void fetchLogs(1)}
             disabled={loading}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
@@ -339,6 +361,43 @@ export function AuditLogsClient({ initialLogs, users }: AuditLogsClientProps) {
                 ))}
               </tbody>
             </table>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: 'var(--space-sm) var(--space-md)',
+                borderTop: '1px solid var(--border-color)',
+                fontSize: 'var(--text-xs)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              <span>
+                {t('Showing page', 'စာမျက်နှာ')} {pagination.page} / {pagination.totalPages} · {pagination.total.toLocaleString()} {t('records', 'မှတ်တမ်း')}
+              </span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={loading || pagination.page <= 1}
+                  onClick={() => void fetchLogs(pagination.page - 1)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
+                  <ChevronLeft size={14} strokeWidth={1.75} />
+                  {t('Previous', 'ရှေ့သို့')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={loading || pagination.page >= pagination.totalPages}
+                  onClick={() => void fetchLogs(pagination.page + 1)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                >
+                  {t('Next', 'နောက်သို့')}
+                  <ChevronRight size={14} strokeWidth={1.75} />
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

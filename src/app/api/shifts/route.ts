@@ -60,21 +60,36 @@ export async function GET(request: NextRequest) {
     const currentOnly = searchParams.get('current') === 'true';
     const where = user.role === 'CASHIER' ? { userId: user.id } : {};
 
-    const shifts = await prisma.shift.findMany({
-      where,
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-        cashDrawerMovements: {
-          select: movementSelect,
-          orderBy: { createdAt: 'asc' },
+    const [currentRaw, shifts] = await Promise.all([
+      prisma.shift.findFirst({
+        where: { userId: user.id, status: 'OPEN' },
+        include: {
+          user: { select: { id: true, name: true, email: true } },
+          cashDrawerMovements: {
+            select: movementSelect,
+            orderBy: { createdAt: 'asc' },
+          },
         },
-      },
-      orderBy: { openedAt: 'desc' },
-      take: currentOnly ? 10 : 100,
-    });
+        orderBy: { openedAt: 'desc' },
+      }),
+      currentOnly
+        ? Promise.resolve([])
+        : prisma.shift.findMany({
+            where,
+            include: {
+              user: { select: { id: true, name: true, email: true } },
+              cashDrawerMovements: {
+                select: movementSelect,
+                orderBy: { createdAt: 'asc' },
+              },
+            },
+            orderBy: { openedAt: 'desc' },
+            take: 100,
+          }),
+    ]);
 
+    const current = currentRaw ? serializeShift(currentRaw) : null;
     const serialized = shifts.map(serializeShift);
-    const current = serialized.find((shift) => shift.status === 'OPEN' && shift.userId === user.id) ?? null;
 
     return NextResponse.json(
       { current, shifts: currentOnly ? [] : serialized },

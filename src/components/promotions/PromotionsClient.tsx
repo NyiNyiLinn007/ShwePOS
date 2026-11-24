@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
-import { formatCurrency, formatDate } from '@/lib/utils';
+import { formatCurrency, formatDate, getMyanmarDateKey } from '@/lib/utils';
 import { Tag, Plus, Pencil, Trash2, X, Sparkles } from '@/components/ui/Icons';
 import type { PromotionDTO, PromotionType } from '@/types';
 
@@ -38,13 +38,11 @@ interface PromoFormState {
 }
 
 function todayIsoDate(): string {
-  const now = new Date(Date.now() + 6.5 * 60 * 60 * 1000);
-  return now.toISOString().slice(0, 10);
+  return getMyanmarDateKey();
 }
 
 function nextMonthIsoDate(): string {
-  const d = new Date(Date.now() + 30 * 86400_000 + 6.5 * 60 * 60 * 1000);
-  return d.toISOString().slice(0, 10);
+  return getMyanmarDateKey(new Date(Date.now() + 30 * 86400_000));
 }
 
 const emptyForm = (): PromoFormState => ({
@@ -97,8 +95,8 @@ export function PromotionsClient({
       getQty: promo.getQty !== null && promo.getQty !== undefined ? String(promo.getQty) : '1',
       categoryId: promo.categoryId || '',
       productId: promo.productId || '',
-      startDate: new Date(promo.startDate).toISOString().slice(0, 10),
-      endDate: new Date(promo.endDate).toISOString().slice(0, 10),
+      startDate: getMyanmarDateKey(promo.startDate),
+      endDate: getMyanmarDateKey(promo.endDate),
       usageLimit: promo.usageLimit !== null && promo.usageLimit !== undefined ? String(promo.usageLimit) : '',
       isActive: promo.isActive,
     });

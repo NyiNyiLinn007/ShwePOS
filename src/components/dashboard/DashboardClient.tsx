@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useI18n } from '@/lib/i18n';
-import { formatDate, formatQuantity } from '@/lib/utils';
+import { formatDate, formatQuantity, getExpiryInfo } from '@/lib/utils';
 import StatCards from '@/components/dashboard/StatCards';
 import RecentSales from '@/components/dashboard/RecentSales';
 import TopProducts from '@/components/dashboard/TopProducts';
@@ -101,7 +101,7 @@ export default function DashboardClient({
         {/* Charts & Recent Sales Row */}
         <div className="grid-2">
           <SalesChart data={salesChartData} />
-          <RecentSales sales={recentSales} />
+          <RecentSales sales={recentSales} role={role} />
         </div>
 
         {/* Top Products & Inventory/Expiry Alerts Row */}
@@ -119,9 +119,11 @@ export default function DashboardClient({
                   {t('Items needing restock or expiring within 30 days', 'ထပ်ဖြည့်ရန်လိုသော သို့မဟုတ် ရက် ၃၀ အတွင်း သက်တမ်းကုန်မည့် ပစ္စည်းများ')}
                 </p>
               </div>
-              <Link href="/inventory" className="btn btn-secondary btn-sm">
-                {t('Manage', 'စီမံရန်')}
-              </Link>
+              {role !== 'CASHIER' && (
+                <Link href="/inventory" className="btn btn-secondary btn-sm">
+                  {t('Manage', 'စီမံရန်')}
+                </Link>
+              )}
             </div>
 
             {alertProducts.length === 0 ? (
@@ -149,10 +151,7 @@ export default function DashboardClient({
                   <tbody>
                     {alertProducts.map((item) => {
                       const isLow = item.stockQuantity <= item.lowStockThreshold;
-                      const expDate = item.expiryDate ? new Date(item.expiryDate) : null;
-                      const daysLeft = expDate
-                        ? Math.ceil((expDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-                        : null;
+                      const expiryInfo = getExpiryInfo(item.expiryDate);
                       return (
                         <tr key={item.id}>
                           <td>
@@ -173,15 +172,15 @@ export default function DashboardClient({
                                   {item.stockQuantity <= 0 ? t('Out of Stock', 'ပစ္စည်းပြတ်') : t('Low Stock', 'လက်ကျန်နည်း')}
                                 </span>
                               )}
-                              {daysLeft !== null && daysLeft <= 30 && (
+                              {expiryInfo && expiryInfo.status !== 'valid' && (
                                 <span
-                                  className={`badge ${daysLeft < 0 ? 'badge-danger' : 'badge-warning'}`}
+                                  className={`badge ${expiryInfo.status === 'expired' ? 'badge-danger' : 'badge-warning'}`}
                                   style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}
                                 >
                                   <Clock size={10} strokeWidth={2} />
-                                  {daysLeft < 0
+                                  {expiryInfo.status === 'expired'
                                     ? t('Expired', 'သက်တမ်းကုန်')
-                                    : `${daysLeft}d (${formatDate(expDate!)})`}
+                                    : `${expiryInfo.diffDays}d (${formatDate(expiryInfo.date)})`}
                                 </span>
                               )}
                             </div>

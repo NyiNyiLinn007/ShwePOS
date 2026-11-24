@@ -6,7 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { useCartStore } from '@/store/cartStore';
 import { useSettingsStore } from '@/store/settingsStore';
-import { formatCurrency, formatDate, formatQuantity } from '@/lib/utils';
+import { formatCurrency, formatDate, formatQuantity, getMyanmarDateKey } from '@/lib/utils';
 import { printElementById } from '@/lib/print';
 import {
   FileText,
@@ -23,6 +23,9 @@ interface CustomerOption {
   id: string;
   name: string;
   phone: string | null;
+  loyaltyPoints?: number;
+  creditBalance?: number;
+  creditLimit?: number | null;
 }
 
 interface ProductOption {
@@ -33,6 +36,7 @@ interface ProductOption {
   unit: string;
   categoryId: string;
   imageUrl: string | null;
+  costPrice?: number;
   sellingPrice: number;
   stockQuantity: number;
   productUnits: ProductUnit[];
@@ -54,8 +58,7 @@ interface QuotationsClientProps {
 }
 
 function defaultValidDate(): string {
-  const d = new Date(Date.now() + 7 * 86400_000 + 6.5 * 60 * 60 * 1000);
-  return d.toISOString().slice(0, 10);
+  return getMyanmarDateKey(new Date(Date.now() + 7 * 86400_000));
 }
 
 export function QuotationsClient({
@@ -192,33 +195,82 @@ export function QuotationsClient({
     }
   }
 
+  function isQuotationExpired(q: QuotationDTO): boolean {
+    return (
+      q.status === 'EXPIRED' ||
+      (q.status !== 'CONVERTED' &&
+        q.status !== 'CANCELLED' &&
+        new Date(q.validUntil).getTime() < Date.now())
+    );
+  }
+
   function handleLoadToPos(quote: QuotationDTO) {
+    if (quote.status === 'CONVERTED' || quote.status === 'CANCELLED') {
+      addToast(t('This quotation cannot be converted', 'ဤကမ်းလှမ်းလွှာကို အရောင်းပြောင်းမရပါ'), 'error');
+      return;
+    }
+    if (isQuotationExpired(quote)) {
+      addToast(
+        t('This quotation has expired and cannot be loaded to POS', 'ဤကမ်းလှမ်းလွှာ သက်တမ်းကုန်သွားပြီဖြစ်၍ POS သို့ ထည့်မရပါ'),
+        'error'
+      );
+      return;
+    }
+
     const cartItems: CartItem[] = [];
-    for (const item of quote.items ?? []) {
+    const skippedInactive: string[] = [];
+    const brokenUnits: string[] = [];
+
+    for (let idx = 0; idx < (quote.items ?? []).length; idx++) {
+      const item = quote.items![idx];
       const prod = products.find((p) => p.id === item.productId);
-      if (!prod) continue;
+      if (!prod) {
+        skippedInactive.push(item.product?.name || item.productId);
+        continue;
+      }
+      const isAltUnit =
+        Boolean(item.unitName && item.unitName !== prod.unit) || (item.unitFactor || 1) > 1;
       const matchedUnit = item.unitName
         ? prod.productUnits.find((u) => u.unitName === item.unitName) ?? null
         : null;
+
+      if (isAltUnit && !matchedUnit) {
+        brokenUnits.push(`${prod.name} (${item.unitName || `x${item.unitFactor}`})`);
+        continue;
+      }
+
       cartItems.push({
+        lineKey: `${prod.id}:${matchedUnit?.id ?? 'base'}:q${idx}`,
         productId: prod.id,
         categoryId: prod.categoryId,
         name: prod.name,
         nameMm: prod.nameMm,
         sku: prod.sku,
-        unitPrice: item.unitPrice,
+        unitPrice: Math.round(item.unitPrice),
         originalUnitPrice: matchedUnit ? matchedUnit.sellingPrice : prod.sellingPrice,
         baseSellingPrice: prod.sellingPrice,
+        costPrice: prod.costPrice,
         quantity: item.quantity,
-        discount: item.discount || 0,
+        discount: Math.round(item.discount || 0),
         maxStock: prod.stockQuantity,
-        unit: item.unitName || prod.unit,
+        unit: matchedUnit ? matchedUnit.unitName : prod.unit,
         baseUnit: prod.unit,
         productUnitId: matchedUnit?.id ?? null,
-        unitFactor: item.unitFactor || 1,
+        unitFactor: matchedUnit ? matchedUnit.conversionFactor : 1,
         availableUnits: prod.productUnits,
         imageUrl: prod.imageUrl,
       });
+    }
+
+    if (brokenUnits.length > 0) {
+      addToast(
+        t(
+          `Cannot load quotation: packaging unit removed for ${brokenUnits.join(', ')}`,
+          `ထုပ်ပိုးမှုယူနစ် မရှိတော့သဖြင့် POS သို့ ထည့်မရပါ: ${brokenUnits.join(', ')}`
+        ),
+        'error'
+      );
+      return;
     }
 
     if (cartItems.length === 0) {
@@ -226,7 +278,35 @@ export function QuotationsClient({
       return;
     }
 
-    useCartStore.getState().loadQuotationItems(quote.id, cartItems, quote.discountAmount || 0);
+    if (skippedInactive.length > 0) {
+      addToast(
+        t(
+          `Skipped inactive product(s): ${skippedInactive.join(', ')}`,
+          `ပိတ်ထားသော ပစ္စည်းများကို ချန်လှပ်ခဲ့ပါသည်: ${skippedInactive.join(', ')}`
+        ),
+        'warning'
+      );
+    }
+
+    const matchedCustomer = quote.customerId
+      ? customers.find((c) => c.id === quote.customerId) ?? null
+      : null;
+
+    useCartStore.getState().loadQuotationItems(
+      quote.id,
+      cartItems,
+      quote.discountAmount || 0,
+      matchedCustomer
+        ? {
+            id: matchedCustomer.id,
+            name: matchedCustomer.name,
+            phone: matchedCustomer.phone,
+            loyaltyPoints: matchedCustomer.loyaltyPoints,
+            creditBalance: matchedCustomer.creditBalance,
+            creditLimit: matchedCustomer.creditLimit,
+          }
+        : null
+    );
     addToast(
       t(
         `Loaded ${quote.quoteNumber} into POS Cart`,
@@ -360,14 +440,16 @@ export function QuotationsClient({
                           </button>
                           {q.status !== 'CONVERTED' && q.status !== 'CANCELLED' && (
                             <>
-                              <button
-                                className="btn btn-ghost btn-sm"
-                                onClick={() => handleLoadToPos(q)}
-                                title={t('Convert to POS Sale', 'POS အရောင်းသို့ ပြောင်းရန်')}
-                                style={{ color: 'var(--success)' }}
-                              >
-                                <ShoppingCart size={15} strokeWidth={1.75} />
-                              </button>
+                              {!isQuotationExpired(q) && (
+                                <button
+                                  className="btn btn-ghost btn-sm"
+                                  onClick={() => handleLoadToPos(q)}
+                                  title={t('Convert to POS Sale', 'POS အရောင်းသို့ ပြောင်းရန်')}
+                                  style={{ color: 'var(--success)' }}
+                                >
+                                  <ShoppingCart size={15} strokeWidth={1.75} />
+                                </button>
+                              )}
                               <button
                                 className="btn btn-ghost btn-sm"
                                 onClick={() => handleCancelQuotation(q.id)}
@@ -664,44 +746,59 @@ export function QuotationsClient({
                     ` (${printTarget.customer?.phone || printTarget.customerPhone})`}
                 </div>
 
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 16 }}>
-                  <thead>
-                    <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #0f172a' }}>
-                      <th style={{ padding: 6, textAlign: 'left' }}>#</th>
-                      <th style={{ padding: 6, textAlign: 'left' }}>{t('Item Description', 'ပစ္စည်းအမည်')}</th>
-                      <th style={{ padding: 6, textAlign: 'right' }}>{t('Qty', 'အရေအတွက်')}</th>
-                      <th style={{ padding: 6, textAlign: 'right' }}>{t('Unit Price', 'တစ်ခုဈေး')}</th>
-                      <th style={{ padding: 6, textAlign: 'right' }}>{t('Total', 'စုစုပေါင်း')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(printTarget.items ?? []).map((item, i) => (
-                      <tr key={item.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                        <td style={{ padding: 6 }}>{i + 1}</td>
-                        <td style={{ padding: 6 }}>
-                          <div style={{ fontWeight: 600 }}>
-                            {language === 'mm' && item.product?.nameMm
-                              ? item.product.nameMm
-                              : item.product?.name}
-                          </div>
-                          {item.product?.sku && (
-                            <div style={{ fontSize: 10, color: '#64748b' }}>{item.product.sku}</div>
+                {(() => {
+                  const hasItemDiscounts = (printTarget.items ?? []).some(
+                    (it) => Number(it.discount || 0) > 0
+                  );
+                  return (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, marginBottom: 16 }}>
+                      <thead>
+                        <tr style={{ background: '#f1f5f9', borderBottom: '1px solid #0f172a' }}>
+                          <th style={{ padding: 6, textAlign: 'left' }}>#</th>
+                          <th style={{ padding: 6, textAlign: 'left' }}>{t('Item Description', 'ပစ္စည်းအမည်')}</th>
+                          <th style={{ padding: 6, textAlign: 'right' }}>{t('Qty', 'အရေအတွက်')}</th>
+                          <th style={{ padding: 6, textAlign: 'right' }}>{t('Unit Price', 'တစ်ခုဈေး')}</th>
+                          {hasItemDiscounts && (
+                            <th style={{ padding: 6, textAlign: 'right' }}>{t('Discount', 'လျှော့ဈေး')}</th>
                           )}
-                        </td>
-                        <td style={{ padding: 6, textAlign: 'right', fontFamily: 'monospace' }}>
-                          {formatQuantity(item.quantity, item.unitName || item.product?.unit)}{' '}
-                          {item.unitName || item.product?.unit}
-                        </td>
-                        <td style={{ padding: 6, textAlign: 'right', fontFamily: 'monospace' }}>
-                          {formatCurrency(item.unitPrice)}
-                        </td>
-                        <td style={{ padding: 6, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>
-                          {formatCurrency(item.total)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                          <th style={{ padding: 6, textAlign: 'right' }}>{t('Total', 'စုစုပေါင်း')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(printTarget.items ?? []).map((item, i) => (
+                          <tr key={item.id} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                            <td style={{ padding: 6 }}>{i + 1}</td>
+                            <td style={{ padding: 6 }}>
+                              <div style={{ fontWeight: 600 }}>
+                                {language === 'mm' && item.product?.nameMm
+                                  ? item.product.nameMm
+                                  : item.product?.name}
+                              </div>
+                              {item.product?.sku && (
+                                <div style={{ fontSize: 10, color: '#64748b' }}>{item.product.sku}</div>
+                              )}
+                            </td>
+                            <td style={{ padding: 6, textAlign: 'right', fontFamily: 'monospace' }}>
+                              {formatQuantity(item.quantity, item.unitName || item.product?.unit)}{' '}
+                              {item.unitName || item.product?.unit}
+                            </td>
+                            <td style={{ padding: 6, textAlign: 'right', fontFamily: 'monospace' }}>
+                              {formatCurrency(item.unitPrice)}
+                            </td>
+                            {hasItemDiscounts && (
+                              <td style={{ padding: 6, textAlign: 'right', fontFamily: 'monospace', color: Number(item.discount || 0) > 0 ? '#b91c1c' : '#64748b' }}>
+                                {Number(item.discount || 0) > 0 ? `−${formatCurrency(item.discount)}` : '—'}
+                              </td>
+                            )}
+                            <td style={{ padding: 6, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600 }}>
+                              {formatCurrency(item.total)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  );
+                })()}
 
                 <div style={{ maxWidth: 280, marginLeft: 'auto', fontSize: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0' }}>
@@ -744,7 +841,9 @@ export function QuotationsClient({
               </div>
             </div>
             <div className="modal-footer">
-              {printTarget.status !== 'CONVERTED' && printTarget.status !== 'CANCELLED' && (
+              {printTarget.status !== 'CONVERTED' &&
+                printTarget.status !== 'CANCELLED' &&
+                !isQuotationExpired(printTarget) && (
                 <button
                   className="btn btn-success"
                   onClick={() => handleLoadToPos(printTarget)}

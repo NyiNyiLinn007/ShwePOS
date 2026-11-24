@@ -21,8 +21,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    await prisma.user.update({
-      where: { id: session.user.id },
+    const tokenVersion =
+      (session.user as { sessionVersion?: number }).sessionVersion ?? 0;
+
+    await prisma.user.updateMany({
+      where: {
+        id: session.user.id,
+        isActive: true,
+        sessionVersion: tokenVersion,
+      },
       data: {
         lastLoginAt: null,
         sessionVersion: { increment: 1 },

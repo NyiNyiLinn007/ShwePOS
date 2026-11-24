@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import bcrypt from 'bcryptjs';
-import { requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
+import { ApiError, requireRole, handleApiError, validateCsrf } from '@/lib/apiAuth';
 import { updateUserSchema } from '@/lib/validations';
 import { logAudit } from '@/services/auditService';
 
@@ -20,6 +20,16 @@ export async function PUT(
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
+    }
+
+    // Prevent self-lockout (demoting or deactivating own admin account)
+    if (id === adminUser.id) {
+      if (parsed.isActive === false) {
+        throw new ApiError('You cannot deactivate your own account', 400);
+      }
+      if (parsed.role !== undefined && parsed.role !== 'ADMIN') {
+        throw new ApiError('You cannot remove your own ADMIN role', 400);
+      }
     }
 
     // Normalize email if provided
@@ -49,46 +59,69 @@ export async function PUT(
       updateData.password = await bcrypt.hash(parsed.password, 10);
     }
 
+    const nextRole = parsed.role ?? existing.role;
+    const nextActive = parsed.isActive ?? existing.isActive;
+    const demotingOrDeactivatingAdmin =
+      existing.role === 'ADMIN' &&
+      existing.isActive &&
+      (nextRole !== 'ADMIN' || !nextActive);
+
     // Any credential/authorization change invalidates all JWTs immediately.
     if (
-      parsed.email !== undefined ||
-      parsed.role !== undefined ||
-      parsed.isActive !== undefined ||
+      (email !== undefined && email !== existing.email) ||
+      (parsed.role !== undefined && parsed.role !== existing.role) ||
+      (parsed.isActive !== undefined && parsed.isActive !== existing.isActive) ||
       (parsed.password && parsed.password.trim().length > 0)
     ) {
       updateData.sessionVersion = { increment: 1 };
     }
 
-    const user = await prisma.user.update({
-      where: { id },
-      data: updateData,
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        phone: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const user = await prisma.$transaction(async (tx) => {
+      if (demotingOrDeactivatingAdmin) {
+        const remainingAdmins = await tx.user.count({
+          where: { role: 'ADMIN', isActive: true, id: { not: id } },
+        });
+        if (remainingAdmins < 1) {
+          throw new ApiError('Cannot deactivate or demote the last active ADMIN account', 409);
+        }
+      }
 
-    await logAudit({
-      userId: adminUser.id,
-      action: 'USER_UPDATED',
-      entityType: 'USER',
-      entityId: user.id,
-      summary: `Updated user ${user.name} (Role: ${existing.role} -> ${user.role}, Active: ${existing.isActive} -> ${user.isActive})`,
-      metadata: {
-        targetUserId: user.id,
-        targetEmail: user.email,
-        oldRole: existing.role,
-        newRole: user.role,
-        oldActive: existing.isActive,
-        newActive: user.isActive,
-        passwordChanged: Boolean(parsed.password && parsed.password.trim().length > 0),
-      },
+      const updated = await tx.user.update({
+        where: { id },
+        data: updateData,
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          phone: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      await logAudit(
+        {
+          userId: adminUser.id,
+          action: 'USER_UPDATED',
+          entityType: 'USER',
+          entityId: updated.id,
+          summary: `Updated user ${updated.name} (Role: ${existing.role} -> ${updated.role}, Active: ${existing.isActive} -> ${updated.isActive})`,
+          metadata: {
+            targetUserId: updated.id,
+            targetEmail: updated.email,
+            oldRole: existing.role,
+            newRole: updated.role,
+            oldActive: existing.isActive,
+            newActive: updated.isActive,
+            passwordChanged: Boolean(parsed.password && parsed.password.trim().length > 0),
+          },
+        },
+        tx
+      );
+
+      return updated;
     });
 
     return NextResponse.json(user);
@@ -107,27 +140,45 @@ export async function DELETE(
 
     const { id } = await params;
 
+    if (id === adminUser.id) {
+      throw new ApiError('You cannot deactivate your own account', 400);
+    }
+
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
-    // Soft delete - deactivate user instead of hard delete
-    await prisma.user.update({
-      where: { id },
-      data: {
-        isActive: false,
-        sessionVersion: { increment: 1 },
-      },
-    });
+    await prisma.$transaction(async (tx) => {
+      if (existing.role === 'ADMIN' && existing.isActive) {
+        const remainingAdmins = await tx.user.count({
+          where: { role: 'ADMIN', isActive: true, id: { not: id } },
+        });
+        if (remainingAdmins < 1) {
+          throw new ApiError('Cannot deactivate the last active ADMIN account', 409);
+        }
+      }
 
-    await logAudit({
-      userId: adminUser.id,
-      action: 'USER_UPDATED',
-      entityType: 'USER',
-      entityId: existing.id,
-      summary: `Deactivated user ${existing.name} (${existing.email})`,
-      metadata: { targetUserId: existing.id, deactivated: true },
+      // Soft delete - deactivate user instead of hard delete
+      await tx.user.update({
+        where: { id },
+        data: {
+          isActive: false,
+          sessionVersion: { increment: 1 },
+        },
+      });
+
+      await logAudit(
+        {
+          userId: adminUser.id,
+          action: 'USER_UPDATED',
+          entityType: 'USER',
+          entityId: existing.id,
+          summary: `Deactivated user ${existing.name} (${existing.email})`,
+          metadata: { targetUserId: existing.id, deactivated: true },
+        },
+        tx
+      );
     });
 
     return NextResponse.json({

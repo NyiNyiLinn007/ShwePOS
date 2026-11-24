@@ -121,18 +121,20 @@ export async function createPurchaseOrder(
           unitCost,
           total: lineTotal,
           batchNumber: item.batchNumber?.trim() || null,
-          expiryDate: item.expiryDate ? new Date(item.expiryDate) : null,
+          expiryDate: item.expiryDate
+            ? (parseMyanmarDateBoundary(item.expiryDate, true) ?? new Date(item.expiryDate))
+            : null,
         });
       }
 
       const discountAmount = roundMoney(Math.min(input.discountAmount || 0, subtotal));
       const totalAmount = roundMoney(Math.max(0, subtotal - discountAmount));
       const paidAmount =
-        input.paymentMethod === 'CREDIT'
-          ? roundMoney(Math.min(input.paidAmount || 0, totalAmount))
-          : roundMoney(
-              input.paidAmount > 0 ? Math.min(input.paidAmount, totalAmount) : totalAmount
-            );
+        input.paidAmount !== undefined
+          ? roundMoney(Math.min(Math.max(0, input.paidAmount), totalAmount))
+          : input.paymentMethod === 'CREDIT'
+            ? 0
+            : totalAmount;
       const dueAmount = roundMoney(Math.max(0, totalAmount - paidAmount));
 
       // Atomic PO sequence in Myanmar timezone (PO-YYYYMMDD-XXXX)
@@ -263,6 +265,15 @@ export async function cancelPurchaseOrder(id: string, user: AuthUser) {
         throw new ApiError('Purchase order is already cancelled', 409);
       }
 
+      // Atomically claim RECEIVED -> CANCELLED FIRST to prevent concurrent double-decrement race
+      const claimed = await tx.purchaseOrder.updateMany({
+        where: { id, status: 'RECEIVED' },
+        data: { status: 'CANCELLED', dueAmount: 0 },
+      });
+      if (claimed.count === 0) {
+        throw new ApiError('Purchase order was already cancelled', 409);
+      }
+
       for (const item of po.items) {
         const qty = roundQuantity(toNumber(item.quantity));
         const res = await tx.product.updateMany({
@@ -274,6 +285,22 @@ export async function cancelPurchaseOrder(id: string, user: AuthUser) {
             'Cannot cancel purchase order because received stock has already been sold or adjusted',
             409
           );
+        }
+
+        // Revert Product.costPrice to the most recent remaining RECEIVED PO item cost (if any)
+        const prevPoItem = await tx.purchaseItem.findFirst({
+          where: {
+            productId: item.productId,
+            purchaseOrder: { status: 'RECEIVED', id: { not: po.id } },
+          },
+          orderBy: { purchaseOrder: { createdAt: 'desc' } },
+          select: { unitCost: true },
+        });
+        if (prevPoItem) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { costPrice: prevPoItem.unitCost },
+          });
         }
 
         const updatedProduct = await tx.product.findUnique({
@@ -299,15 +326,14 @@ export async function cancelPurchaseOrder(id: string, user: AuthUser) {
         Math.min(toNumber(po.supplier.creditBalance), toNumber(po.dueAmount))
       );
       if (dueToReverse > 0) {
-        await tx.supplier.update({
-          where: { id: po.supplierId },
+        await tx.supplier.updateMany({
+          where: { id: po.supplierId, creditBalance: { gte: dueToReverse } },
           data: { creditBalance: { decrement: dueToReverse } },
         });
       }
 
-      const updatedPo = await tx.purchaseOrder.update({
+      const updatedPo = await tx.purchaseOrder.findUniqueOrThrow({
         where: { id },
-        data: { status: 'CANCELLED', dueAmount: 0 },
         include: {
           supplier: { select: { id: true, name: true, phone: true } },
           user: { select: { id: true, name: true } },

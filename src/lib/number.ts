@@ -13,18 +13,34 @@ export function roundMoney(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
-/** Recursively convert Prisma Decimal values before crossing a JSON boundary. */
-export function serializePrismaData(value: unknown): any {
+type DecimalLike = { toNumber(): number };
+
+export type SerializedPrisma<T> = T extends Date
+  ? string
+  : T extends DecimalLike
+    ? number
+    : T extends ReadonlyArray<infer U>
+      ? Array<SerializedPrisma<U>>
+      : T extends object
+        ? { [K in keyof T]: SerializedPrisma<T[K]> }
+        : T;
+
+function serializeValue(value: unknown): unknown {
   if (value === null || value === undefined) return value;
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'object' && 'toNumber' in value && typeof (value as { toNumber?: unknown }).toNumber === 'function') {
     return toNumber(value);
   }
-  if (Array.isArray(value)) return value.map((item) => serializePrismaData(item));
+  if (Array.isArray(value)) return value.map((item) => serializeValue(item));
   if (typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, serializePrismaData(item)])
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, serializeValue(item)])
     );
   }
   return value;
+}
+
+/** Recursively convert Prisma Decimal and Date values before crossing a JSON/RSC boundary. */
+export function serializePrismaData<T>(value: T): SerializedPrisma<T> {
+  return serializeValue(value) as SerializedPrisma<T>;
 }

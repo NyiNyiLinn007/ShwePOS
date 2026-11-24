@@ -63,9 +63,10 @@ export async function GET(request: NextRequest) {
         createdAt: true,
         updatedAt: true,
         sales: {
-          select: { id: true, totalAmount: true, createdAt: true, status: true },
+          where: { status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] } },
+          select: { createdAt: true },
           orderBy: { createdAt: 'desc' },
-          take: 50,
+          take: 1,
         },
       },
       orderBy: { createdAt: 'desc' },
@@ -73,10 +74,26 @@ export async function GET(request: NextRequest) {
       take: limit,
     });
 
+    const customerIds = customers.map((c) => c.id);
+    const purchaseCounts =
+      customerIds.length > 0
+        ? await prisma.sale.groupBy({
+            by: ['customerId'],
+            where: {
+              customerId: { in: customerIds },
+              status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
+            },
+            _count: { id: true },
+          })
+        : [];
+    const purchaseCountMap = new Map<string, number>();
+    for (const row of purchaseCounts) {
+      if (row.customerId) {
+        purchaseCountMap.set(row.customerId, row._count.id);
+      }
+    }
+
     const result = customers.map((customer) => {
-      const completedSales = customer.sales.filter(
-        (sale) => sale.status === 'COMPLETED' || sale.status === 'PARTIALLY_REFUNDED'
-      );
       const lastSale = customer.sales[0] || null;
       return {
         id: customer.id,
@@ -90,7 +107,7 @@ export async function GET(request: NextRequest) {
         loyaltyPoints: customer.loyaltyPoints,
         createdAt: customer.createdAt,
         updatedAt: customer.updatedAt,
-        purchaseCount: completedSales.length,
+        purchaseCount: purchaseCountMap.get(customer.id) ?? 0,
         lastPurchaseDate: lastSale?.createdAt || null,
         sales: undefined,
       };

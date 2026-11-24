@@ -3,7 +3,7 @@ import { CategoriesClient } from '@/components/categories/CategoriesClient';
 import { requirePageRole } from '@/lib/pageAuth';
 
 export default async function CategoriesPage() {
-  await requirePageRole('MANAGER', 'ADMIN');
+  const session = await requirePageRole('MANAGER', 'ADMIN');
 
   const categories = await prisma.category.findMany({
     include: {
@@ -14,5 +14,5 @@ export default async function CategoriesPage() {
     orderBy: { name: 'asc' },
   });
 
-  return <CategoriesClient initialCategories={categories} />;
+  return <CategoriesClient initialCategories={categories} userRole={session.user.role} />;
 }

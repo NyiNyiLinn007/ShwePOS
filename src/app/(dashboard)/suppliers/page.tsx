@@ -8,7 +8,7 @@ export const metadata = {
 
 export default async function SuppliersPage() {
   const session = await requirePageRole('MANAGER', 'ADMIN');
-  const suppliers = await listSuppliers(null, false);
+  const suppliers = await listSuppliers(null, true);
 
   return (
     <SuppliersClient

@@ -4,8 +4,18 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { CartItem, Product, ProductUnit } from '@/types';
 import { isFractionalUnit, roundQuantity } from '@/lib/utils';
+import { roundMmk } from '@/lib/saleCalculator';
 
 export type DiscountType = 'PERCENT' | 'FIXED';
+
+export interface ActiveCartCustomer {
+  id: string;
+  name: string;
+  phone: string | null;
+  loyaltyPoints?: number;
+  creditBalance?: number;
+  creditLimit?: number | null;
+}
 
 export interface HeldBill {
   id: string;
@@ -13,89 +23,69 @@ export interface HeldBill {
   items: CartItem[];
   discount: number;
   discountType: DiscountType;
+  promoCode?: string;
+  activeQuotationId?: string | null;
+  activeCustomer?: ActiveCartCustomer | null;
   createdAt: string;
 }
 
-function getMaxQtyForUnit(maxStock: number, unit: string, factor: number): number {
+export function getCartLineKey(item: Pick<CartItem, 'lineKey' | 'productId' | 'productUnitId'>): string {
+  return item.lineKey || `${item.productId}:${item.productUnitId ?? 'base'}`;
+}
+
+function matchesLine(item: CartItem, keyOrProductId: string): boolean {
+  return getCartLineKey(item) === keyOrProductId || item.productId === keyOrProductId;
+}
+
+function getMaxQtyForUnit(availableBaseStock: number, unit: string, factor: number): number {
   const safeFactor = factor > 0 ? factor : 1;
-  const raw = maxStock / safeFactor;
+  const raw = Math.max(0, availableBaseStock) / safeFactor;
   return isFractionalUnit(unit) ? roundQuantity(raw) : Math.floor(raw + 1e-9);
 }
 
+/** Calculate how much base-unit stock is already consumed by OTHER lines of the same product. */
+function getOtherLinesBaseUsage(items: CartItem[], productId: string, excludeLineKey: string): number {
+  return roundQuantity(
+    items.reduce((sum, it) => {
+      if (it.productId !== productId || getCartLineKey(it) === excludeLineKey) return sum;
+      return sum + it.quantity * (it.unitFactor ?? 1);
+    }, 0)
+  );
+}
+
 interface CartState {
-  /** Items currently in the POS cart. */
   items: CartItem[];
-
-  /** Cart-level discount value (0-100 if PERCENT, or Kyat amount if FIXED). */
   discount: number;
-
-  /** Whether cart discount is PERCENT (%) or FIXED (Kyat). */
   discountType: DiscountType;
-
-  /** Optional promo/coupon code entered by cashier. */
   promoCode: string;
-
-  /** Optional quotation ID being converted to a POS sale. */
   activeQuotationId: string | null;
-
-  /** Parked/held bills that can be resumed later. */
+  activeCustomer: ActiveCartCustomer | null;
   heldBills: HeldBill[];
 
-  /** Add a product to the cart (optionally in a specific alternate packaging unit). */
-  addItem: (product: Product, qty?: number, unitOverride?: ProductUnit | null) => void;
-
-  /** Load items from a Quotation directly into the cart. */
-  loadQuotationItems: (quotationId: string, items: CartItem[], discountFixed?: number) => void;
-
-  /** Set promo code for promotion evaluation. */
+  addItem: (product: Product, qty?: number, unitOverride?: ProductUnit | null) => boolean;
+  loadQuotationItems: (
+    quotationId: string,
+    items: CartItem[],
+    discountFixed?: number,
+    customer?: ActiveCartCustomer | null
+  ) => void;
   setPromoCode: (code: string) => void;
-
-  /** Remove a product from the cart by product ID. */
-  removeItem: (productId: string) => void;
-
-  /** Set the quantity for a specific product in the cart. Removes the item if qty <= 0. */
-  updateQuantity: (productId: string, qty: number) => void;
-
-  /** Override the unit selling price for a specific cart item (wholesale / negotiation). */
-  updateUnitPrice: (productId: string, newPrice: number) => void;
-
-  /** Switch a cart item between base unit (null) and an alternate ProductUnit ID. */
-  setItemUnit: (productId: string, productUnitId: string | null) => void;
-
-  /** Set item-level discount (in Kyat) for a specific product in the cart. */
-  updateItemDiscount: (productId: string, discountAmount: number) => void;
-
-  /** Remove all items from the cart and reset discount. */
+  setActiveCustomer: (customer: ActiveCartCustomer | null) => void;
+  removeItem: (keyOrProductId: string) => void;
+  updateQuantity: (keyOrProductId: string, qty: number) => void;
+  updateUnitPrice: (keyOrProductId: string, newPrice: number) => void;
+  setItemUnit: (keyOrProductId: string, productUnitId: string | null) => void;
+  updateItemDiscount: (keyOrProductId: string, discountAmount: number) => void;
   clearCart: () => void;
-
-  /** Set the cart discount value. */
   setDiscount: (amount: number) => void;
-
-  /** Set the cart discount type ('PERCENT' or 'FIXED'). */
   setDiscountType: (type: DiscountType) => void;
-
-  /** Hold/park the current cart so another customer can be served. */
   holdCurrentBill: (label?: string) => boolean;
-
-  /** Resume a held bill by ID (replaces current cart; if current cart has items, holds it first). */
   resumeHeldBill: (id: string) => void;
-
-  /** Delete a held bill by ID. */
   removeHeldBill: (id: string) => void;
-
-  /** Calculate the gross subtotal (sum of unitPrice * quantity) before any discounts. */
   getSubtotal: () => number;
-
-  /** Calculate total of per-item discounts. */
   getItemDiscountTotal: () => number;
-
-  /** Calculate the cart-level discount amount in Kyat. */
   getCartDiscountAmount: () => number;
-
-  /** Calculate the final total after applying both item and cart discounts (before tax). */
   getTotal: () => number;
-
-  /** Get the total number of items (or lines) in the cart. */
   getItemCount: () => number;
 }
 
@@ -107,58 +97,53 @@ export const useCartStore = create<CartState>()(
       discountType: 'PERCENT',
       promoCode: '',
       activeQuotationId: null,
+      activeCustomer: null,
       heldBills: [],
 
       addItem: (product: Product, qty: number = 1, unitOverride?: ProductUnit | null) => {
+        let added = false;
         set((state) => {
           const activeUnitName = unitOverride ? unitOverride.unitName : product.unit;
           const factor = unitOverride ? unitOverride.conversionFactor : 1;
-          const activePrice = unitOverride ? unitOverride.sellingPrice : product.sellingPrice;
-          const maxForUnit = getMaxQtyForUnit(product.stockQuantity, activeUnitName, factor);
+          const activePrice = roundMmk(unitOverride ? unitOverride.sellingPrice : product.sellingPrice);
+          const targetUnitId = unitOverride?.id ?? null;
+          const lineKey = `${product.id}:${targetUnitId ?? 'base'}`;
+
+          const usedByOtherLines = getOtherLinesBaseUsage(state.items, product.id, lineKey);
+          const remainingBaseStock = Math.max(0, roundQuantity(product.stockQuantity - usedByOtherLines));
+          const maxForUnit = getMaxQtyForUnit(remainingBaseStock, activeUnitName, factor);
           if (maxForUnit <= 0) return state;
 
           const stepQty = isFractionalUnit(activeUnitName)
             ? roundQuantity(qty)
             : Math.max(1, Math.round(qty));
 
-          const existingIndex = state.items.findIndex(
-            (item) => item.productId === product.id
+          // Always refresh maxStock on existing lines of this product
+          const syncedItems = state.items.map((item) =>
+            item.productId === product.id
+              ? { ...item, maxStock: product.stockQuantity, availableUnits: product.productUnits ?? item.availableUnits }
+              : item
+          );
+
+          const existingIndex = syncedItems.findIndex(
+            (item) => getCartLineKey(item) === lineKey
           );
 
           if (existingIndex >= 0) {
-            const updatedItems = [...state.items];
-            const existing = updatedItems[existingIndex];
-            const existingUnitId = existing.productUnitId ?? null;
-            const targetUnitId = unitOverride?.id ?? null;
-
-            if (existingUnitId === targetUnitId) {
-              const existingMax = getMaxQtyForUnit(
-                existing.maxStock,
-                existing.unit,
-                existing.unitFactor ?? 1
-              );
-              const newQty = roundQuantity(
-                Math.min(existing.quantity + stepQty, existingMax)
-              );
-              updatedItems[existingIndex] = { ...existing, quantity: newQty };
-            } else {
-              // Switched packaging via alternate barcode scan
-              const clampedQty = roundQuantity(Math.min(stepQty, maxForUnit));
-              updatedItems[existingIndex] = {
-                ...existing,
-                unit: activeUnitName,
-                productUnitId: targetUnitId,
-                unitFactor: factor,
-                unitPrice: activePrice,
-                originalUnitPrice: activePrice,
-                quantity: clampedQty,
-                discount: Math.min(existing.discount || 0, Math.round(activePrice * clampedQty)),
-              };
-            }
+            const existing = syncedItems[existingIndex];
+            const newQty = roundQuantity(Math.min(existing.quantity + stepQty, maxForUnit));
+            if (newQty <= existing.quantity) return { items: syncedItems };
+            const updatedItems = [...syncedItems];
+            updatedItems[existingIndex] = { ...existing, quantity: newQty };
+            added = true;
             return { items: updatedItems };
           }
 
+          const clampedQty = roundQuantity(Math.min(stepQty, maxForUnit));
+          if (clampedQty <= 0) return state;
+
           const cartItem: CartItem = {
+            lineKey,
             productId: product.id,
             categoryId: product.categoryId,
             name: product.name,
@@ -166,51 +151,52 @@ export const useCartStore = create<CartState>()(
             sku: product.sku,
             unitPrice: activePrice,
             originalUnitPrice: activePrice,
-            baseSellingPrice: product.sellingPrice,
+            baseSellingPrice: roundMmk(product.sellingPrice),
             costPrice: product.costPrice,
-            quantity: roundQuantity(Math.min(stepQty, maxForUnit)),
+            quantity: clampedQty,
             discount: 0,
             maxStock: product.stockQuantity,
             unit: activeUnitName,
             baseUnit: product.unit,
-            productUnitId: unitOverride?.id ?? null,
+            productUnitId: targetUnitId,
             unitFactor: factor,
             availableUnits: product.productUnits ?? [],
             imageUrl: product.imageUrl,
           };
 
-          return { items: [...state.items, cartItem] };
+          added = true;
+          return { items: [...syncedItems, cartItem] };
         });
+        return added;
       },
 
-      removeItem: (productId: string) => {
+      removeItem: (keyOrProductId: string) => {
         set((state) => ({
-          items: state.items.filter((item) => item.productId !== productId),
+          items: state.items.filter((item) => !matchesLine(item, keyOrProductId)),
         }));
       },
 
-      updateQuantity: (productId: string, qty: number) => {
+      updateQuantity: (keyOrProductId: string, qty: number) => {
         set((state) => {
           const rounded = roundQuantity(qty);
           if (rounded <= 0) {
             return {
-              items: state.items.filter((item) => item.productId !== productId),
+              items: state.items.filter((item) => !matchesLine(item, keyOrProductId)),
             };
           }
 
           return {
             items: state.items.map((item) => {
-              if (item.productId !== productId) return item;
+              if (!matchesLine(item, keyOrProductId)) return item;
+              const currentKey = getCartLineKey(item);
+              const otherBase = getOtherLinesBaseUsage(state.items, item.productId, currentKey);
+              const availBase = Math.max(0, roundQuantity(item.maxStock - otherBase));
               const normalizedQty = isFractionalUnit(item.unit)
                 ? rounded
                 : Math.max(1, Math.round(rounded));
-              const maxForUnit = getMaxQtyForUnit(
-                item.maxStock,
-                item.unit,
-                item.unitFactor ?? 1
-              );
+              const maxForUnit = getMaxQtyForUnit(availBase, item.unit, item.unitFactor ?? 1);
               const clampedQty = roundQuantity(Math.min(normalizedQty, Math.max(0, maxForUnit)));
-              const maxLineTotal = Math.round(item.unitPrice * clampedQty);
+              const maxLineTotal = roundMmk(item.unitPrice * clampedQty);
               return {
                 ...item,
                 quantity: clampedQty,
@@ -221,12 +207,12 @@ export const useCartStore = create<CartState>()(
         });
       },
 
-      updateUnitPrice: (productId: string, newPrice: number) => {
+      updateUnitPrice: (keyOrProductId: string, newPrice: number) => {
         set((state) => ({
           items: state.items.map((item) => {
-            if (item.productId !== productId) return item;
-            const cleanPrice = Math.max(0, Math.round(newPrice));
-            const maxLineTotal = Math.round(cleanPrice * item.quantity);
+            if (!matchesLine(item, keyOrProductId)) return item;
+            const cleanPrice = Math.max(0, roundMmk(newPrice));
+            const maxLineTotal = roundMmk(cleanPrice * item.quantity);
             return {
               ...item,
               originalUnitPrice: item.originalUnitPrice ?? item.unitPrice,
@@ -237,67 +223,80 @@ export const useCartStore = create<CartState>()(
         }));
       },
 
-      setItemUnit: (productId: string, productUnitId: string | null) => {
-        set((state) => ({
-          items: state.items.map((item) => {
-            if (item.productId !== productId) return item;
-            const units = item.availableUnits ?? [];
+      setItemUnit: (keyOrProductId: string, productUnitId: string | null) => {
+        set((state) => {
+          const idx = state.items.findIndex((item) => matchesLine(item, keyOrProductId));
+          if (idx < 0) return state;
 
-            if (!productUnitId) {
-              // Revert to base unit using stored baseSellingPrice
-              const baseUnit = item.baseUnit ?? item.unit;
-              const basePrice =
-                item.baseSellingPrice ??
-                item.originalUnitPrice ??
-                item.unitPrice;
-              const maxBase = getMaxQtyForUnit(item.maxStock, baseUnit, 1);
-              const clampedQty = roundQuantity(Math.max(isFractionalUnit(baseUnit) ? 0.5 : 1, Math.min(item.quantity, maxBase)));
-              return {
-                ...item,
-                productUnitId: null,
-                unit: baseUnit,
-                unitFactor: 1,
-                unitPrice: basePrice,
-                originalUnitPrice: basePrice,
-                quantity: clampedQty,
-                discount: Math.min(item.discount || 0, Math.round(basePrice * clampedQty)),
-              };
-            }
+          const item = state.items[idx];
+          const units = item.availableUnits ?? [];
+          const nextLineKey = `${item.productId}:${productUnitId ?? 'base'}`;
+          const currentKey = getCartLineKey(item);
+          if (nextLineKey === currentKey) return state;
 
-            const targetUnit = units.find((u) => u.id === productUnitId);
-            if (!targetUnit) return item;
+          let nextUnitName: string;
+          let nextFactor: number;
+          let nextPrice: number;
 
-            const maxForUnit = getMaxQtyForUnit(
-              item.maxStock,
-              targetUnit.unitName,
-              targetUnit.conversionFactor
+          if (!productUnitId) {
+            nextUnitName = item.baseUnit ?? item.unit;
+            nextFactor = 1;
+            nextPrice = roundMmk(
+              item.baseSellingPrice ?? item.originalUnitPrice ?? item.unitPrice
             );
-            if (maxForUnit <= 0) return item;
+          } else {
+            const targetUnit = units.find((u) => u.id === productUnitId);
+            if (!targetUnit) return state;
+            nextUnitName = targetUnit.unitName;
+            nextFactor = targetUnit.conversionFactor;
+            nextPrice = roundMmk(targetUnit.sellingPrice);
+          }
 
-            const clampedQty = roundQuantity(Math.max(1, Math.min(item.quantity, maxForUnit)));
-            return {
-              ...item,
-              productUnitId: targetUnit.id,
-              unit: targetUnit.unitName,
-              unitFactor: targetUnit.conversionFactor,
-              unitPrice: targetUnit.sellingPrice,
-              originalUnitPrice: targetUnit.sellingPrice,
-              quantity: clampedQty,
-              discount: Math.min(
-                item.discount || 0,
-                Math.round(targetUnit.sellingPrice * clampedQty)
-              ),
-            };
-          }),
-        }));
+          // Check if another line already exists with nextLineKey — if so, merge quantities
+          const duplicateIdx = state.items.findIndex(
+            (other, i) => i !== idx && getCartLineKey(other) === nextLineKey
+          );
+
+          const usedByUnrelated = roundQuantity(
+            state.items.reduce((sum, other, i) => {
+              if (i === idx || i === duplicateIdx || other.productId !== item.productId) return sum;
+              return sum + other.quantity * (other.unitFactor ?? 1);
+            }, 0)
+          );
+          const availBase = Math.max(0, roundQuantity(item.maxStock - usedByUnrelated));
+          const maxForUnit = getMaxQtyForUnit(availBase, nextUnitName, nextFactor);
+          if (maxForUnit <= 0) return state;
+
+          const existingDupQty = duplicateIdx >= 0 ? state.items[duplicateIdx].quantity : 0;
+          const minQty = isFractionalUnit(nextUnitName) ? Math.min(0.5, maxForUnit) : 1;
+          const desiredQty = existingDupQty + item.quantity;
+          const clampedQty = roundQuantity(Math.min(maxForUnit, Math.max(minQty, desiredQty)));
+
+          const nextItem: CartItem = {
+            ...item,
+            lineKey: nextLineKey,
+            productUnitId: productUnitId ?? null,
+            unit: nextUnitName,
+            unitFactor: nextFactor,
+            unitPrice: nextPrice,
+            originalUnitPrice: nextPrice,
+            quantity: clampedQty,
+            discount: Math.min(item.discount || 0, roundMmk(nextPrice * clampedQty)),
+          };
+
+          const updated = state.items
+            .map((it, i) => (i === idx ? nextItem : it))
+            .filter((_, i) => i !== duplicateIdx);
+          return { items: updated };
+        });
       },
 
-      updateItemDiscount: (productId: string, discountAmount: number) => {
+      updateItemDiscount: (keyOrProductId: string, discountAmount: number) => {
         set((state) => ({
           items: state.items.map((item) => {
-            if (item.productId !== productId) return item;
-            const lineGross = Math.round(item.unitPrice * item.quantity);
-            const cleanDiscount = Math.max(0, Math.min(lineGross, Math.round(discountAmount || 0)));
+            if (!matchesLine(item, keyOrProductId)) return item;
+            const lineGross = roundMmk(item.unitPrice * item.quantity);
+            const cleanDiscount = Math.max(0, Math.min(lineGross, roundMmk(discountAmount || 0)));
             return { ...item, discount: cleanDiscount };
           }),
         }));
@@ -310,6 +309,7 @@ export const useCartStore = create<CartState>()(
           discountType: 'PERCENT',
           promoCode: '',
           activeQuotationId: null,
+          activeCustomer: null,
         });
       },
 
@@ -317,13 +317,27 @@ export const useCartStore = create<CartState>()(
         set({ promoCode: promoCode.toUpperCase() });
       },
 
-      loadQuotationItems: (quotationId: string, items: CartItem[], discountFixed = 0) => {
+      setActiveCustomer: (activeCustomer: ActiveCartCustomer | null) => {
+        set({ activeCustomer });
+      },
+
+      loadQuotationItems: (
+        quotationId: string,
+        items: CartItem[],
+        discountFixed = 0,
+        customer: ActiveCartCustomer | null = null
+      ) => {
+        const normalizedItems = items.map((it, idx) => ({
+          ...it,
+          lineKey: it.lineKey || `${it.productId}:${it.productUnitId ?? 'base'}:q${idx}`,
+        }));
         set({
-          items,
-          discount: Math.max(0, Math.round(discountFixed)),
+          items: normalizedItems,
+          discount: Math.max(0, roundMmk(discountFixed)),
           discountType: discountFixed > 0 ? 'FIXED' : 'PERCENT',
           promoCode: '',
           activeQuotationId: quotationId,
+          activeCustomer: customer,
         });
       },
 
@@ -332,7 +346,7 @@ export const useCartStore = create<CartState>()(
         if (type === 'PERCENT') {
           set({ discount: Math.max(0, Math.min(100, amount)) });
         } else {
-          set({ discount: Math.max(0, Math.round(amount)) });
+          set({ discount: Math.max(0, roundMmk(amount)) });
         }
       },
 
@@ -349,6 +363,9 @@ export const useCartStore = create<CartState>()(
           items: state.items,
           discount: state.discount,
           discountType: state.discountType,
+          promoCode: state.promoCode,
+          activeQuotationId: state.activeQuotationId,
+          activeCustomer: state.activeCustomer,
           createdAt: new Date().toISOString(),
         };
         set({
@@ -356,6 +373,9 @@ export const useCartStore = create<CartState>()(
           items: [],
           discount: 0,
           discountType: 'PERCENT',
+          promoCode: '',
+          activeQuotationId: null,
+          activeCustomer: null,
         });
         return true;
       },
@@ -374,6 +394,9 @@ export const useCartStore = create<CartState>()(
               items: state.items,
               discount: state.discount,
               discountType: state.discountType,
+              promoCode: state.promoCode,
+              activeQuotationId: state.activeQuotationId,
+              activeCustomer: state.activeCustomer,
               createdAt: new Date().toISOString(),
             },
             ...remainingHeld,
@@ -384,6 +407,9 @@ export const useCartStore = create<CartState>()(
           items: target.items,
           discount: target.discount,
           discountType: target.discountType,
+          promoCode: target.promoCode ?? '',
+          activeQuotationId: target.activeQuotationId ?? null,
+          activeCustomer: target.activeCustomer ?? null,
           heldBills: remainingHeld,
         });
       },
@@ -396,14 +422,15 @@ export const useCartStore = create<CartState>()(
 
       getSubtotal: () => {
         return get().items.reduce(
-          (sum, item) => sum + Math.round(item.unitPrice * item.quantity),
+          (sum, item) => sum + roundMmk(item.unitPrice * item.quantity),
           0
         );
       },
 
       getItemDiscountTotal: () => {
         return get().items.reduce(
-          (sum, item) => sum + Math.min(item.discount || 0, Math.round(item.unitPrice * item.quantity)),
+          (sum, item) =>
+            sum + Math.min(roundMmk(item.discount || 0), roundMmk(item.unitPrice * item.quantity)),
           0
         );
       },
@@ -412,9 +439,9 @@ export const useCartStore = create<CartState>()(
         const afterItemDiscount = Math.max(0, get().getSubtotal() - get().getItemDiscountTotal());
         const discount = get().discount;
         if (get().discountType === 'PERCENT') {
-          return Math.round(afterItemDiscount * (discount / 100));
+          return roundMmk(afterItemDiscount * (discount / 100));
         }
-        return Math.min(afterItemDiscount, Math.round(discount));
+        return Math.min(afterItemDiscount, roundMmk(discount));
       },
 
       getTotal: () => {
@@ -435,6 +462,9 @@ export const useCartStore = create<CartState>()(
         items: state.items,
         discount: state.discount,
         discountType: state.discountType,
+        promoCode: state.promoCode,
+        activeQuotationId: state.activeQuotationId,
+        activeCustomer: state.activeCustomer,
         heldBills: state.heldBills,
       }),
     }

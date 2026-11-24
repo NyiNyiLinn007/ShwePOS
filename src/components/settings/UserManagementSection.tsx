@@ -108,8 +108,16 @@ export function UserManagementSection({ users, setUsers }: UserManagementSection
     if (!editingUser && !userForm.password) {
       errors.password = t('Password is required for new users', 'အသုံးပြုသူအသစ်အတွက် စကားဝှက်ထည့်ရန် လိုအပ်ပါသည်');
     }
-    if (userForm.password && userForm.password.length > 0 && userForm.password.length < 6) {
-      errors.password = t('Password must be at least 6 characters', 'စကားဝှက်သည် အနည်းဆုံး ၆ လုံးရှိရပါမည်');
+    if (
+      userForm.password &&
+      (userForm.password.length < 8 ||
+        !/[A-Za-z]/.test(userForm.password) ||
+        !/[0-9]/.test(userForm.password))
+    ) {
+      errors.password = t(
+        'Password must be at least 8 characters and include letters and numbers',
+        'စကားဝှက်သည် အနည်းဆုံး ၈ လုံးရှိပြီး အင်္ဂလိပ်စာလုံးနှင့် ဂဏန်း ပါဝင်ရပါမည်'
+      );
     }
     setUserFormErrors(errors);
     return Object.keys(errors).length === 0;
@@ -384,7 +392,7 @@ export function UserManagementSection({ users, setUsers }: UserManagementSection
                   placeholder={
                     editingUser
                       ? t('Leave blank to keep current', 'လက်ရှိအတိုင်းထားရန် ဗလာထားပါ')
-                      : t('Minimum 6 characters', 'အနည်းဆုံး ၆ လုံး')
+                      : t('Min 8 chars (letters & numbers)', 'အနည်းဆုံး ၈ လုံး (စာလုံးနှင့် ဂဏန်းပါဝင်ရမည်)')
                   }
                   value={userForm.password}
                   onChange={(e) => handleUserFormChange('password', e.target.value)}

@@ -14,7 +14,7 @@ import {
 } from '@/lib/utils';
 import { summarizeShiftCash } from '@/lib/shiftUtils';
 import { buildCode128Bars, encodeCode128BCodes } from '@/lib/barcode';
-import { useCartStore } from '@/store/cartStore';
+import { getCartLineKey, useCartStore } from '@/store/cartStore';
 import {
   DATA_MIGRATION_SHEETS,
   createDataMigrationWorkbook,
@@ -22,12 +22,17 @@ import {
   validateXlsxContainer,
   workbookBuffer,
 } from '@/lib/dataMigration';
+import { MEDIA_OMITTED_MARKER } from '@/lib/dataMigrationWorkbook';
 import {
   evaluateBestPromotion,
   type EvaluablePromotion,
   type PromoCartLine,
 } from '@/lib/promotionEngine';
-import { getAgingBucketKey } from '@/services/agingService';
+import { calculateMyanmarAgeDays, getAgingBucketKey } from '@/services/agingService';
+import { calculateLineAmounts, calculateOrderTotals, roundMmk } from '@/lib/saleCalculator';
+import { escapePrintHtml } from '@/lib/print';
+import { escapeCsvCell } from '@/lib/csv';
+import { isSafeImageUrl } from '@/lib/validations';
 import writeXlsxFile from 'write-excel-file/node';
 
 describe('Myanmar Timezone Standardization (Asia/Yangon, UTC+6:30)', () => {
@@ -433,7 +438,7 @@ describe('Promotions Engine (Best Single Discount, Non-Stacking)', () => {
   });
 });
 
-describe('AR/AP Aging Bucket Boundaries', () => {
+describe('AR/AP Aging Bucket Boundaries & Myanmar Calendar Days', () => {
   it('assigns exact day counts to 0-30, 31-60, 61-90, and 90+ buckets', () => {
     assert.equal(getAgingBucketKey(0), 'd0_30');
     assert.equal(getAgingBucketKey(30), 'd0_30');
@@ -442,5 +447,244 @@ describe('AR/AP Aging Bucket Boundaries', () => {
     assert.equal(getAgingBucketKey(61), 'd61_90');
     assert.equal(getAgingBucketKey(90), 'd61_90');
     assert.equal(getAgingBucketKey(91), 'd90_plus');
+  });
+
+  it('computes exact calendar day differences across month boundaries without month-1 drift', () => {
+    // 2026-03-01 to 2026-04-01 in MMT is exactly 31 days (d31_60)
+    const mar1 = new Date('2026-03-01T06:00:00.000Z');
+    const apr1 = new Date('2026-04-01T06:00:00.000Z');
+    assert.equal(calculateMyanmarAgeDays(mar1, apr1), 31);
+    assert.equal(getAgingBucketKey(calculateMyanmarAgeDays(mar1, apr1)), 'd31_60');
+
+    // 2026-02-28 to 2026-03-30 in MMT is exactly 30 days (d0_30)
+    const feb28 = new Date('2026-02-28T06:00:00.000Z');
+    const mar30 = new Date('2026-03-30T06:00:00.000Z');
+    assert.equal(calculateMyanmarAgeDays(feb28, mar30), 30);
+    assert.equal(getAgingBucketKey(calculateMyanmarAgeDays(feb28, mar30)), 'd0_30');
+  });
+});
+
+describe('Audit Regression Tests (MMK Calculator, Cart Coexistence, Mix-and-Match, XSS & Excel 32k)', () => {
+  it('computes integer MMK totals identically (Math.round 0-decimal policy)', () => {
+    assert.equal(roundMmk(-0), 0);
+    // 1,205 K with 5% tax => 60.25 rounds to 60 => 1,265 K exact
+    const line = calculateLineAmounts(1205, 1, 0);
+    assert.equal(line.total, 1205);
+    const totals = calculateOrderTotals({
+      subtotal: line.gross,
+      itemDiscountTotal: line.discount,
+      cartDiscount: 0,
+      promotionDiscount: 0,
+      loyaltyDiscount: 0,
+      taxRate: 5,
+    });
+    assert.equal(totals.taxAmount, 60);
+    assert.equal(totals.totalAmount, 1265);
+
+    // Fractional weight 0.3 kg x 10,001 K = 3,000.30 => 3,000 K
+    assert.equal(calculateLineAmounts(10001, 0.3, 0).total, 3000);
+  });
+
+  it('keeps base unit and carton unit as separate cart lines & isolates held quotation/promo state', () => {
+    const store = useCartStore.getState();
+    store.clearCart();
+    const cartonUnit = {
+      id: 'u-carton-12',
+      productId: 'p-drink',
+      unitName: 'carton',
+      nameMm: 'ဖာ',
+      conversionFactor: 12,
+      sellingPrice: 11000,
+      barcode: '885000000012',
+    };
+    const product = {
+      id: 'p-drink',
+      name: 'Cola',
+      nameMm: 'ကိုလာ',
+      sku: 'COL-1',
+      barcode: '885000000001',
+      categoryId: 'cat-1',
+      costPrice: 700,
+      sellingPrice: 1000,
+      stockQuantity: 15, // enough for 1 carton (12) + 3 loose pcs
+      lowStockThreshold: 5,
+      unit: 'pcs',
+      imageUrl: null,
+      isActive: true,
+      createdAt: '',
+      updatedAt: '',
+      productUnits: [cartonUnit],
+    };
+
+    // Scan 1 carton then 1 loose pcs -> BOTH lines coexist without overwriting
+    assert.equal(store.addItem(product, 1, cartonUnit), true);
+    assert.equal(store.addItem(product, 1, null), true);
+    assert.equal(useCartStore.getState().items.length, 2);
+    assert.notEqual(
+      getCartLineKey(useCartStore.getState().items[0]),
+      getCartLineKey(useCartStore.getState().items[1])
+    );
+
+    // Try adding 5 more loose pcs -> clamped to 3 remaining base units (15 - 12 = 3)
+    const looseKey = getCartLineKey(useCartStore.getState().items[1]);
+    useCartStore.getState().updateQuantity(looseKey, 5);
+    assert.equal(useCartStore.getState().items[1].quantity, 3);
+
+    // Holding a bill with promoCode + activeQuotationId clears them from active cart and restores on resume
+    useCartStore.getState().setPromoCode('VIP10');
+    useCartStore.getState().loadQuotationItems(
+      'quote-1',
+      useCartStore.getState().items,
+      500,
+      { id: 'cust-1', name: 'Daw Mya', phone: '09123456' }
+    );
+    useCartStore.getState().setPromoCode('VIP10');
+    assert.equal(useCartStore.getState().holdCurrentBill('Wholesale #1'), true);
+    assert.equal(useCartStore.getState().activeQuotationId, null);
+    assert.equal(useCartStore.getState().promoCode, '');
+    assert.equal(useCartStore.getState().activeCustomer, null);
+
+    const heldId = useCartStore.getState().heldBills[0].id;
+    useCartStore.getState().resumeHeldBill(heldId);
+    assert.equal(useCartStore.getState().activeQuotationId, 'quote-1');
+    assert.equal(useCartStore.getState().promoCode, 'VIP10');
+    assert.equal(useCartStore.getState().activeCustomer?.id, 'cust-1');
+    useCartStore.getState().clearCart();
+  });
+
+  it('supports mix-and-match category BUY_X_GET_Y discounting cheapest eligible unit', () => {
+    const promo: EvaluablePromotion = {
+      id: 'mix-b2g1',
+      name: 'Buy 2 Get 1 Drinks',
+      code: null,
+      type: 'BUY_X_GET_Y',
+      discountValue: 0,
+      buyQty: 2,
+      getQty: 1,
+      categoryId: 'cat-drink',
+      startDate: new Date('2026-11-01T00:00:00Z'),
+      endDate: new Date('2026-11-30T23:59:59Z'),
+      isActive: true,
+    };
+    const mixLines: PromoCartLine[] = [
+      { productId: 'p1', categoryId: 'cat-drink', quantity: 2, unitPrice: 1200, lineTotal: 2400 },
+      { productId: 'p2', categoryId: 'cat-drink', quantity: 1, unitPrice: 600, lineTotal: 600 },
+    ];
+    const res = evaluateBestPromotion(mixLines, [promo], '', new Date('2026-11-24T06:00:00Z'));
+    assert.equal(res.best?.discountAmount, 600);
+  });
+
+  it('escapes untrusted HTML/script payloads in print iframe titles', () => {
+    const malicious = 'Mg</title><script>alert("xss")</script>';
+    const escaped = escapePrintHtml(malicious);
+    assert.equal(escaped.includes('<script>'), false);
+    assert.equal(escaped.includes('</title>'), false);
+    assert.equal(
+      escaped,
+      'Mg&lt;/title&gt;&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;'
+    );
+  });
+
+  it('replaces oversized >32K base64 media cells with MEDIA_OMITTED_MARKER in Excel exports', async () => {
+    const hugeBase64 = 'data:image/png;base64,' + 'A'.repeat(40_000);
+    const workbook = createDataMigrationWorkbook({
+      Settings: [
+        {
+          id: 'default',
+          businessName: 'ShwePOS',
+          businessNameMm: 'ရွှေPOS',
+          address: null,
+          phone: null,
+          email: null,
+          taxRate: 0,
+          currencySymbol: 'K',
+          loyaltyEnabled: true,
+          loyaltyEarnRate: 1000,
+          loyaltyRedeemRate: 10,
+          mobileBankingName: 'KBZPay',
+          mobileBankingQrUrl: hugeBase64,
+          logo: hugeBase64,
+          receiptFooter: null,
+        },
+      ],
+    });
+    const buf = await workbookBuffer(workbook);
+    const parsed = await parseDataMigrationWorkbook(buf);
+    assert.equal(parsed.Settings?.[0].mobileBankingQrUrl, MEDIA_OMITTED_MARKER);
+    assert.equal(parsed.Settings?.[0].logo, MEDIA_OMITTED_MARKER);
+  });
+});
+
+describe('Medium/Low Audit Hardening Regressions', () => {
+  it('neutralizes CSV spreadsheet formula injection while preserving negative numbers', () => {
+    assert.equal(escapeCsvCell('=CMD("calc")'), `"'=CMD(""calc"")"`);
+    assert.equal(escapeCsvCell('+959123456'), `"'` + `+959123456"`);
+    assert.equal(escapeCsvCell('@SUM(A1:A5)'), `"'@SUM(A1:A5)"`);
+    assert.equal(escapeCsvCell('  -1+1'), `"'  -1+1"`);
+    assert.equal(escapeCsvCell(-5000), '-5000');
+    assert.equal(escapeCsvCell('Normal Customer'), '"Normal Customer"');
+  });
+
+  it('rejects SVG/javascript image URLs and permits safe raster data URLs and HTTPS URLs', () => {
+    assert.equal(isSafeImageUrl('data:image/svg+xml;base64,PHN2Zz4='), false);
+    assert.equal(isSafeImageUrl('javascript:alert(1)'), false);
+    assert.equal(isSafeImageUrl('//evil.example/x.png'), false);
+    assert.equal(isSafeImageUrl('data:image/webp;base64,UklGRh4AAABXRUJQ'), true);
+    assert.equal(isSafeImageUrl('https://shwepos.vercel.app/logo.png'), true);
+    assert.equal(isSafeImageUrl('/logo.png'), true);
+  });
+
+  it('evaluates getExpiryInfo using Myanmar calendar days without -0 between 00:00 and 06:29 MMT', () => {
+    // 2026-11-24 01:30 MMT === 2026-11-23 19:00 UTC
+    const nowMmt = new Date('2026-11-23T19:00:00.000Z');
+    const expiredYesterday = parseMyanmarDateBoundary('2026-11-23', false)!;
+    const infoExpired = getExpiryInfo(expiredYesterday, 30, nowMmt);
+    assert.ok(infoExpired);
+    assert.equal(infoExpired.status, 'expired');
+    assert.equal(infoExpired.diffDays, -1);
+
+    const expiresToday = parseMyanmarDateBoundary('2026-11-24', false)!;
+    const infoToday = getExpiryInfo(expiresToday, 30, nowMmt);
+    assert.ok(infoToday);
+    assert.equal(infoToday.status, 'expiring_soon');
+    assert.equal(Object.is(infoToday.diffDays, -0), false);
+    assert.equal(infoToday.diffDays, 0);
+  });
+
+  it('evaluates MIN_SPEND_* promotions against post-cart-discount subtotal and returns coupon hints', () => {
+    const minSpendPromo: EvaluablePromotion = {
+      id: 'p-min50k',
+      name: '5K Off 50K+',
+      code: 'SAVE5K',
+      type: 'MIN_SPEND_FIXED',
+      discountValue: 5000,
+      minSpend: 50000,
+      startDate: new Date('2026-11-01T00:00:00Z'),
+      endDate: new Date('2026-11-30T23:59:59Z'),
+      isActive: true,
+    };
+    const lines: PromoCartLine[] = [
+      { productId: 'p1', categoryId: 'c1', quantity: 1, unitPrice: 52000, lineTotal: 52000 },
+    ];
+    // With 0 cart discount (52,000 >= 50,000) => qualifies
+    const qualified = evaluateBestPromotion(lines, [minSpendPromo], 'SAVE5K', new Date('2026-11-24T06:00:00Z'), 0);
+    assert.equal(qualified.best?.discountAmount, 5000);
+    assert.equal(qualified.codeFailureReason, null);
+
+    // With 5,000 manual cart discount (47,000 < 50,000) => does NOT qualify and surfaces MIN_SPEND_NOT_MET
+    const dropped = evaluateBestPromotion(lines, [minSpendPromo], 'SAVE5K', new Date('2026-11-24T06:00:00Z'), 5000);
+    assert.equal(dropped.best, null);
+    assert.equal(dropped.codeFailureReason, 'MIN_SPEND_NOT_MET');
+  });
+
+  it('excludes OPENING and CLOSING snapshot rows from summarizeShiftCash movementCount', () => {
+    const summary = summarizeShiftCash(10000, [
+      { type: 'OPENING', amount: 10000 },
+      { type: 'CASH_SALE', amount: 5000 },
+      { type: 'PAID_OUT', amount: 1000 },
+      { type: 'CLOSING', amount: 14000 },
+    ]);
+    assert.equal(summary.expectedCash, 14000);
+    assert.equal(summary.movementCount, 2);
   });
 });

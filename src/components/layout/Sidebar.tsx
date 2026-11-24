@@ -47,6 +47,10 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
   }, [pathname]);
 
   useEffect(() => {
+    if (userRole !== 'ADMIN' && userRole !== 'MANAGER') {
+      setLowStockCount(0);
+      return;
+    }
     const fetchLowStock = async () => {
       try {
         const res = await fetch('/api/inventory/low-stock-count');
@@ -61,7 +65,7 @@ export default function Sidebar({ userName, userRole, userEmail }: SidebarProps)
     fetchLowStock();
     const interval = setInterval(fetchLowStock, 60000);
     return () => clearInterval(interval);
-  }, [lowStockRefreshKey]);
+  }, [lowStockRefreshKey, userRole]);
 
   const filteredItems = NAV_ITEMS.filter((item) =>
     item.roles.includes(userRole)

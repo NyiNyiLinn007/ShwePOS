@@ -49,12 +49,16 @@ export async function validateCsrf(request?: NextRequest): Promise<void> {
     throw new ApiError('Forbidden: invalid origin', 403);
   }
 
-  // Use the actual Host header and configured canonical URL. Never add an
-  // attacker-supplied forwarded host to the CSRF allow-list.
+  // Use the actual Host header and configured canonical URL (supports NextAuth v5 AUTH_URL and NEXTAUTH_URL).
+  // Never add an attacker-supplied forwarded host to the CSRF allow-list.
   const requestHost = normalizeHost(headersList.get('host'));
-  const configuredHost = hostFromUrl(process.env.NEXTAUTH_URL ?? null);
+  const configuredHosts = new Set(
+    [process.env.AUTH_URL, process.env.NEXTAUTH_URL]
+      .map((val) => hostFromUrl(val ?? null))
+      .filter((host): host is string => Boolean(host))
+  );
 
-  if (configuredHost ? sourceHost === configuredHost : sourceHost === requestHost) return;
+  if (configuredHosts.size > 0 ? configuredHosts.has(sourceHost) : sourceHost === requestHost) return;
 
   if (process.env.NODE_ENV !== 'production' && isLocalHost(sourceHost) && isLocalHost(requestHost)) {
     return;
@@ -160,6 +164,20 @@ export function handleApiError(error: unknown, fallbackMessage = 'Internal serve
       { error: 'Validation failed', details: error.issues },
       { status: 400 }
     );
+  }
+  if (error && typeof error === 'object' && 'code' in error) {
+    const prismaCode = (error as { code?: string; meta?: { target?: string[] | string } }).code;
+    if (prismaCode === 'P2002') {
+      const target = (error as { meta?: { target?: string[] | string } }).meta?.target;
+      const field = Array.isArray(target) ? target.join(', ') : target || 'field';
+      return NextResponse.json(
+        { error: `Duplicate value for unique ${field}` },
+        { status: 409 }
+      );
+    }
+    if (prismaCode === 'P2025') {
+      return NextResponse.json({ error: 'Record not found' }, { status: 404 });
+    }
   }
   console.error(fallbackMessage + ':', error);
   return NextResponse.json({ error: fallbackMessage }, { status: 500 });

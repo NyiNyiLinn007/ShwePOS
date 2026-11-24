@@ -51,6 +51,13 @@ export async function generateSalesAndProfitReport(
         createdAt: { gte: start, lte: end },
       },
       include: {
+        payments: {
+          where: { type: 'CHECKOUT' },
+          select: { method: true, amount: true },
+        },
+        adjustments: {
+          select: { amount: true, paymentMethod: true },
+        },
         items: {
           select: {
             quantity: true,
@@ -90,7 +97,22 @@ export async function generateSalesAndProfitReport(
     }),
   ]);
 
+  /** Compute net revenue excluding pro-rated sales tax so tax is never counted as Gross/Net Profit. */
+  const getSaleNetExTax = (sale: (typeof sales)[number]): number => {
+    const netTotal = toNumber(sale.totalAmount);
+    const origTax = toNumber(sale.taxAmount);
+    if (origTax <= 0 || netTotal <= 0) return netTotal;
+    const origTotal = Math.max(
+      netTotal,
+      toNumber(sale.subtotal) - toNumber(sale.discountAmount) + origTax
+    );
+    const proRatedTax = origTotal > 0 ? (origTax * netTotal) / origTotal : origTax;
+    return Math.max(0, netTotal - proRatedTax);
+  };
+
   const totalRevenue = sales.reduce((sum, s) => sum + toNumber(s.totalAmount), 0);
+  const totalRevenueExTax = sales.reduce((sum, s) => sum + getSaleNetExTax(s), 0);
+  const totalTax = Math.max(0, totalRevenue - totalRevenueExTax);
   const totalCost = sales.reduce(
     (sum, s) =>
       sum +
@@ -104,7 +126,7 @@ export async function generateSalesAndProfitReport(
       }, 0),
     0
   );
-  const totalProfit = totalRevenue - totalCost;
+  const totalProfit = totalRevenueExTax - totalCost;
   const totalExpenses = expenses.reduce((sum, e) => sum + toNumber(e.amount), 0);
   const netProfit = totalProfit - totalExpenses;
   const totalSalesCount = sales.length;
@@ -132,7 +154,7 @@ export async function generateSalesAndProfitReport(
       );
       return sum + toNumber(item.costPrice) * netQty;
     }, 0);
-    const saleGrossProfit = toNumber(sale.totalAmount) - saleCost;
+    const saleGrossProfit = getSaleNetExTax(sale) - saleCost;
     existing.revenue += toNumber(sale.totalAmount);
     existing.count += 1;
     existing.profit += saleGrossProfit;
@@ -185,20 +207,45 @@ export async function generateSalesAndProfitReport(
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
 
+  // Aggregate payment breakdown from actual SalePayment legs net of partial refund methods
   const paymentMap = new Map<string, { count: number; amount: number }>();
   for (const sale of sales) {
-    const method = sale.paymentMethod;
-    const existing = paymentMap.get(method) || { count: 0, amount: 0 };
-    existing.count += 1;
-    existing.amount += toNumber(sale.totalAmount);
-    paymentMap.set(method, existing);
+    if (sale.payments && sale.payments.length > 0) {
+      const seenMethods = new Set<string>();
+      for (const leg of sale.payments) {
+        const existing = paymentMap.get(leg.method) || { count: 0, amount: 0 };
+        if (!seenMethods.has(leg.method)) {
+          existing.count += 1;
+          seenMethods.add(leg.method);
+        }
+        existing.amount += toNumber(leg.amount);
+        paymentMap.set(leg.method, existing);
+      }
+      for (const adj of sale.adjustments || []) {
+        const adjAmt = toNumber(adj.amount);
+        if (adjAmt <= 0) continue;
+        const m = adj.paymentMethod || sale.paymentMethod;
+        const existing = paymentMap.get(m);
+        if (existing) {
+          existing.amount = Math.max(0, existing.amount - adjAmt);
+        }
+      }
+    } else {
+      const method = sale.paymentMethod;
+      const existing = paymentMap.get(method) || { count: 0, amount: 0 };
+      existing.count += 1;
+      existing.amount += toNumber(sale.totalAmount);
+      paymentMap.set(method, existing);
+    }
   }
 
-  const paymentBreakdown = Array.from(paymentMap.entries()).map(([method, data]) => ({
-    method,
-    count: data.count,
-    amount: Math.round(data.amount),
-  }));
+  const paymentBreakdown = Array.from(paymentMap.entries())
+    .map(([method, data]) => ({
+      method,
+      count: data.count,
+      amount: Math.round(data.amount),
+    }))
+    .filter((row) => row.amount > 0 || row.count > 0);
 
   const productMap = new Map<
     string,
@@ -214,15 +261,29 @@ export async function generateSalesAndProfitReport(
   >();
 
   for (const sale of sales) {
-    for (const item of sale.items) {
+    const saleNetExTax = getSaleNetExTax(sale);
+    const saleItemsNetTotal = sale.items.reduce((sum, item) => {
+      const origQty = toNumber(item.quantity);
       const netQty = Math.max(
         0,
-        toNumber(item.quantity) -
-          toNumber((item as { refundedQuantity?: unknown }).refundedQuantity)
+        origQty - toNumber((item as { refundedQuantity?: unknown }).refundedQuantity)
+      );
+      const ratio = origQty > 0 ? netQty / origQty : 0;
+      return sum + toNumber(item.total) * ratio;
+    }, 0);
+    // Scale factor allocates cart/promotion/loyalty discounts proportionally across sold items
+    const orderScale = saleItemsNetTotal > 0 ? saleNetExTax / saleItemsNetTotal : 1;
+
+    for (const item of sale.items) {
+      const origQty = toNumber(item.quantity);
+      const netQty = Math.max(
+        0,
+        origQty - toNumber((item as { refundedQuantity?: unknown }).refundedQuantity)
       );
       if (netQty <= 0) continue;
-      const ratio = toNumber(item.quantity) > 0 ? netQty / toNumber(item.quantity) : 1;
+      const ratio = origQty > 0 ? netQty / origQty : 1;
       const baseUnits = netQty * (toNumber(item.unitFactor) || 1);
+      const allocatedRevenue = toNumber(item.total) * ratio * orderScale;
       const existing = productMap.get(item.product.id) || {
         id: item.product.id,
         name: item.product.name,
@@ -233,7 +294,7 @@ export async function generateSalesAndProfitReport(
         cost: 0,
       };
       existing.qtySold = Math.round((existing.qtySold + baseUnits) * 1000) / 1000;
-      existing.revenue += toNumber(item.total) * ratio;
+      existing.revenue += allocatedRevenue;
       existing.cost += toNumber(item.costPrice) * netQty;
       productMap.set(item.product.id, existing);
     }
@@ -256,14 +317,26 @@ export async function generateSalesAndProfitReport(
   >();
 
   for (const sale of sales) {
-    for (const item of sale.items) {
+    const saleNetExTax = getSaleNetExTax(sale);
+    const saleItemsNetTotal = sale.items.reduce((sum, item) => {
+      const origQty = toNumber(item.quantity);
       const netQty = Math.max(
         0,
-        toNumber(item.quantity) -
-          toNumber((item as { refundedQuantity?: unknown }).refundedQuantity)
+        origQty - toNumber((item as { refundedQuantity?: unknown }).refundedQuantity)
+      );
+      const ratio = origQty > 0 ? netQty / origQty : 0;
+      return sum + toNumber(item.total) * ratio;
+    }, 0);
+    const orderScale = saleItemsNetTotal > 0 ? saleNetExTax / saleItemsNetTotal : 1;
+
+    for (const item of sale.items) {
+      const origQty = toNumber(item.quantity);
+      const netQty = Math.max(
+        0,
+        origQty - toNumber((item as { refundedQuantity?: unknown }).refundedQuantity)
       );
       if (netQty <= 0) continue;
-      const ratio = toNumber(item.quantity) > 0 ? netQty / toNumber(item.quantity) : 1;
+      const ratio = origQty > 0 ? netQty / origQty : 1;
       const baseUnits = netQty * (toNumber(item.unitFactor) || 1);
       const cat = item.product.category;
       const existing = categoryMap.get(cat.id) || {
@@ -272,7 +345,7 @@ export async function generateSalesAndProfitReport(
         revenue: 0,
         count: 0,
       };
-      existing.revenue += toNumber(item.total) * ratio;
+      existing.revenue += toNumber(item.total) * ratio * orderScale;
       existing.count = Math.round((existing.count + baseUnits) * 1000) / 1000;
       categoryMap.set(cat.id, existing);
     }
@@ -312,6 +385,7 @@ export async function generateSalesAndProfitReport(
   return {
     summary: {
       totalRevenue: Math.round(totalRevenue),
+      totalTax: Math.round(totalTax),
       totalProfit: Math.round(totalProfit),
       totalCost: Math.round(totalCost),
       totalExpenses: Math.round(totalExpenses),

@@ -42,6 +42,23 @@ export async function POST(
       const actualCash = parsed.data.actualCash;
       const variance = roundMoney(actualCash - summary.expectedCash);
 
+      // Atomically claim OPEN -> CLOSED before creating CLOSING movement (prevents double-close race)
+      const claimed = await tx.shift.updateMany({
+        where: { id, status: 'OPEN' },
+        data: {
+          status: 'CLOSED',
+          closingCash: actualCash,
+          expectedCash: summary.expectedCash,
+          actualCash,
+          variance,
+          closedAt: new Date(),
+          notes: parsed.data.notes?.trim() || current.notes,
+        },
+      });
+      if (claimed.count === 0) {
+        throw new ApiError('This shift was already closed', 409);
+      }
+
       await tx.cashDrawerMovement.create({
         data: {
           shiftId: id,
@@ -52,17 +69,8 @@ export async function POST(
         },
       });
 
-      const updatedShift = await tx.shift.update({
+      const updatedShift = await tx.shift.findUniqueOrThrow({
         where: { id },
-        data: {
-          status: 'CLOSED',
-          closingCash: actualCash,
-          expectedCash: summary.expectedCash,
-          actualCash,
-          variance,
-          closedAt: new Date(),
-          notes: parsed.data.notes?.trim() || current.notes,
-        },
         include: {
           user: { select: { id: true, name: true, email: true } },
           cashDrawerMovements: {
@@ -118,6 +126,7 @@ function serializeClosedShift(shift: {
     amount: toNumber(movement.amount),
     createdAt: movement.createdAt.toISOString(),
   }));
+  const summary = summarizeShiftCash(shift.openingCash, movements);
   return {
     ...shift,
     openingCash: toNumber(shift.openingCash),
@@ -127,6 +136,8 @@ function serializeClosedShift(shift: {
     variance: shift.variance === null ? null : toNumber(shift.variance),
     openedAt: shift.openedAt.toISOString(),
     closedAt: shift.closedAt?.toISOString() ?? null,
+    summary,
+    movements,
     cashDrawerMovements: movements,
   };
 }

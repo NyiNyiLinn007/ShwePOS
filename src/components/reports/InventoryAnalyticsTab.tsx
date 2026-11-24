@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
@@ -19,6 +19,9 @@ export function InventoryAnalyticsTab() {
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const fetchAnalytics = useCallback(async () => {
     setLoading(true);
     try {
@@ -31,11 +34,11 @@ export function InventoryAnalyticsTab() {
         setSelectedIds(new Set(json.reorderSuggestions.slice(0, 15).map((r) => r.productId)));
       }
     } catch {
-      addToast(t('Failed to load inventory analytics', 'ကုန်ပစ္စည်းခွဲခြမ်းစိတ်ဖြာမှု ဖတ်မရပါ'), 'error');
+      addToast(tRef.current('Failed to load inventory analytics', 'ကုန်ပစ္စည်းခွဲခြမ်းစိတ်ဖြာမှု ဖတ်မရပါ'), 'error');
     } finally {
       setLoading(false);
     }
-  }, [deadDays, leadDays, addToast, t]);
+  }, [deadDays, leadDays, addToast]);
 
   useEffect(() => {
     void fetchAnalytics();
