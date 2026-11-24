@@ -1,13 +1,23 @@
 'use client';
 
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useI18n } from '@/lib/i18n';
 import { formatDate, formatQuantity, getExpiryInfo } from '@/lib/utils';
 import StatCards from '@/components/dashboard/StatCards';
 import RecentSales from '@/components/dashboard/RecentSales';
 import TopProducts from '@/components/dashboard/TopProducts';
-import SalesChart from '@/components/charts/SalesChart';
 import { AlertTriangle, Clock, CheckCircle2 } from '@/components/ui/Icons';
+
+const SalesChart = dynamic(() => import('@/components/charts/SalesChart'), {
+  ssr: false,
+  loading: () => (
+    <div className="glass-card" style={{ padding: 'var(--space-lg)', minHeight: 344 }}>
+      <div className="skeleton" style={{ width: 160, height: 18, marginBottom: 16 }} />
+      <div className="skeleton" style={{ width: '100%', height: 268 }} />
+    </div>
+  ),
+});
 
 interface RecentSaleItem {
   id: string;

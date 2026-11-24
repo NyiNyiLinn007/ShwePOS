@@ -29,6 +29,8 @@ export interface BusinessSettings {
 interface SettingsState extends BusinessSettings {
   /** Whether settings have been loaded from API at least once */
   loaded: boolean;
+  /** Epoch ms of last successful server settings sync */
+  lastSyncedAt: number | null;
 
   /** Update all business settings at once */
   updateSettings: (settings: Partial<BusinessSettings>) => void;
@@ -62,12 +64,14 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       ...DEFAULT_SETTINGS,
       loaded: false,
+      lastSyncedAt: null,
 
-      updateSettings: (settings) => set((state) => ({ ...state, ...settings })),
+      updateSettings: (settings) =>
+        set((state) => ({ ...state, ...settings, lastSyncedAt: Date.now() })),
 
       setTaxRate: (rate) => set({ taxRate: Math.max(0, Math.min(100, rate)) }),
 
-      setLoaded: () => set({ loaded: true }),
+      setLoaded: () => set({ loaded: true, lastSyncedAt: Date.now() }),
     }),
     {
       name: 'shwepos-settings',
@@ -87,6 +91,7 @@ export const useSettingsStore = create<SettingsState>()(
         mobileBankingQrUrl: state.mobileBankingQrUrl,
         mobileBankingName: state.mobileBankingName,
         loaded: state.loaded,
+        lastSyncedAt: state.lastSyncedAt,
       }),
     }
   )

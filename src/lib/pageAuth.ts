@@ -2,19 +2,21 @@
  * Server-side page auth helpers for dashboard route protection.
  * Includes single-session enforcement via sessionVersion check.
  */
+import { cache } from 'react';
 import { redirect } from 'next/navigation';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import type { UserRole } from '@/lib/constants';
 
 /**
- * Get session or redirect to login. Use in server components.
- * Also validates sessionVersion to enforce single-session policy.
+ * Per-request memoized session + DB user verification so (dashboard)/layout.tsx
+ * and child page.tsx share a single auth() + prisma.user.findUnique() round-trip
+ * without caching across requests or weakening single-session revocation.
  */
-export async function requirePageAuth() {
+const getVerifiedPageSession = cache(async () => {
   const session = await auth();
   if (!session?.user?.id) {
-    redirect('/login');
+    return { status: 'unauthenticated' as const };
   }
 
   const tokenVersion = (session.user as { sessionVersion?: number }).sessionVersion ?? 0;
@@ -31,22 +33,38 @@ export async function requirePageAuth() {
   });
 
   if (!dbUser || !dbUser.isActive || tokenVersion !== dbUser.sessionVersion) {
-    redirect('/login?reason=session_expired');
+    return { status: 'expired' as const };
   }
 
-  // Return database-derived role/name/email so page authorization does not
-  // trust stale JWT claims after an admin changes the account.
   return {
-    ...session,
-    user: {
-      ...session.user,
-      id: dbUser.id,
-      name: dbUser.name,
-      email: dbUser.email,
-      role: dbUser.role as UserRole,
-      sessionVersion: dbUser.sessionVersion,
+    status: 'ok' as const,
+    session: {
+      ...session,
+      user: {
+        ...session.user,
+        id: dbUser.id,
+        name: dbUser.name,
+        email: dbUser.email,
+        role: dbUser.role as UserRole,
+        sessionVersion: dbUser.sessionVersion,
+      },
     },
   };
+});
+
+/**
+ * Get session or redirect to login. Use in server components.
+ * Also validates sessionVersion to enforce single-session policy.
+ */
+export async function requirePageAuth() {
+  const result = await getVerifiedPageSession();
+  if (result.status === 'unauthenticated') {
+    redirect('/login');
+  }
+  if (result.status === 'expired') {
+    redirect('/login?reason=session_expired');
+  }
+  return result.session;
 }
 
 /**

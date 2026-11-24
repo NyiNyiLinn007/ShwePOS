@@ -7,10 +7,18 @@ import { useSettingsStore } from '@/store/settingsStore';
  * Fetches business settings from API on mount and syncs to the global store.
  * Place this inside the dashboard layout so settings are always fresh.
  */
+const SETTINGS_FRESH_MS = 5 * 60 * 1000;
+
 export function SettingsInitializer() {
-  const { updateSettings, setLoaded, loaded } = useSettingsStore();
+  const updateSettings = useSettingsStore((s) => s.updateSettings);
+  const setLoaded = useSettingsStore((s) => s.setLoaded);
 
   useEffect(() => {
+    const { loaded, lastSyncedAt } = useSettingsStore.getState();
+    if (loaded && lastSyncedAt && Date.now() - lastSyncedAt < SETTINGS_FRESH_MS) {
+      return;
+    }
+
     const fetchSettings = async () => {
       try {
         const res = await fetch('/api/settings');

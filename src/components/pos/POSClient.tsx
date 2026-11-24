@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue } from 'react';
 import { useRouter } from 'next/navigation';
+import dynamic from 'next/dynamic';
 import { useCartStore } from '@/store/cartStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useOfflineQueueStore } from '@/store/offlineQueueStore';
@@ -22,12 +23,21 @@ import {
 import type { ProductUnit } from '@/types';
 import { evaluateBestPromotion, type EvaluablePromotion } from '@/lib/promotionEngine';
 import { broadcastCustomerDisplay } from '@/lib/customerDisplayChannel';
-import { CameraBarcodeModal } from '@/components/ui/CameraBarcodeModal';
 import ProductGrid from '@/components/pos/ProductGrid';
 import Cart from '@/components/pos/Cart';
-import PaymentModal, { type SaleResponse } from '@/components/pos/PaymentModal';
-import Receipt, { type ReceiptData } from '@/components/pos/Receipt';
-import { KeyboardShortcutsModal } from '@/components/pos/KeyboardShortcutsModal';
+import type { SaleResponse } from '@/components/pos/PaymentModal';
+import type { ReceiptData } from '@/components/pos/Receipt';
+
+const PaymentModal = dynamic(() => import('@/components/pos/PaymentModal'), { ssr: false });
+const Receipt = dynamic(() => import('@/components/pos/Receipt'), { ssr: false });
+const CameraBarcodeModal = dynamic(
+  () => import('@/components/ui/CameraBarcodeModal').then((m) => m.CameraBarcodeModal),
+  { ssr: false }
+);
+const KeyboardShortcutsModal = dynamic(
+  () => import('@/components/pos/KeyboardShortcutsModal').then((m) => m.KeyboardShortcutsModal),
+  { ssr: false }
+);
 
 interface Category {
   id: string;
@@ -211,16 +221,40 @@ export default function POSClient({
     return () => { active = false; };
   }, []);
 
+  // Defer grid filtering on rapid keystrokes while keeping input & Enter barcode scan instantaneous
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
+  // Pre-index barcodes and SKUs into O(1) Maps for instant hardware & camera scanning
+  const barcodeIndex = useMemo(() => {
+    const unitMap = new Map<string, { product: Product; unit: ProductUnit }>();
+    const productMap = new Map<string, Product>();
+
+    for (const product of products) {
+      if (product.barcode) {
+        productMap.set(product.barcode.toLowerCase(), product);
+      }
+      productMap.set(product.sku.toLowerCase(), product);
+      if (product.productUnits) {
+        for (const unit of product.productUnits) {
+          if (unit.barcode) {
+            unitMap.set(unit.barcode.toLowerCase(), { product, unit });
+          }
+        }
+      }
+    }
+    return { unitMap, productMap };
+  }, [products]);
+
   // Keep unavailable products available as an optional disabled view.
   const filteredProducts = useMemo(() => {
+    const q = deferredSearchQuery.toLowerCase();
     return products.filter((product) => {
       if (!showOutOfStock && product.stockQuantity <= 0) return false;
 
-      const q = searchQuery.toLowerCase();
       const matchesSearch =
-        searchQuery === '' ||
+        deferredSearchQuery === '' ||
         product.name.toLowerCase().includes(q) ||
-        (product.nameMm && product.nameMm.includes(searchQuery)) ||
+        (product.nameMm && product.nameMm.includes(deferredSearchQuery)) ||
         product.sku.toLowerCase().includes(q) ||
         (product.barcode && product.barcode.toLowerCase().includes(q)) ||
         Boolean(
@@ -235,7 +269,7 @@ export default function POSClient({
 
       return matchesSearch && matchesCategory;
     });
-  }, [products, searchQuery, selectedCategory, showOutOfStock]);
+  }, [products, deferredSearchQuery, selectedCategory, showOutOfStock]);
 
   // Broadcast cart / completed state to dual-screen Customer Display (/pos/display)
   useEffect(() => {
@@ -339,49 +373,40 @@ export default function POSClient({
       if (!raw) return false;
       const lowered = raw.toLowerCase();
 
-      // 1. Check alternate packaging unit barcodes first
-      for (const product of products) {
-        if (product.stockQuantity <= 0) continue;
-        const matchedUnit = product.productUnits?.find(
-          (u) => u.barcode && u.barcode.toLowerCase() === lowered
-        );
-        if (matchedUnit) {
-          if (product.stockQuantity < matchedUnit.conversionFactor) {
-            return false;
-          }
-          return useCartStore.getState().addItem(
-            {
-              id: product.id,
-              name: product.name,
-              nameMm: product.nameMm,
-              sku: product.sku,
-              barcode: product.barcode,
-              categoryId: product.category.id,
-              costPrice: product.costPrice,
-              sellingPrice: product.sellingPrice,
-              stockQuantity: product.stockQuantity,
-              lowStockThreshold: 10,
-              unit: product.unit,
-              imageUrl: product.imageUrl,
-              productUnits: product.productUnits,
-              isActive: true,
-              createdAt: '',
-              updatedAt: '',
-            },
-            1,
-            matchedUnit
-          );
+      // 1. O(1) lookup for alternate packaging unit barcodes first
+      const unitEntry = barcodeIndex.unitMap.get(lowered);
+      if (unitEntry) {
+        const { product, unit: matchedUnit } = unitEntry;
+        if (product.stockQuantity <= 0 || product.stockQuantity < matchedUnit.conversionFactor) {
+          return false;
         }
+        return useCartStore.getState().addItem(
+          {
+            id: product.id,
+            name: product.name,
+            nameMm: product.nameMm,
+            sku: product.sku,
+            barcode: product.barcode,
+            categoryId: product.category.id,
+            costPrice: product.costPrice,
+            sellingPrice: product.sellingPrice,
+            stockQuantity: product.stockQuantity,
+            lowStockThreshold: 10,
+            unit: product.unit,
+            imageUrl: product.imageUrl,
+            productUnits: product.productUnits,
+            isActive: true,
+            createdAt: '',
+            updatedAt: '',
+          },
+          1,
+          matchedUnit
+        );
       }
 
-      // 2. Check exact product barcode or SKU
-      const exactProduct = products.find(
-        (p) =>
-          p.stockQuantity > 0 &&
-          ((p.barcode && p.barcode.toLowerCase() === lowered) ||
-            p.sku.toLowerCase() === lowered)
-      );
-      if (exactProduct) {
+      // 2. O(1) lookup for exact product barcode or SKU
+      const exactProduct = barcodeIndex.productMap.get(lowered);
+      if (exactProduct && exactProduct.stockQuantity > 0) {
         return useCartStore.getState().addItem({
           id: exactProduct.id,
           name: exactProduct.name,
@@ -403,7 +428,7 @@ export default function POSClient({
       }
       return false;
     },
-    [products]
+    [barcodeIndex]
   );
 
   // Barcode / SKU Enter quick-scan handler

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import {
   AreaChart,
   Area,
@@ -29,13 +30,24 @@ import {
   Download,
   Printer,
 } from '@/components/ui/Icons';
-import {
-  downloadReportCsv,
-  ReportSummaryPrintModal,
-} from '@/components/reports/ReportExportModal';
-import { InventoryAnalyticsTab } from '@/components/reports/InventoryAnalyticsTab';
-import { AgingReportTab } from '@/components/reports/AgingReportTab';
-import { CashierPerformanceTab } from '@/components/reports/CashierPerformanceTab';
+import { downloadReportCsv } from '@/components/reports/ReportExportModal';
+
+const ReportSummaryPrintModal = dynamic(
+  () => import('@/components/reports/ReportExportModal').then((m) => m.ReportSummaryPrintModal),
+  { ssr: false }
+);
+const InventoryAnalyticsTab = dynamic(
+  () => import('@/components/reports/InventoryAnalyticsTab').then((m) => m.InventoryAnalyticsTab),
+  { ssr: false }
+);
+const AgingReportTab = dynamic(
+  () => import('@/components/reports/AgingReportTab').then((m) => m.AgingReportTab),
+  { ssr: false }
+);
+const CashierPerformanceTab = dynamic(
+  () => import('@/components/reports/CashierPerformanceTab').then((m) => m.CashierPerformanceTab),
+  { ssr: false }
+);
 
 type ReportTab = 'pnl' | 'inventory' | 'aging' | 'cashier';
 

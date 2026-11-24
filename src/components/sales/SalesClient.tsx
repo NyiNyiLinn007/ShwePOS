@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import dynamic from 'next/dynamic';
 import { useI18n } from '@/lib/i18n';
 import { useToast } from '@/contexts/ToastContext';
 import { formatCurrency, formatDateTime, parseMyanmarDateBoundary } from '@/lib/utils';
@@ -21,9 +22,17 @@ import {
   Printer,
   X,
 } from '@/components/ui/Icons';
-import Receipt from '@/components/pos/Receipt';
-import { SaleRefundModal, SaleRefundAction } from '@/components/sales/SaleRefundModal';
-import { SaleQuickViewModal } from '@/components/sales/SaleQuickViewModal';
+import type { SaleRefundAction } from '@/components/sales/SaleRefundModal';
+
+const Receipt = dynamic(() => import('@/components/pos/Receipt'), { ssr: false });
+const SaleRefundModal = dynamic(
+  () => import('@/components/sales/SaleRefundModal').then((m) => m.SaleRefundModal),
+  { ssr: false }
+);
+const SaleQuickViewModal = dynamic(
+  () => import('@/components/sales/SaleQuickViewModal').then((m) => m.SaleQuickViewModal),
+  { ssr: false }
+);
 
 const ITEMS_PER_PAGE = 15;
 

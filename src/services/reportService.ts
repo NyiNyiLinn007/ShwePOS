@@ -34,16 +34,7 @@ export async function generateSalesAndProfitReport(
 
   const activeStatuses = ['COMPLETED', 'PARTIALLY_REFUNDED'];
 
-  const salesInRange = await prisma.sale.count({
-    where: {
-      status: { in: activeStatuses },
-      createdAt: { gte: start, lte: end },
-    },
-  });
-  if (salesInRange > 10000) {
-    throw new ApiError('Report is too large. Narrow the date range.', 400);
-  }
-
+  // Single parallel round-trip (take 10001 to enforce the 10,000-row cap without an extra COUNT query)
   const [sales, expenses] = await Promise.all([
     prisma.sale.findMany({
       where: {
@@ -83,7 +74,7 @@ export async function generateSalesAndProfitReport(
         },
       },
       orderBy: { createdAt: 'asc' },
-      take: 10000,
+      take: 10001,
     }),
     prisma.expense.findMany({
       where: {
@@ -96,6 +87,10 @@ export async function generateSalesAndProfitReport(
       },
     }),
   ]);
+
+  if (sales.length > 10000) {
+    throw new ApiError('Report is too large. Narrow the date range.', 400);
+  }
 
   /** Compute net revenue excluding pro-rated sales tax so tax is never counted as Gross/Net Profit. */
   const getSaleNetExTax = (sale: (typeof sales)[number]): number => {

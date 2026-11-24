@@ -1,5 +1,6 @@
 'use client';
 
+import { memo, useCallback } from 'react';
 import { useCartStore } from '@/store/cartStore';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, formatQuantity } from '@/lib/utils';
@@ -29,35 +30,38 @@ interface ProductGridProps {
   products: ProductForGrid[];
 }
 
-export default function ProductGrid({ products }: ProductGridProps) {
+function ProductGrid({ products }: ProductGridProps) {
   const addItem = useCartStore((state) => state.addItem);
   const { t } = useI18n();
 
-  const handleAddToCart = (product: ProductForGrid) => {
-    if (product.stockQuantity <= 0) return;
+  const handleAddToCart = useCallback(
+    (product: ProductForGrid) => {
+      if (product.stockQuantity <= 0) return;
 
-    // Convert to Product type expected by the cart store
-    const cartProduct: Product = {
-      id: product.id,
-      name: product.name,
-      nameMm: product.nameMm,
-      sku: product.sku,
-      barcode: product.barcode,
-      categoryId: product.category.id,
-      costPrice: product.costPrice ?? 0,
-      sellingPrice: product.sellingPrice,
-      stockQuantity: product.stockQuantity,
-      lowStockThreshold: 10,
-      unit: product.unit,
-      imageUrl: product.imageUrl,
-      productUnits: product.productUnits ?? [],
-      isActive: true,
-      createdAt: '',
-      updatedAt: '',
-    };
+      // Convert to Product type expected by the cart store
+      const cartProduct: Product = {
+        id: product.id,
+        name: product.name,
+        nameMm: product.nameMm,
+        sku: product.sku,
+        barcode: product.barcode,
+        categoryId: product.category.id,
+        costPrice: product.costPrice ?? 0,
+        sellingPrice: product.sellingPrice,
+        stockQuantity: product.stockQuantity,
+        lowStockThreshold: 10,
+        unit: product.unit,
+        imageUrl: product.imageUrl,
+        productUnits: product.productUnits ?? [],
+        isActive: true,
+        createdAt: '',
+        updatedAt: '',
+      };
 
-    addItem(cartProduct);
-  };
+      addItem(cartProduct);
+    },
+    [addItem]
+  );
 
   if (products.length === 0) {
     return (
@@ -101,6 +105,8 @@ export default function ProductGrid({ products }: ProductGridProps) {
                 <img
                   src={product.imageUrl}
                   alt={product.name}
+                  loading="lazy"
+                  decoding="async"
                   style={{
                     width: 40,
                     height: 40,
@@ -187,3 +193,5 @@ export default function ProductGrid({ products }: ProductGridProps) {
     </div>
   );
 }
+
+export default memo(ProductGrid);

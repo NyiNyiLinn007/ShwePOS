@@ -15,10 +15,10 @@ import { useRouter } from 'next/navigation';
  */
 export function useRefreshOnFocus() {
   const router = useRouter();
-  const lastRefreshRef = useRef<number>(0);
+  const lastRefreshRef = useRef<number>(Date.now());
 
   useEffect(() => {
-    const DEBOUNCE_MS = 3000; // Minimum 3s between refreshes
+    const DEBOUNCE_MS = 30_000; // Minimum 30s between background focus refreshes
 
     const refresh = () => {
       const now = Date.now();

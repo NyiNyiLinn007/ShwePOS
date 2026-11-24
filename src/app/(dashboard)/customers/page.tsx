@@ -8,52 +8,84 @@ export const dynamic = 'force-dynamic';
 export default async function CustomersPage() {
   const session = await requirePageRole('MANAGER', 'ADMIN');
 
-  const customers = await prisma.customer.findMany({
-    include: {
-      sales: {
-        select: {
-          id: true,
-          totalAmount: true,
-          paidAmount: true,
-          dueAmount: true,
-          paymentMethod: true,
-          createdAt: true,
-          status: true,
-          invoiceNumber: true,
+  const saleSelect = {
+    id: true,
+    customerId: true,
+    totalAmount: true,
+    paidAmount: true,
+    dueAmount: true,
+    paymentMethod: true,
+    createdAt: true,
+    status: true,
+    invoiceNumber: true,
+  } as const;
+
+  // Bounded parallel queries: latest 20 sales per customer + uncapped purchase counts + all unpaid invoices
+  const [customers, purchaseCounts, unpaidSalesList] = await Promise.all([
+    prisma.customer.findMany({
+      include: {
+        sales: {
+          select: saleSelect,
+          orderBy: { createdAt: 'desc' },
+          take: 20,
         },
-        orderBy: { createdAt: 'desc' },
-      },
-      salePayments: {
-        where: { type: 'DEBT_REPAYMENT' },
-        select: {
-          id: true,
-          amount: true,
-          method: true,
-          reference: true,
-          notes: true,
-          createdAt: true,
+        salePayments: {
+          where: { type: 'DEBT_REPAYMENT' },
+          select: {
+            id: true,
+            amount: true,
+            method: true,
+            reference: true,
+            notes: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 25,
         },
-        orderBy: { createdAt: 'desc' },
-        take: 25,
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.sale.groupBy({
+      by: ['customerId'],
+      where: {
+        customerId: { not: null },
+        status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
+      },
+      _count: { id: true },
+    }),
+    prisma.sale.findMany({
+      where: {
+        customerId: { not: null },
+        status: { in: ['COMPLETED', 'PARTIALLY_REFUNDED'] },
+        dueAmount: { gt: 0 },
+      },
+      select: saleSelect,
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
+
+  const countByCustomer = new Map<string, number>();
+  for (const row of purchaseCounts) {
+    if (row.customerId) {
+      countByCustomer.set(row.customerId, row._count.id);
+    }
+  }
+
+  const unpaidByCustomer = new Map<string, typeof unpaidSalesList>();
+  for (const sale of unpaidSalesList) {
+    if (!sale.customerId) continue;
+    const list = unpaidByCustomer.get(sale.customerId) ?? [];
+    list.push(sale);
+    unpaidByCustomer.set(sale.customerId, list);
+  }
 
   const customersWithStats = customers.map((customer) => {
-    const completedSales = customer.sales.filter(
-      (s) => s.status === 'COMPLETED' || s.status === 'PARTIALLY_REFUNDED'
-    );
     const lastSale = customer.sales[0] || null;
+    const unpaidSales = unpaidByCustomer.get(customer.id) ?? [];
 
-    // Include ALL unpaid credit sales alongside the latest 20 sales so Credit Statements never truncate debt
-    const unpaidSales = customer.sales.filter(
-      (s) =>
-        (s.status === 'COMPLETED' || s.status === 'PARTIALLY_REFUNDED') &&
-        toNumber(s.dueAmount) > 0
-    );
+    // Merge latest 20 sales + ALL unpaid credit sales so Credit Statements never truncate debt
     const mergedMap = new Map<string, (typeof customer.sales)[number]>();
-    for (const s of customer.sales.slice(0, 20)) mergedMap.set(s.id, s);
+    for (const s of customer.sales) mergedMap.set(s.id, s);
     for (const s of unpaidSales) mergedMap.set(s.id, s);
     const mergedSales = Array.from(mergedMap.values()).sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
@@ -74,7 +106,7 @@ export default async function CustomersPage() {
       loyaltyPoints: customer.loyaltyPoints,
       createdAt: customer.createdAt.toISOString(),
       updatedAt: customer.updatedAt.toISOString(),
-      purchaseCount: completedSales.length,
+      purchaseCount: countByCustomer.get(customer.id) ?? 0,
       lastPurchaseDate: lastSale?.createdAt ? lastSale.createdAt.toISOString() : null,
       recentSales: mergedSales.map((s) => ({
         id: s.id,

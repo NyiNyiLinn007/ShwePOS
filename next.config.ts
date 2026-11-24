@@ -15,6 +15,9 @@ const contentSecurityPolicy = [
 ].join('; ');
 
 const nextConfig: NextConfig = {
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'recharts'],
+  },
   images: {
     // Restrict to specific domains or disable remote patterns
     // Add specific domains as needed for product images
