@@ -33,6 +33,7 @@ import { calculateLineAmounts, calculateOrderTotals, roundMmk } from '@/lib/sale
 import { escapePrintHtml } from '@/lib/print';
 import { escapeCsvCell } from '@/lib/csv';
 import { isSafeImageUrl } from '@/lib/validations';
+import { classifyApiRequest, isInternalNavigationUrl } from '@/lib/loadingTracker';
 import writeXlsxFile from 'write-excel-file/node';
 
 describe('Myanmar Timezone Standardization (Asia/Yangon, UTC+6:30)', () => {
@@ -686,5 +687,22 @@ describe('Medium/Low Audit Hardening Regressions', () => {
     ]);
     assert.equal(summary.expectedCash, 14000);
     assert.equal(summary.movementCount, 2);
+  });
+
+  it('classifies foreground API calls while silencing background polls and same-route links', () => {
+    const origin = 'https://shwepos.vercel.app';
+    assert.equal(classifyApiRequest('/api/auth/validate-session', 'GET', origin), 'ignore');
+    assert.equal(classifyApiRequest('/api/inventory/low-stock-count', 'GET', origin), 'ignore');
+    assert.equal(classifyApiRequest('/api/promotions/active', 'GET', origin), 'ignore');
+    assert.equal(classifyApiRequest('/api/settings', 'GET', origin), 'ignore');
+    assert.equal(classifyApiRequest('/api/settings', 'PUT', origin), 'mutation');
+    assert.equal(classifyApiRequest('/api/sales', 'POST', origin), 'mutation');
+    assert.equal(classifyApiRequest('/api/reports?startDate=2026-11-01', 'GET', origin), 'read');
+    assert.equal(classifyApiRequest('https://external.example/api/test', 'GET', origin), 'ignore');
+
+    assert.equal(isInternalNavigationUrl('/products', 'https://shwepos.vercel.app/sales'), true);
+    assert.equal(isInternalNavigationUrl('/sales', 'https://shwepos.vercel.app/sales'), false);
+    assert.equal(isInternalNavigationUrl('#section', 'https://shwepos.vercel.app/sales'), false);
+    assert.equal(isInternalNavigationUrl('https://google.com', 'https://shwepos.vercel.app/sales'), false);
   });
 });

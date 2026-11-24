@@ -1,7 +1,9 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import '@/app/globals.css';
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ThemeProvider } from '@/components/ThemeProvider';
+import { GlobalLoadingBar } from '@/components/ui/GlobalLoadingBar';
 
 export const metadata: Metadata = {
   title: 'ShwePOS - Enterprise POS System',
@@ -30,7 +32,12 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <ToastProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          <ThemeProvider>
+            <Suspense fallback={null}>
+              <GlobalLoadingBar />
+            </Suspense>
+            {children}
+          </ThemeProvider>
         </ToastProvider>
       </body>
     </html>

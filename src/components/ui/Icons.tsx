@@ -77,6 +77,7 @@ import {
   Sparkles,
   Tag,
   FileCheck,
+  Loader2,
 } from 'lucide-react';
 
 export {
@@ -155,6 +156,7 @@ export {
   Sparkles,
   Tag,
   FileCheck,
+  Loader2,
 };
 
 export function NavIcon({

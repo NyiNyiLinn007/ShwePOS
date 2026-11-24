@@ -2038,6 +2038,193 @@ kbd {
   height: 120px;
 }
 
+.icon-spin {
+  animation: spin 0.75s linear infinite;
+}
+
+/* ---- Global Top Progress Bar & Floating API Status Pill ---- */
+.global-progress-track {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  z-index: 9999;
+  pointer-events: none;
+  background: transparent;
+  overflow: hidden;
+}
+
+.global-progress-bar {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--primary) 0%,
+    var(--primary-hover) 50%,
+    var(--primary) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+  transition: width 180ms ease-out, opacity 220ms ease;
+  border-radius: 0 2px 2px 0;
+}
+
+.global-loading-pill {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 9998;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--radius-full);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  pointer-events: none;
+  animation: slideUp 160ms ease;
+}
+
+.global-loading-pill-icon {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+/* ---- Route Shimmer Skeletons (Next.js loading.tsx) ---- */
+.route-skeleton-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  animation: fadeIn 150ms ease;
+}
+
+.route-skeleton-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.route-skeleton-kpi-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.route-skeleton-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.route-skeleton-table {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.route-skeleton-row {
+  display: grid;
+  grid-template-columns: 2fr 1.2fr 1fr 1fr 0.7fr;
+  gap: var(--space-md);
+  align-items: center;
+  padding: 14px var(--space-lg);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.route-skeleton-row:last-child {
+  border-bottom: none;
+}
+
+.route-skeleton-row-header {
+  background: var(--bg-secondary);
+  padding: 12px var(--space-lg);
+}
+
+/* POS Terminal Route Skeleton */
+.pos-skeleton-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  height: calc(100vh - 16px);
+  gap: var(--space-md);
+  padding: var(--space-md);
+  animation: fadeIn 150ms ease;
+}
+
+.pos-skeleton-products {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+.pos-skeleton-pills {
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.pos-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--space-md);
+}
+
+.pos-skeleton-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pos-skeleton-cart {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-md);
+}
+
+@media (max-width: 1024px) {
+  .route-skeleton-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .pos-skeleton-layout {
+    grid-template-columns: 1fr;
+  }
+  .pos-skeleton-cart {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .route-skeleton-kpis {
+    grid-template-columns: 1fr;
+  }
+  .route-skeleton-row {
+    grid-template-columns: 2fr 1fr 0.8fr;
+  }
+  .route-skeleton-row > :nth-child(4),
+  .route-skeleton-row > :nth-child(5) {
+    display: none;
+  }
+}
+
 /* ---- Login Page (Enterprise Clean) ---- */
 .login-page {
   min-height: 100vh;
@@ -2667,6 +2854,11 @@ kbd {
   .receipt-container.receipt-58mm {
     width: 54mm !important;
     max-width: 54mm !important;
+  }
+
+  .global-progress-track,
+  .global-loading-pill {
+    display: none !important;
   }
 
   .barcode-print-grid {
